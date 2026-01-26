@@ -1,0 +1,156 @@
+import { Header } from "@/components/layout/header";
+import { RoleBasedDashboard } from "@/components/dashboards/role-based-dashboard";
+import { useAuth } from "@/hooks/use-auth";
+import { useRolePermissions } from "@/hooks/use-role-permissions";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { useQuery } from "@tanstack/react-query";
+import { getActiveSubdomain } from "@/lib/subdomain-utils";
+import { useEffect, useRef } from "react";
+import { useLocation } from "wouter";
+import { AccessRestricted } from "@/components/access-restricted";
+import { getFirstAccessiblePage } from "@/lib/get-first-accessible-page";
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  const { canView, isLoading: permissionsLoading } = useRolePermissions();
+  const [, setLocation] = useLocation();
+
+  // Redirect lab_technician and pharmacist roles to their dedicated dashboards
+  useEffect(() => {
+    if (user?.role === 'lab_technician') {
+      const subdomain = getActiveSubdomain();
+      setLocation(`/${subdomain}/lab-technician-dashboard`);
+    } else if (user?.role === 'pharmacist') {
+      const subdomain = getActiveSubdomain();
+      setLocation(`/${subdomain}/pharmacy`);
+    }
+  }, [user, setLocation]);
+
+  // Check if user has permission to view patients
+  const canViewPatients = canView('patients');
+
+  // Function to count active patients - only fetch if user has permission
+  const { data: activePatients, isLoading: activePatientsLoading, error: patientsError } = useQuery({
+    queryKey: ["/api/patients/active"],
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token");
+      const headers: Record<string, string> = {
+        "X-Tenant-Subdomain": getActiveSubdomain(),
+      };
+
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      // Fetch only active patients (is_active = true)
+      const response = await fetch("/api/patients?isActive=true", {
+        headers,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        // Handle 403 gracefully - user doesn't have permission
+        if (response.status === 403) {
+          return [];
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return response.json();
+    },
+    enabled: canViewPatients && !permissionsLoading, // Only fetch if user has permission and permissions are loaded
+    retry: false,
+    staleTime: 0,
+  });
+
+  // Get active patient count, default to 0 if no permission or error
+  const activePatientCount = canViewPatients && !patientsError && Array.isArray(activePatients)
+    ? activePatients.length
+    : 0;
+
+  // Check if user has permission to view dashboard
+  // Even for admin, check stored permissions to respect role edits
+  // This allows Admin to see access restriction when they edit Admin role permissions
+  const hasDashboardAccess = canView('dashboard');
+  const hasRedirected = useRef(false);
+
+  // Redirect to first accessible page if dashboard is restricted
+  // IMPORTANT: This hook must be called before any conditional returns
+  useEffect(() => {
+    if (permissionsLoading) return; // Don't redirect while permissions are loading
+    
+    if (!hasDashboardAccess && !hasRedirected.current) {
+      hasRedirected.current = true;
+      const subdomain = getActiveSubdomain();
+      const firstAccessiblePage = getFirstAccessiblePage(canView, subdomain, permissionsLoading);
+      
+      // Only redirect if there's a different accessible page
+      if (firstAccessiblePage !== `/${subdomain}/dashboard`) {
+        console.log("🔄 Dashboard access restricted, redirecting to:", firstAccessiblePage);
+        setLocation(firstAccessiblePage);
+        return;
+      }
+    }
+  }, [hasDashboardAccess, canView, permissionsLoading, setLocation]);
+
+  // Show loading state while permissions are being checked
+  if (permissionsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" />
+          <p className="text-neutral-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show access restricted message if user doesn't have permission and no other page is accessible
+  if (!hasDashboardAccess) {
+    const subdomain = getActiveSubdomain();
+    const firstAccessiblePage = getFirstAccessiblePage(canView, subdomain, permissionsLoading);
+    
+    // If dashboard is the only option (no other accessible pages), show restriction message
+    if (firstAccessiblePage === `/${subdomain}/dashboard`) {
+      return <AccessRestricted moduleName="Dashboard" />;
+    }
+    
+    // Otherwise, show loading while redirecting
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" />
+          <p className="text-neutral-600">Redirecting...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Top row: Header + Theme Toggle */}
+      <div className="flex items-center justify-between mr-6 bg-white px-2 py-1 rounded">
+        <Header
+          title="Dashboard"
+          subtitle={
+            canViewPatients
+              ? `Welcome back. Here's your patient overview. Total Active Patients: ${
+                  activePatientsLoading ? "..." : activePatientCount
+                }`
+              : "Welcome back. Here's your overview."
+          }
+        />
+
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-neutral-600">Theme:</span>
+          <ThemeToggle />
+        </div>
+      </div>
+
+      {/* Dashboard Content */}
+      <div className="flex-1 overflow-auto p-6">
+        <RoleBasedDashboard />
+      </div>
+    </div>
+  );
+}
