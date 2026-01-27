@@ -15,6 +15,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { isDoctorLike } from "@/lib/role-utils";
+import { useLocation } from "wouter";
+import { getActiveSubdomain } from "@/lib/subdomain-utils";
 
 const statusColors = {
   scheduled: "#4A7DFF",
@@ -59,6 +61,7 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
   
   const { user } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const isAdmin = user?.role === "admin";
 
   // Fetch appointments for this doctor - backend automatically filters by logged-in user's role
@@ -1082,10 +1085,12 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                       </div>
                     )}
                   </div>
-                <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                  <MapPin className="h-4 w-4 text-blue-600" />
-                  <span>{nextAppointment.location || 'N/A'}</span>
-                </div>
+                {user?.role !== 'nurse' && user?.role !== 'doctor' && (
+                  <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                    <MapPin className="h-4 w-4 text-blue-600" />
+                    <span>{nextAppointment.location || 'N/A'}</span>
+                  </div>
+                )}
               </div>
 
               {/* Right Column */}
@@ -1227,10 +1232,12 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                             </div>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                          <MapPin className="h-4 w-4 text-gray-400" />
-                          <span>{appointment.location || 'N/A'}</span>
-                        </div>
+                        {user?.role !== 'nurse' && user?.role !== 'doctor' && (
+                          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                            <MapPin className="h-4 w-4 text-gray-400" />
+                            <span>{appointment.location || 'N/A'}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Right Column */}
@@ -1243,6 +1250,22 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                           <User className="h-4 w-4 text-gray-400" />
                           <span>{doctor ? `${doctor.firstName} ${doctor.lastName}` : 'N/A'}</span>
                         </div>
+                        {doctor && appointment.providerId && (
+                          <div className="pt-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const subdomain = getActiveSubdomain();
+                                setLocation(`/${subdomain}/staff/${appointment.providerId}`);
+                              }}
+                              className="text-xs"
+                            >
+                              View Profile
+                            </Button>
+                          </div>
+                        )}
                         {isDoctorLike(user?.role || '') && appointment.appointmentId && (
                           <div className="flex items-center gap-2">
                             <Badge 

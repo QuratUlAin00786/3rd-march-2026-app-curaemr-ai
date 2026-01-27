@@ -306,7 +306,7 @@ export default function PatientAppointments({
   const getDoctorSpecialtyData = (providerId: number) => {
     const doctorsResponse = doctorsData as any;
     if (!doctorsResponse?.doctors || !Array.isArray(doctorsResponse.doctors))
-      return { name: "", category: "", subSpecialty: "" };
+      return { name: "", category: "", subSpecialty: "", role: "" };
     const provider = doctorsResponse.doctors.find(
       (u: any) => u.id === providerId,
     );
@@ -315,8 +315,50 @@ export default function PatientAppointments({
           name: `${provider.firstName} ${provider.lastName}`,
           category: provider.medicalSpecialtyCategory || "",
           subSpecialty: provider.subSpecialty || "",
+          role: provider.role || "",
         }
-      : { name: "", category: "", subSpecialty: "" };
+      : { name: "", category: "", subSpecialty: "", role: "" };
+  };
+
+  // Get provider with role information from usersData
+  const getProviderWithRole = (providerId: number) => {
+    if (!usersData || !Array.isArray(usersData)) return null;
+    const provider = usersData.find((u: any) => u.id === providerId);
+    if (!provider) return null;
+    
+    const providerRole = provider.role?.toLowerCase();
+    const titlePrefix = providerRole === 'nurse' ? 'Nurse' : providerRole === 'doctor' ? 'Dr.' : '';
+    const fullName = `${provider.firstName || ''} ${provider.lastName || ''}`.trim();
+    
+    return {
+      ...provider,
+      displayName: titlePrefix ? `${titlePrefix} ${fullName}` : fullName,
+      role: providerRole,
+    };
+  };
+
+  // Format appointment title with role prefix
+  const formatAppointmentTitle = (appointment: any) => {
+    if (!appointment.title) return appointment.title;
+    
+    // Check if title contains provider name pattern
+    if (appointment.providerId) {
+      const provider = getProviderWithRole(appointment.providerId);
+      if (provider) {
+        // Replace "Appointment with [name]" with "Appointment with [role] [name]"
+        const title = appointment.title;
+        const providerName = `${provider.firstName || ''} ${provider.lastName || ''}`.trim();
+        if (title.includes(providerName) && !title.includes(provider.displayName)) {
+          return title.replace(providerName, provider.displayName);
+        }
+        // If title is just the name, add "Appointment with" prefix
+        if (title === providerName || title === `${provider.firstName} ${provider.lastName}`) {
+          return `Appointment with ${provider.displayName}`;
+        }
+      }
+    }
+    
+    return appointment.title;
   };
 
   // Get creator name from created_by field
@@ -800,7 +842,7 @@ export default function PatientAppointments({
                 )}
                 <div className="flex items-center space-x-2">
                   <FileText className="h-5 w-5 text-blue-600" />
-                  <span>{nextAppointment.title}</span>
+                  <span>{formatAppointmentTitle(nextAppointment)}</span>
                 </div>
                 {nextAppointment.location && (
                   <div className="flex items-center space-x-2">
@@ -1021,7 +1063,7 @@ export default function PatientAppointments({
                     <div className="space-y-3 flex-1">
                       <div className="flex items-center justify-between">
                         <h3 className="text-lg font-semibold">
-                          {appointment.title}
+                          {formatAppointmentTitle(appointment)}
                         </h3>
                         <div className="flex items-center space-x-2">
                           {normalizeStatus(appointment.status) !== "cancelled" && (

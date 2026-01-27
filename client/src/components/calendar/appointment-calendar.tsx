@@ -45,6 +45,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useRolePermissions } from "@/hooks/use-role-permissions";
 import { useTenant } from "@/hooks/use-tenant";
 import { cn } from "@/lib/utils";
+import { useLocation } from "wouter";
+import { getActiveSubdomain } from "@/lib/subdomain-utils";
 
 const statusColors = {
   scheduled: "text-white",
@@ -135,6 +137,7 @@ export default function AppointmentCalendar({ onNewAppointment }: { onNewAppoint
   const [showAppointmentDetails, setShowAppointmentDetails] = useState(false);
   const [dialogStable, setDialogStable] = useState(true);
   const [activeTab, setActiveTab] = useState("basic");
+  const [, setLocation] = useLocation();
 
   const { user } = useAuth();
   const { tenant } = useTenant();
@@ -904,6 +907,11 @@ const parseShiftTimeToMinutes = (time?: string): number => {
 
     setIsGeneratingPlan(true);
     
+    // Get provider info to determine title
+    const provider = usersData?.find((u: any) => u.id === selectedAppointment.providerId);
+    const providerRole = provider?.role?.toLowerCase();
+    const titlePrefix = providerRole === 'nurse' ? 'Nurse' : 'Dr.';
+    
     const treatmentPlan = `
 COMPREHENSIVE FACIAL MUSCLE TREATMENT PLAN
 
@@ -934,7 +942,7 @@ FOLLOW-UP SCHEDULE:
 - Month 1: Treatment effectiveness assessment
 - Month 3: Long-term outcome review
 
-Prepared by: Dr. ${getProviderName(selectedAppointment.providerId)}
+Prepared by: ${titlePrefix} ${getProviderName(selectedAppointment.providerId)}
 Medical License: [License Number]
     `;
 
@@ -2052,7 +2060,14 @@ Medical License: [License Number]
                     <div className="flex items-center space-x-2">
                       <div className="text-right mr-4">
                      
-                        <div className="font-medium">Dr. {appointment.providerName}</div>
+                        {(() => {
+                          const provider = usersData?.find((u: any) => u.id === appointment.providerId);
+                          const providerRole = provider?.role?.toLowerCase();
+                          const titlePrefix = providerRole === 'nurse' ? 'Nurse' : 'Dr.';
+                          return (
+                            <div className="font-medium">{titlePrefix} {appointment.providerName}</div>
+                          );
+                        })()}
                         {user?.role === 'admin' && (() => {
                           const provider = usersData?.find((u: any) => u.id === appointment.providerId);
                           return provider && (provider.medicalSpecialtyCategory || provider.subSpecialty || provider.department) ? (
@@ -2068,6 +2083,25 @@ Medical License: [License Number]
                           return createdBy ? (
                             <div className="text-xs text-gray-400 mt-1">
                               Created By: {createdBy.name} ({createdBy.role})
+                            </div>
+                          ) : null;
+                        })()}
+                        {appointment.providerId && (() => {
+                          const provider = usersData?.find((u: any) => u.id === appointment.providerId);
+                          return provider ? (
+                            <div className="mt-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const subdomain = getActiveSubdomain();
+                                  setLocation(`/${subdomain}/staff/${appointment.providerId}`);
+                                }}
+                                className="text-xs"
+                              >
+                                View Profile
+                              </Button>
                             </div>
                           ) : null;
                         })()}

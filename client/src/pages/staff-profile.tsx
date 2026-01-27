@@ -249,7 +249,8 @@ export default function StaffProfile() {
               </CardContent>
             </Card>
 
-            {isDoctorLike(staffMember.role) && (
+            {/* Medical Practice - Show for doctors and nurses */}
+            {(isDoctorLike(staffMember.role) || staffMember.role === 'nurse') && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -259,25 +260,51 @@ export default function StaffProfile() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">Specialization</p>
-                      <p className="text-sm text-gray-600">{staffMember.department || 'General Medicine'}</p>
-                    </div>
+                    {staffMember.medicalSpecialtyCategory && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Specialization</p>
+                        <p className="text-sm text-gray-600">{staffMember.medicalSpecialtyCategory}</p>
+                      </div>
+                    )}
                     
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">Experience</p>
-                      <p className="text-sm text-gray-600">5+ years</p>
-                    </div>
+                    {staffMember.subSpecialty && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Sub-Specialization</p>
+                        <p className="text-sm text-gray-600">{staffMember.subSpecialty}</p>
+                      </div>
+                    )}
+                    
+                    {!staffMember.medicalSpecialtyCategory && staffMember.department && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Department</p>
+                        <p className="text-sm text-gray-600">{staffMember.department}</p>
+                      </div>
+                    )}
+                    
+                    {staffMember.workingDays && Array.isArray(staffMember.workingDays) && staffMember.workingDays.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Working Days</p>
+                        <p className="text-sm text-gray-600">{staffMember.workingDays.join(', ')}</p>
+                      </div>
+                    )}
                   </div>
                   
-                  <div>
-                    <p className="text-sm font-medium text-gray-900 mb-2">Clinical Interests</p>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="outline">Patient Care</Badge>
-                      <Badge variant="outline">Preventive Medicine</Badge>
-                      <Badge variant="outline">Clinical Research</Badge>
+                  {staffMember.workingHours && typeof staffMember.workingHours === 'object' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      {staffMember.workingHours.start && (
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Working Hours Start</p>
+                          <p className="text-sm text-gray-600">{staffMember.workingHours.start}</p>
+                        </div>
+                      )}
+                      {staffMember.workingHours.end && (
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Working Hours End</p>
+                          <p className="text-sm text-gray-600">{staffMember.workingHours.end}</p>
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             )}

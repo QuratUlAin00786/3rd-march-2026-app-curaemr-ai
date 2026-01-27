@@ -65,7 +65,9 @@ export function NotificationBell() {
 
   // Fetch unread count
   const organizationKey = user?.organizationId ?? getActiveSubdomain();
-  const isAdminUser = Boolean(user?.role?.toString().toLowerCase() === "admin");
+  const userRole = user?.role?.toString().toLowerCase();
+  const isAdminUser = Boolean(userRole === "admin");
+  const isPatientNurseDoctor = Boolean(["patient", "nurse", "doctor"].includes(userRole || ""));
   const notificationsQueryKey = ["/api/notifications", organizationKey];
   const totalCountQueryKey = ["/api/notifications/count", organizationKey];
   const unreadCountQueryKey = ["/api/notifications/unread-count", organizationKey];
@@ -231,10 +233,12 @@ export function NotificationBell() {
       
       <DropdownMenuContent 
         align="end" 
-        className="w-96 max-h-[840px] overflow-hidden p-0"
+        className={`w-96 p-0 flex flex-col ${
+          isPatientNurseDoctor ? "max-h-[400px]" : "max-h-[840px]"
+        }`}
         sideOffset={5}
       >
-        <div className="flex items-center justify-between p-4 border-b">
+        <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
           <h3 className="font-semibold text-lg">Notifications</h3>
           <div className="flex items-center gap-2">
             {unreadCount > 0 && (
@@ -254,9 +258,16 @@ export function NotificationBell() {
           </div>
         </div>
 
-        <ScrollArea
-          className={user?.role === "admin" ? "h-[300px] overflow-y-auto" : "h-[800px]"}
-        >
+        <div className="flex-1 overflow-hidden">
+          <ScrollArea
+            className={
+              isAdminUser 
+                ? "h-full" 
+                : isPatientNurseDoctor 
+                  ? "h-full" 
+                  : "h-full"
+            }
+          >
           {isLoading ? (
             <div className="p-4 text-center text-gray-500">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
@@ -340,23 +351,22 @@ export function NotificationBell() {
               ))}
             </div>
           )}
-        </ScrollArea>
+          </ScrollArea>
+        </div>
 
-        {visibleNotifications.length > 0 && (
-          <div className="p-3 border-t bg-gray-50">
-            <Button 
-              variant="ghost" 
-              className="w-full text-sm"
-              onClick={() => {
-                const subdomain = getActiveSubdomain();
-                navigate(`/${subdomain}/notifications`);
-                setIsOpen(false);
-              }}
-            >
-              View all notifications
-            </Button>
-          </div>
-        )}
+        <div className="p-3 border-t bg-gray-50 flex-shrink-0">
+          <Button 
+            variant="ghost" 
+            className="w-full text-sm"
+            onClick={() => {
+              const subdomain = getActiveSubdomain();
+              navigate(`/${subdomain}/notifications`);
+              setIsOpen(false);
+            }}
+          >
+            View all notifications
+          </Button>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
