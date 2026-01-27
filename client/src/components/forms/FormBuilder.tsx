@@ -333,8 +333,8 @@ export function FormBuilder({ loadForm, onLoadComplete }: FormBuilderProps = {})
               <div className="space-y-3">
                 {section.fields.map((field) => (
                   <div key={field.id} className="space-y-2">
-                    <div className="flex flex-wrap items-end gap-3">
-                      <div className="flex-1 min-w-[210px] space-y-1">
+                    <div className="flex items-end gap-3 flex-nowrap">
+                      <div className="flex-1 min-w-0 space-y-1">
                         <Label className={fieldErrors[field.id] ? "text-destructive" : ""}>
                           Label
                         </Label>
@@ -342,6 +342,7 @@ export function FormBuilder({ loadForm, onLoadComplete }: FormBuilderProps = {})
                           value={field.label}
                           onChange={(event) => updateField(section.id, field.id, { label: event.target.value })}
                           placeholder="Field label"
+                          className="w-full"
                         />
                         {fieldErrors[field.id] && (
                           <p className="text-[11px] text-destructive mt-1">
@@ -349,7 +350,7 @@ export function FormBuilder({ loadForm, onLoadComplete }: FormBuilderProps = {})
                           </p>
                         )}
                       </div>
-                      <div className="w-full max-w-[260px] min-w-[180px] space-y-1">
+                      <div className="flex-shrink-0 w-[200px] space-y-1">
                         <Label>Type</Label>
                         <Select
                           value={field.type}
@@ -357,7 +358,7 @@ export function FormBuilder({ loadForm, onLoadComplete }: FormBuilderProps = {})
                             updateField(section.id, field.id, { type: value as FieldType })
                           }
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="w-full">
                             <SelectValue placeholder="Choose type" />
                           </SelectTrigger>
                           <SelectContent>
@@ -369,19 +370,21 @@ export function FormBuilder({ loadForm, onLoadComplete }: FormBuilderProps = {})
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="min-w-[120px] w-full max-w-[140px] space-y-1">
+                      <div className="flex-shrink-0 w-[120px] space-y-1">
                         <Label>Required</Label>
-                        <Switch
-                          checked={field.required}
-                          onCheckedChange={(checked) => updateField(section.id, field.id, { required: checked })}
-                        />
+                        <div className="flex items-center h-10">
+                          <Switch
+                            checked={field.required}
+                            onCheckedChange={(checked) => updateField(section.id, field.id, { required: checked })}
+                          />
+                        </div>
                       </div>
-                      <div className="min-w-[0px] flex items-start">
+                      <div className="flex-shrink-0 flex items-end pb-1">
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={() => removeField(section.id, field.id)}
-                          className="px-2.5 py-1 text-xs bg-gray-100 text-red-600 hover:bg-gray-200"
+                          className="px-2.5 py-1 h-10 text-xs bg-gray-100 text-red-600 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700"
                           aria-label="Remove field"
                         >
                           <Trash className="h-4 w-4" />

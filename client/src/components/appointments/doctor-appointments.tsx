@@ -3,8 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Calendar, Clock, User, Video, Stethoscope, Plus, ArrowRight, Edit, Search, X, Filter, FileText, MapPin, ChevronsUpDown } from "lucide-react";
+import { Calendar, Clock, User, Video, Stethoscope, Plus, ArrowRight, Edit, Search, X, Filter, FileText, MapPin, ChevronsUpDown, ChevronLeft, ChevronRight, Check, Loader2, CheckCircle } from "lucide-react";
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, isPast, isFuture, parseISO } from "date-fns";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -37,6 +41,21 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
   // Success modal state
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  
+  // Edit appointment state
+  const [editingAppointment, setEditingAppointment] = useState<any>(null);
+  const [bookedTimeSlots, setBookedTimeSlots] = useState<string[]>([]);
+  
+  // Edit appointment type, treatment, and consultation state
+  const [editAppointmentType, setEditAppointmentType] = useState<"consultation" | "treatment" | "">("");
+  const [editAppointmentSelectedTreatment, setEditAppointmentSelectedTreatment] = useState<any>(null);
+  const [editAppointmentSelectedConsultation, setEditAppointmentSelectedConsultation] = useState<any>(null);
+  const [openEditAppointmentTypeCombo, setOpenEditAppointmentTypeCombo] = useState(false);
+  const [openEditTreatmentCombo, setOpenEditTreatmentCombo] = useState(false);
+  const [openEditConsultationCombo, setOpenEditConsultationCombo] = useState(false);
+  const [editAppointmentTypeError, setEditAppointmentTypeError] = useState<string>("");
+  const [editTreatmentSelectionError, setEditTreatmentSelectionError] = useState<string>("");
+  const [editConsultationSelectionError, setEditConsultationSelectionError] = useState<string>("");
   
   const { user } = useAuth();
   const { toast } = useToast();
@@ -190,6 +209,129 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
     return null;
   };
 
+  // Fetch appointments for a specific date to check booked time slots
+  const fetchAppointmentsForDate = async (date: Date) => {
+    try {
+      const dateStr = format(date, "yyyy-MM-dd");
+      const response = await apiRequest('GET', '/api/appointments');
+      const data = await response.json();
+
+      // Filter appointments for the selected date (excluding the current appointment being edited)
+      // Only include SCHEDULED appointments - CANCELLED appointments should not block time slots
+      const dayAppointments = data.filter((apt: any) => {
+        const aptDate = format(new Date(apt.scheduledAt), "yyyy-MM-dd");
+        return aptDate === dateStr && apt.id !== editingAppointment?.id && apt.status?.toLowerCase() === 'scheduled';
+      });
+
+      // Extract booked time slots
+      const bookedSlots = dayAppointments.map((apt: any) => {
+        const aptTime = new Date(apt.scheduledAt);
+        return format(aptTime, "h:mm a");
+      });
+
+      setBookedTimeSlots(bookedSlots);
+      console.log("📅 Booked time slots for", dateStr, ":", bookedSlots);
+    } catch (error) {
+      console.error("Error fetching appointments for date:", error);
+      setBookedTimeSlots([]);
+    }
+  };
+
+  // Fetch appointments when editing appointment date changes
+  React.useEffect(() => {
+    if (editingAppointment?.scheduledAt) {
+      const selectedDate = new Date(editingAppointment.scheduledAt);
+      fetchAppointmentsForDate(selectedDate);
+    }
+  }, [editingAppointment?.scheduledAt, editingAppointment?.id]);
+
+  // Edit appointment mutation
+  const editAppointmentMutation = useMutation({
+    mutationFn: async (appointmentData: any) => {
+      try {
+        // Check if token exists
+        const token = localStorage.getItem('auth_token');
+        if (!token) {
+          throw new Error("Authentication required. Please log in again.");
+        }
+
+        const appointmentId = appointmentData.id;
+        // Remove id from payload as it's in the URL
+        const { id, ...updatePayload } = appointmentData;
+
+        console.log('🔍 Editing appointment:', {
+          id: appointmentId,
+          appointmentType: updatePayload.appointmentType,
+          treatmentId: updatePayload.treatmentId,
+          consultationId: updatePayload.consultationId,
+          hasToken: !!token
+        });
+
+        // Use PATCH endpoint which supports appointmentType, treatmentId, and consultationId
+        const response = await apiRequest(
+          "PATCH",
+          `/api/appointments/${appointmentId}`,
+          updatePayload,
+        );
+
+        try {
+          return await response.json();
+        } catch (jsonError) {
+          // If JSON parsing fails but response was successful, return a success indicator
+          return { success: true };
+        }
+      } catch (error: any) {
+        // Extract error message from response if available
+        let errorMessage = "Failed to update appointment. Please try again.";
+        
+        if (error?.message) {
+          // Check if error message contains JSON response
+          const match = error.message.match(/^\d+:\s*(.+)$/);
+          if (match) {
+            try {
+              const errorData = JSON.parse(match[1]);
+              errorMessage = errorData.error || error.message;
+            } catch {
+              // If parsing fails, check if it's a direct error message
+              if (error.message.includes('Authentication required') || error.message.includes('401')) {
+                errorMessage = "Authentication required. Please log in again.";
+              } else {
+                errorMessage = error.message;
+              }
+            }
+          } else {
+            errorMessage = error.message;
+          }
+        }
+        
+        console.error('❌ Edit appointment error:', error);
+        throw new Error(errorMessage);
+      }
+    },
+    onSuccess: () => {
+      setSuccessMessage("The appointment has been successfully updated.");
+      setShowSuccessModal(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.refetchQueries({ queryKey: ["/api/appointments"] });
+      setEditingAppointment(null);
+      setEditAppointmentType("");
+      setEditAppointmentSelectedTreatment(null);
+      setEditAppointmentSelectedConsultation(null);
+      setEditAppointmentTypeError("");
+      setEditTreatmentSelectionError("");
+      setEditConsultationSelectionError("");
+    },
+    onError: (error: any) => {
+      const errorMessage = error?.message || "Failed to update appointment. Please try again.";
+      console.error('❌ Edit appointment mutation error:', error);
+      toast({
+        title: "Update Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Cancel appointment mutation
   const cancelAppointmentMutation = useMutation({
     mutationFn: async (appointmentId: number) => {
@@ -211,6 +353,109 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
       });
     },
   });
+
+  const handleEditAppointment = (appointment: any) => {
+    setEditingAppointment(appointment);
+    
+    // Determine appointment type: check appointmentType, type, or infer from treatmentId/consultationId
+    let normalizedAppointmentType = appointment.appointmentType || appointment.type;
+    if (!normalizedAppointmentType) {
+      // Infer from existing IDs
+      if (appointment.treatmentId) {
+        normalizedAppointmentType = "treatment";
+      } else if (appointment.consultationId) {
+        normalizedAppointmentType = "consultation";
+      } else {
+        normalizedAppointmentType = "consultation"; // Default
+      }
+    }
+    
+    setEditAppointmentType(normalizedAppointmentType);
+    
+    // Find and set selected treatment or consultation
+    const treatment = treatmentsList.find((t: any) => t.id === appointment.treatmentId);
+    const consultation = consultationServices.find((s: any) => s.id === appointment.consultationId);
+    
+    setEditAppointmentSelectedTreatment(treatment || null);
+    setEditAppointmentSelectedConsultation(consultation || null);
+    
+    setEditAppointmentTypeError("");
+    setEditTreatmentSelectionError("");
+    setEditConsultationSelectionError("");
+    setOpenEditAppointmentTypeCombo(false);
+    setOpenEditTreatmentCombo(false);
+    setOpenEditConsultationCombo(false);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingAppointment) return;
+
+    // Validate appointment type selection
+    if (!editAppointmentType) {
+      setEditAppointmentTypeError("Please select an appointment type");
+      return;
+    }
+
+    // Validate treatment/consultation selection based on type
+    if (editAppointmentType === "treatment" && !editAppointmentSelectedTreatment) {
+      setEditTreatmentSelectionError("Please select a treatment");
+      return;
+    }
+
+    if (editAppointmentType === "consultation" && !editAppointmentSelectedConsultation) {
+      setEditConsultationSelectionError("Please select a consultation service");
+      return;
+    }
+
+    // Prepare update data - only include fields that should be updated
+    const updateData: any = {
+      title: editingAppointment.title || "",
+      appointmentType: editAppointmentType,
+      scheduledAt: editingAppointment.scheduledAt,
+      status: editingAppointment.status || "scheduled",
+      description: editingAppointment.description || "",
+    };
+
+    // Set 'type' field only if appointmentType is "consultation"
+    // Backend expects type to be: "consultation", "follow_up", or "procedure"
+    // When appointmentType is "treatment", we don't set type (it's optional)
+    if (editAppointmentType === "consultation") {
+      updateData.type = "consultation";
+    }
+
+    // Add optional fields if they exist
+    if (editingAppointment.duration) {
+      updateData.duration = editingAppointment.duration;
+    }
+    if (editingAppointment.location) {
+      updateData.location = editingAppointment.location;
+    }
+    if (editingAppointment.isVirtual !== undefined) {
+      updateData.isVirtual = editingAppointment.isVirtual;
+    }
+
+    // Add treatment or consultation ID based on type
+    if (editAppointmentType === "treatment" && editAppointmentSelectedTreatment) {
+      updateData.treatmentId = editAppointmentSelectedTreatment.id;
+      updateData.consultationId = null;
+    } else if (editAppointmentType === "consultation" && editAppointmentSelectedConsultation) {
+      updateData.consultationId = editAppointmentSelectedConsultation.id;
+      updateData.treatmentId = null;
+    }
+
+    // Store appointment ID separately (not in payload)
+    const appointmentId = editingAppointment.id;
+
+    console.log('💾 Saving appointment update:', {
+      id: appointmentId,
+      updateData
+    });
+    
+    editAppointmentMutation.mutate({
+      id: appointmentId,
+      ...updateData,
+    });
+  };
 
   const appointments = appointmentsData || [];
 
@@ -924,7 +1169,15 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                       </h3>
                       <div className="flex items-center gap-2">
                         {appointment.status !== 'cancelled' && (
-                          <Edit className="h-4 w-4 text-gray-400 cursor-pointer hover:text-blue-600" />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleEditAppointment(appointment)}
+                            className="h-8 w-8 p-0"
+                            data-testid={`button-edit-appointment-${appointment.id}`}
+                          >
+                            <Edit className="h-4 w-4 text-blue-600" />
+                          </Button>
                         )}
                         {appointment.status !== 'cancelled' && isDoctorLike(user?.role || '') && (
                           <Button
@@ -1034,6 +1287,588 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
         </CardContent>
       </Card>
 
+      {/* Edit Appointment Dialog */}
+      {editingAppointment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                    Edit Appointment
+                  </h2>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Update appointment details
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setEditingAppointment(null);
+                    setEditAppointmentType("");
+                    setEditAppointmentSelectedTreatment(null);
+                    setEditAppointmentSelectedConsultation(null);
+                    setEditAppointmentTypeError("");
+                    setEditTreatmentSelectionError("");
+                    setEditConsultationSelectionError("");
+                  }}
+                  className="hover:bg-gray-100 dark:hover:bg-gray-700"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Basic Information */}
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Title */}
+                  <div>
+                    <Label
+                      htmlFor="title"
+                      className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Title
+                    </Label>
+                    <Input
+                      id="title"
+                      type="text"
+                      value={editingAppointment.title || ""}
+                      onChange={(e) =>
+                        setEditingAppointment({
+                          ...editingAppointment,
+                          title: e.target.value,
+                        })
+                      }
+                      className="mt-1"
+                      placeholder="Enter appointment title"
+                    />
+                  </div>
+
+                  {/* Duration */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Duration (minutes)
+                    </Label>
+                    <Select
+                      value={String(editingAppointment.duration || 30)}
+                      onValueChange={(value) =>
+                        setEditingAppointment({
+                          ...editingAppointment,
+                          duration: parseInt(value),
+                        })
+                      }
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="15">15 minutes</SelectItem>
+                        <SelectItem value="30">30 minutes</SelectItem>
+                        <SelectItem value="60">60 minutes (1 hour)</SelectItem>
+                        <SelectItem value="90">90 minutes (1.5 hours)</SelectItem>
+                        <SelectItem value="120">120 minutes (2 hours)</SelectItem>
+                        <SelectItem value="180">180 minutes (3 hours)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Appointment Type and Treatment/Consultation Selection */}
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Appointment Type
+                    </Label>
+                    <Popover open={openEditAppointmentTypeCombo} onOpenChange={setOpenEditAppointmentTypeCombo}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={openEditAppointmentTypeCombo}
+                          className="w-full justify-between mt-1"
+                        >
+                          {editAppointmentType
+                            ? editAppointmentType.charAt(0).toUpperCase() + editAppointmentType.slice(1)
+                            : "Select an appointment type"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-full p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search appointment type..." />
+                          <CommandList>
+                            <CommandEmpty>No type found.</CommandEmpty>
+                            <CommandGroup>
+                              {["consultation", "treatment"].map((type) => (
+                                <CommandItem
+                                  key={type}
+                                  value={type}
+                                  onSelect={(currentValue) => {
+                                    const normalized = currentValue as "consultation" | "treatment";
+                                    setEditAppointmentType(normalized);
+                                    setEditAppointmentSelectedTreatment(null);
+                                    setEditAppointmentSelectedConsultation(null);
+                                    setEditAppointmentTypeError("");
+                                    setEditTreatmentSelectionError("");
+                                    setEditConsultationSelectionError("");
+                                    setOpenEditAppointmentTypeCombo(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${
+                                      editAppointmentType === type ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                    {editAppointmentTypeError && (
+                      <p className="text-red-500 text-xs mt-1">{editAppointmentTypeError}</p>
+                    )}
+                  </div>
+                  <div>
+                    {editAppointmentType === "treatment" && (
+                      <>
+                        <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Select Treatment
+                        </Label>
+                        <Popover open={openEditTreatmentCombo} onOpenChange={setOpenEditTreatmentCombo}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={openEditTreatmentCombo}
+                              className="w-full justify-between mt-1"
+                            >
+                              {editAppointmentSelectedTreatment ? editAppointmentSelectedTreatment.name : "Select a treatment"}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-full p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search treatments..." />
+                              <CommandList>
+                                <CommandEmpty>No treatments found.</CommandEmpty>
+                                <CommandGroup>
+                                  {treatmentsList.map((treatment: any) => (
+                                    <CommandItem
+                                      key={treatment.id}
+                                      value={treatment.id.toString()}
+                                      onSelect={() => {
+                                        setEditAppointmentSelectedTreatment(treatment);
+                                        setEditTreatmentSelectionError("");
+                                        setOpenEditTreatmentCombo(false);
+                                      }}
+                                    >
+                                      <div className="flex items-center gap-2 w-full">
+                                        <span
+                                          className="inline-flex h-3 w-3 rounded-full border border-gray-300"
+                                          style={{ backgroundColor: treatment.colorCode || "#D1D5DB" }}
+                                        />
+                                        <span className="flex-1 text-left">{treatment.name}</span>
+                                        <span className="text-xs text-gray-500">
+                                          {treatment.currency || "GBP"} {treatment.basePrice || 0}
+                                        </span>
+                                      </div>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                        {editAppointmentSelectedTreatment && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="mt-1 px-0 text-blue-600"
+                            onClick={() => setEditAppointmentSelectedTreatment(null)}
+                          >
+                            Clear selection
+                          </Button>
+                        )}
+                        {editTreatmentSelectionError && (
+                          <p className="text-red-500 text-xs mt-1">{editTreatmentSelectionError}</p>
+                        )}
+                      </>
+                    )}
+                    {editAppointmentType === "consultation" && (
+                      <>
+                        <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Select Consultation
+                        </Label>
+                        <Popover open={openEditConsultationCombo} onOpenChange={setOpenEditConsultationCombo}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={openEditConsultationCombo}
+                              className="w-full justify-between mt-1"
+                            >
+                              {editAppointmentSelectedConsultation ? editAppointmentSelectedConsultation.serviceName || editAppointmentSelectedConsultation.service_name : "Select a consultation"}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-full p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search consultation..." />
+                              <CommandList>
+                                <CommandEmpty>No consultations found.</CommandEmpty>
+                                <CommandGroup>
+                                  {consultationServices.map((service: any) => (
+                                    <CommandItem
+                                      key={service.id}
+                                      value={service.id.toString()}
+                                      onSelect={() => {
+                                        setEditAppointmentSelectedConsultation(service);
+                                        setEditConsultationSelectionError("");
+                                        setOpenEditConsultationCombo(false);
+                                      }}
+                                    >
+                                      <div className="flex items-center gap-2 w-full">
+                                        <span className="flex-1 text-left">{service.serviceName || service.service_name}</span>
+                                        <span className="text-xs text-gray-500">
+                                          {service.currency || "GBP"} {service.basePrice || 0}
+                                        </span>
+                                      </div>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                        {editAppointmentSelectedConsultation && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="mt-1 px-0 text-blue-600"
+                            onClick={() => setEditAppointmentSelectedConsultation(null)}
+                          >
+                            Clear selection
+                          </Button>
+                        )}
+                        {editConsultationSelectionError && (
+                          <p className="text-red-500 text-xs mt-1">{editConsultationSelectionError}</p>
+                        )}
+                      </>
+                    )}
+                    {!editAppointmentType && (
+                      <p className="text-xs text-gray-500 mt-1">Select an appointment type to continue</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Date and Time Selection */}
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Select Date */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Select Date *
+                    </Label>
+                    <div className="mt-1 p-4 border border-gray-300 dark:border-gray-600 rounded-md">
+                      <div className="flex items-center justify-between mb-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const currentDate = new Date(
+                              editingAppointment.scheduledAt,
+                            );
+                            currentDate.setMonth(currentDate.getMonth() - 1);
+                            setEditingAppointment({
+                              ...editingAppointment,
+                              scheduledAt: currentDate.toISOString(),
+                            });
+                          }}
+                          className="p-1"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="font-medium">
+                          {format(
+                            new Date(editingAppointment.scheduledAt),
+                            "MMMM yyyy",
+                          )}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const currentDate = new Date(
+                              editingAppointment.scheduledAt,
+                            );
+                            currentDate.setMonth(currentDate.getMonth() + 1);
+                            setEditingAppointment({
+                              ...editingAppointment,
+                              scheduledAt: currentDate.toISOString(),
+                            });
+                          }}
+                          className="p-1"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-7 gap-1 text-xs mb-2">
+                        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(
+                          (day) => (
+                            <div
+                              key={day}
+                              className="p-2 text-center font-medium text-gray-500 dark:text-gray-400"
+                            >
+                              {day}
+                            </div>
+                          ),
+                        )}
+                      </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {Array.from({ length: 42 }, (_, i) => {
+                          const currentMonth = new Date(
+                            editingAppointment.scheduledAt,
+                          ).getMonth();
+                          const currentYear = new Date(
+                            editingAppointment.scheduledAt,
+                          ).getFullYear();
+                          const firstDayOfMonth = new Date(
+                            currentYear,
+                            currentMonth,
+                            1,
+                          );
+                          const startDate = new Date(firstDayOfMonth);
+                          startDate.setDate(
+                            startDate.getDate() - firstDayOfMonth.getDay(),
+                          );
+                          const cellDate = new Date(startDate);
+                          cellDate.setDate(cellDate.getDate() + i);
+                          const isCurrentMonth =
+                            cellDate.getMonth() === currentMonth;
+                          const isSelected =
+                            format(cellDate, "yyyy-MM-dd") ===
+                            format(
+                              new Date(editingAppointment.scheduledAt),
+                              "yyyy-MM-dd",
+                            );
+
+                          return (
+                            <Button
+                              key={i}
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const newDate = new Date(
+                                  editingAppointment.scheduledAt,
+                                );
+                                newDate.setFullYear(
+                                  cellDate.getFullYear(),
+                                  cellDate.getMonth(),
+                                  cellDate.getDate(),
+                                );
+                                setEditingAppointment({
+                                  ...editingAppointment,
+                                  scheduledAt: newDate.toISOString(),
+                                });
+                                fetchAppointmentsForDate(cellDate);
+                              }}
+                              className={`p-2 text-sm rounded ${
+                                isSelected
+                                  ? "bg-blue-500 text-white hover:bg-blue-600"
+                                  : isCurrentMonth
+                                    ? "text-gray-900 dark:text-gray-100 hover:bg-blue-50 dark:hover:bg-gray-700"
+                                    : "text-gray-400 dark:text-gray-600"
+                              }`}
+                            >
+                              {cellDate.getDate()}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Select Time Slot */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Select Time Slot *
+                    </Label>
+                    <div className="mt-1 max-h-64 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-md p-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          "9:00 AM",
+                          "9:30 AM",
+                          "10:00 AM",
+                          "10:30 AM",
+                          "11:00 AM",
+                          "11:30 AM",
+                          "12:00 PM",
+                          "12:30 PM",
+                          "1:00 PM",
+                          "1:30 PM",
+                          "2:00 PM",
+                          "2:30 PM",
+                          "3:00 PM",
+                          "3:30 PM",
+                          "4:00 PM",
+                          "4:30 PM",
+                          "5:00 PM",
+                        ].map((timeSlot) => {
+                          const currentTime = format(
+                            new Date(editingAppointment.scheduledAt),
+                            "h:mm a",
+                          );
+                          const isSelected = timeSlot === currentTime;
+                          const isBooked = bookedTimeSlots.includes(timeSlot);
+
+                          return (
+                            <Button
+                              key={timeSlot}
+                              type="button"
+                              disabled={isBooked}
+                              onClick={() => {
+                                if (isBooked) return;
+
+                                const [time, period] = timeSlot.split(" ");
+                                const [hours, minutes] = time.split(":");
+                                let hour24 = parseInt(hours);
+                                if (period === "PM" && hour24 !== 12)
+                                  hour24 += 12;
+                                if (period === "AM" && hour24 === 12)
+                                  hour24 = 0;
+
+                                const newDate = new Date(
+                                  editingAppointment.scheduledAt,
+                                );
+                                newDate.setHours(
+                                  hour24,
+                                  parseInt(minutes),
+                                  0,
+                                  0,
+                                );
+                                setEditingAppointment({
+                                  ...editingAppointment,
+                                  scheduledAt: newDate.toISOString(),
+                                });
+                              }}
+                              className={`p-2 text-sm rounded border text-center ${
+                                isSelected
+                                  ? "bg-yellow-500 text-white border-yellow-500 hover:bg-yellow-600"
+                                  : isBooked
+                                    ? "bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed"
+                                    : "bg-green-500 text-white border-green-500 hover:bg-green-600"
+                              }`}
+                              title={
+                                isBooked
+                                  ? "Time slot already booked"
+                                  : "Available time slot"
+                              }
+                            >
+                              {timeSlot}
+                              {isBooked && (
+                                <span className="block text-xs mt-1">
+                                  Booked
+                                </span>
+                              )}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status and Description */}
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Status */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Status
+                    </Label>
+                    <Select
+                      value={editingAppointment.status || "scheduled"}
+                      onValueChange={(value) =>
+                        setEditingAppointment({
+                          ...editingAppointment,
+                          status: value,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="scheduled">Scheduled</SelectItem>
+                        <SelectItem value="confirmed">Confirmed</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
+                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Description */}
+                  <div>
+                    <Label
+                      htmlFor="description"
+                      className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Description
+                    </Label>
+                    <textarea
+                      id="description"
+                      value={editingAppointment.description || ""}
+                      onChange={(e) =>
+                        setEditingAppointment({
+                          ...editingAppointment,
+                          description: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                      rows={3}
+                      placeholder="Enter appointment description"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end space-x-3 mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditingAppointment(null);
+                    setEditAppointmentType("");
+                    setEditAppointmentSelectedTreatment(null);
+                    setEditAppointmentSelectedConsultation(null);
+                    setEditAppointmentTypeError("");
+                    setEditTreatmentSelectionError("");
+                    setEditConsultationSelectionError("");
+                  }}
+                  className="px-6"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSaveEdit}
+                  disabled={editAppointmentMutation.isPending}
+                  className="px-6 bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  {editAppointmentMutation.isPending
+                    ? "Saving..."
+                    : "Save Changes"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cancel Appointment Confirmation Modal */}
       <Dialog open={appointmentToCancel !== null} onOpenChange={(open) => !open && setAppointmentToCancel(null)}>
         <DialogContent data-testid="dialog-cancel-appointment">
@@ -1072,11 +1907,14 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
       <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold text-green-600">Success</DialogTitle>
+            <DialogTitle className="text-xl font-bold text-green-600 flex items-center gap-2">
+              <CheckCircle className="h-6 w-6 text-green-600" />
+              Success
+            </DialogTitle>
           </DialogHeader>
           
           <div className="py-4">
-            <p className="text-gray-700">{successMessage}</p>
+            <p className="text-gray-700 dark:text-gray-300">{successMessage}</p>
           </div>
 
           <div className="flex justify-end">

@@ -921,6 +921,7 @@ export default function Forms() {
   };
   const [emailPreview, setEmailPreview] = useState<{ subject: string; html: string; text: string; link: string } | null>(null);
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  const [formSharedSuccessfully, setFormSharedSuccessfully] = useState(false);
   const [showTemplateSaveSuccessModal, setShowTemplateSaveSuccessModal] = useState(false);
   const [savedTemplateName, setSavedTemplateName] = useState("");
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
@@ -2305,6 +2306,7 @@ Coverage Details: [Insurance Coverage]`;
     setShowFormShareDialog(false);
     setSelectedFormForShare(null);
     setSelectedFormPatientId("");
+    setFormSharedSuccessfully(false);
   };
 
   const openFormShareDialog = (form: FormSummary) => {
@@ -2473,6 +2475,7 @@ Coverage Details: [Insurance Coverage]`;
         [selectedFormForShare?.id ?? 0]: data.link,
       }));
       queryClient.invalidateQueries({ queryKey: ["/api/forms"] });
+      setFormSharedSuccessfully(true); // Enable Preview email button after successful share
       toast({
         title: data.emailSent ? "Form shared" : "Link created",
         description: data.emailSent
@@ -2480,7 +2483,8 @@ Coverage Details: [Insurance Coverage]`;
           : `Link generated, but email delivery failed${data.emailError ? ` (${data.emailError})` : ""}—copy the link manually or resend.`,
         variant: data.emailSent ? undefined : "destructive",
       });
-      closeFormShareDialog();
+      // Don't close the dialog immediately - keep it open so user can preview email
+      // closeFormShareDialog();
     },
     onError(error) {
       toast({
@@ -6228,7 +6232,8 @@ const formIds = useMemo(
             >
               Filled Forms
             </TabsTrigger>
-            {!userIsPatient && (
+            {/* Document Editor tab hidden */}
+            {false && !userIsPatient && (
               <TabsTrigger
                 value="editor"
                 className="rounded-xl px-3 py-2 text-[12px] transition-colors text-slate-800 dark:text-slate-200 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-white/10 data-[state=active]:text-slate-900 dark:data-[state=active]:text-white"
@@ -6371,7 +6376,8 @@ const formIds = useMemo(
             </>
           )}
 
-          {!userIsPatient && (
+          {/* Document Editor tab content hidden */}
+          {false && !userIsPatient && (
             <TabsContent
               value="editor"
               className="space-y-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
@@ -7371,7 +7377,7 @@ const formIds = useMemo(
                   <Button
                     onClick={() => previewEmailMutation.mutate()}
                     variant="outline"
-                    disabled={previewEmailMutation.isPending || !selectedFormPatientId || !selectedPatient?.email}
+                    disabled={previewEmailMutation.isPending || !selectedFormPatientId || !selectedPatient?.email || !formSharedSuccessfully}
                   >
                     {previewEmailMutation.isPending ? "Generating…" : "Preview email"}
                   </Button>

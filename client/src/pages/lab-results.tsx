@@ -4532,10 +4532,6 @@ Report generated from Cura EMR System`;
                   <SelectItem value="cash">Cash</SelectItem>
                   <SelectItem value="debit_card">Debit Card</SelectItem>
                   <SelectItem value="credit_card">Credit Card</SelectItem>
-                  <SelectItem value="Insurance">Insurance</SelectItem>
-                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                  <SelectItem value="check">Check</SelectItem>
-                  <SelectItem value="online_payment">Online Payment</SelectItem>
                 </SelectContent>
               </Select>
             </div>

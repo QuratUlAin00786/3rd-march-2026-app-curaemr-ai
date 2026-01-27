@@ -33,9 +33,16 @@ export async function tenantMiddleware(req: TenantRequest, res: Response, next: 
       return next();
     }
     
-    // Skip tenant middleware for public organization check and create-trial endpoints
+    // Skip subscription checks for /tenant/info endpoint - it's called without auth and needed for app initialization
+    if (req.path === "/tenant/info" || req.path.startsWith("/tenant/info")) {
+      console.log(`[TENANT-MIDDLEWARE] Allowing /tenant/info endpoint without subscription checks: ${req.path}`);
+      // Continue to set tenant context but skip subscription validation
+    }
+    
+    // Skip tenant middleware for public organization check, create-trial, and check-subscription endpoints
     if (req.path.startsWith("/organizations/check-name") || 
-        req.path.startsWith("/create-trial")) {
+        req.path.startsWith("/create-trial") ||
+        req.path.startsWith("/check-subscription")) {
       console.log(`[TENANT-MIDDLEWARE] Skipping tenant lookup for public endpoint: ${req.path}`);
       return next();
     }
@@ -156,9 +163,80 @@ export async function tenantMiddleware(req: TenantRequest, res: Response, next: 
       return res.status(500).json({ error: "Failed to initialize organization" });
     }
     
-    const subscription = await storage.getSubscription(organization.id);
-    if (subscription && !["trial", "active"].includes(subscription.status)) {
-      return res.status(403).json({ error: "Subscription inactive" });
+    // Allow /tenant/info endpoint to pass through without subscription checks
+    // This endpoint is called without authentication and is needed for app initialization
+    // Login endpoints will handle blocking expired subscriptions
+    const isTenantInfoEndpoint = 
+      req.path === "/tenant/info" || 
+      req.path.startsWith("/tenant/info") ||
+      req.originalUrl?.includes("/tenant/info") ||
+      req.url?.includes("/tenant/info");
+    
+    console.log(`[TENANT-MIDDLEWARE] Path check - path: ${req.path}, originalUrl: ${req.originalUrl}, url: ${req.url}, isTenantInfo: ${isTenantInfoEndpoint}`);
+    
+    if (!isTenantInfoEndpoint) {
+      // Check subscription expiration - get from saas_subscriptions table
+      const subscription = await storage.getOrganizationSubscription(organization.id);
+      if (subscription) {
+        // Check if subscription status is valid
+        if (!["trial", "active"].includes(subscription.status)) {
+          return res.status(403).json({ error: "Subscription inactive" });
+        }
+        
+        // Check if subscription has expired based on expiresAt
+        // Only check expiration for authenticated requests (login endpoints handle unauthenticated)
+        const hasAuthToken = req.get("Authorization")?.startsWith("Bearer ");
+        
+        if (hasAuthToken && subscription.expiresAt) {
+          // Parse expiresAt - handle both Date objects and ISO strings
+          let expiresAt: Date;
+          if (subscription.expiresAt instanceof Date) {
+            expiresAt = subscription.expiresAt;
+          } else if (typeof subscription.expiresAt === 'string') {
+            expiresAt = new Date(subscription.expiresAt);
+          } else {
+            expiresAt = new Date(subscription.expiresAt);
+          }
+          
+          // Validate date parsing
+          if (isNaN(expiresAt.getTime())) {
+            console.log(`[TENANT-MIDDLEWARE] ⚠️ Invalid expiresAt date for org ${organization.id}: ${subscription.expiresAt}`);
+            return res.status(403).json({ 
+              error: `Invalid subscription expiration date. Please contact support.` 
+            });
+          }
+          
+          const now = new Date();
+          
+          // Compare timestamps directly for accurate comparison
+          const expiresAtTimestamp = expiresAt.getTime();
+          const nowTimestamp = now.getTime();
+          
+          console.log(`[TENANT-MIDDLEWARE] Comparing dates - Now: ${now.toISOString()} (${nowTimestamp}), ExpiresAt: ${expiresAt.toISOString()} (${expiresAtTimestamp})`);
+          console.log(`[TENANT-MIDDLEWARE] Time difference (ms): ${nowTimestamp - expiresAtTimestamp}, Is expired: ${expiresAtTimestamp < nowTimestamp}`);
+          
+          // Compare current datetime with expires_at - if it's past, block access
+          if (expiresAtTimestamp < nowTimestamp) {
+            // Format expiration date/time for display
+            const expirationDate = expiresAt.toLocaleString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              timeZoneName: 'short'
+            });
+            
+            console.log(`[TENANT-MIDDLEWARE] ❌ Subscription expired for org ${organization.id}, expiresAt: ${expiresAt.toISOString()}`);
+            return res.status(403).json({ 
+              error: `Your subscription has expired. Please renew. Subscription expired on: ${expirationDate}` 
+            });
+          }
+        }
+      }
+    } else {
+      console.log(`[TENANT-MIDDLEWARE] ✅ Allowing /tenant/info endpoint without subscription checks`);
     }
 
     req.tenant = {

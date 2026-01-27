@@ -1424,8 +1424,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "Organization not found" });
       }
 
-      // Check subscription expiration before allowing login
-      // Get organization ID from users table and match with saas_subscriptions table
+      // Check subscription status and expiration before allowing login
+      // This check works for ANY email entered at login time
+      // 1. Get organization ID from users table (user.organizationId)
+      // 2. Match with saas_subscriptions table using organizationId
+      // 3. Check subscription status (must be "trial" or "active")
+      // 4. Compare expiresAt with current datetime
+      // 5. If expired or inactive, block login and show expiration message
       console.log(`[UNIVERSAL LOGIN] Checking subscription for user ${email}, organization ID: ${user.organizationId}`);
       const subscription = await storage.getOrganizationSubscription(user.organizationId);
       
@@ -1437,14 +1442,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paymentStatus: subscription.paymentStatus
         });
         
+        // FIRST: Check subscription status - block "expired" or "cancelled" immediately
+        if (!["trial", "active"].includes(subscription.status)) {
+          console.log(`[UNIVERSAL LOGIN] ❌ Subscription inactive for user ${email}, org ID: ${user.organizationId}, status: ${subscription.status}`);
+          return res.status(403).json({ 
+            error: `Your subscription is inactive. Please renew your subscription. Status: ${subscription.status}` 
+          });
+        }
+        
+        // SECOND: Check if subscription has expired based on expiresAt
+        // This ensures expired subscriptions are blocked even if status is still "active"
+        let isExpired = false;
         if (subscription.expiresAt) {
-          const expiresAt = new Date(subscription.expiresAt);
+          // Parse expiresAt - handle both Date objects and ISO strings
+          let expiresAt: Date;
+          if (subscription.expiresAt instanceof Date) {
+            expiresAt = subscription.expiresAt;
+          } else if (typeof subscription.expiresAt === 'string') {
+            expiresAt = new Date(subscription.expiresAt);
+          } else {
+            expiresAt = new Date(subscription.expiresAt);
+          }
+          
+          // Validate date parsing
+          if (isNaN(expiresAt.getTime())) {
+            console.log(`[UNIVERSAL LOGIN] ⚠️ Invalid expiresAt date for org ${user.organizationId}: ${subscription.expiresAt}`);
+            return res.status(403).json({ 
+              error: `Invalid subscription expiration date. Please contact support.` 
+            });
+          }
+          
           const now = new Date();
           
-          console.log(`[UNIVERSAL LOGIN] Comparing dates - Now: ${now.toISOString()}, ExpiresAt: ${expiresAt.toISOString()}`);
+          // Compare timestamps directly for accurate comparison
+          const expiresAtTimestamp = expiresAt.getTime();
+          const nowTimestamp = now.getTime();
           
-          // Compare current datetime with expires_at - if it's past, block login
-          if (expiresAt < now) {
+          console.log(`[UNIVERSAL LOGIN] Comparing dates - Now: ${now.toISOString()} (${nowTimestamp}), ExpiresAt: ${expiresAt.toISOString()} (${expiresAtTimestamp})`);
+          console.log(`[UNIVERSAL LOGIN] Time difference (ms): ${nowTimestamp - expiresAtTimestamp}, Is expired: ${expiresAtTimestamp < nowTimestamp}`);
+          
+          // Compare current datetime with expires_at - if it's past, mark as expired
+          isExpired = expiresAtTimestamp < nowTimestamp;
+          
+          if (isExpired) {
             // Format expiration date/time for display
             const expirationDate = expiresAt.toLocaleString('en-US', {
               year: 'numeric',
@@ -1456,15 +1496,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               timeZoneName: 'short'
             });
             
-            console.log(`[UNIVERSAL LOGIN] ❌ Subscription expired for user ${email}, org ID: ${user.organizationId}, expiresAt: ${expiresAt.toISOString()}`);
+            console.log(`[UNIVERSAL LOGIN] ❌ Subscription expired for user ${email}, org ID: ${user.organizationId}, expiresAt: ${expiresAt.toISOString()} (${expiresAtTimestamp}), now: ${now.toISOString()} (${nowTimestamp})`);
             return res.status(403).json({ 
               error: `Your subscription has expired. Please renew. Subscription expired on: ${expirationDate}` 
             });
           } else {
-            console.log(`[UNIVERSAL LOGIN] ✅ Subscription is valid for user ${email}, expiresAt: ${expiresAt.toISOString()}`);
+            console.log(`[UNIVERSAL LOGIN] ✅ Subscription expiration check passed for user ${email}, expiresAt: ${expiresAt.toISOString()}`);
           }
         } else {
-          console.log(`[UNIVERSAL LOGIN] ⚠️ Subscription found but expiresAt is null for org ${user.organizationId} - allowing login`);
+          console.log(`[UNIVERSAL LOGIN] ⚠️ Subscription found but expiresAt is null for org ${user.organizationId} - status check already passed`);
         }
       } else {
         console.log(`[UNIVERSAL LOGIN] ⚠️ No subscription found for org ${user.organizationId} - allowing login`);
@@ -1606,8 +1646,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get organization subdomain to include in response
       const organization = await storage.getOrganization(user.organizationId);
 
-      // Check subscription expiration before allowing login
+      // Check subscription status and expiration before allowing login
       // Get organization ID from users table and match with saas_subscriptions table
+      // 1. Check subscription status (must be "trial" or "active")
+      // 2. Compare expiresAt with current datetime
+      // 3. If expired or inactive, block login and show expiration message
       console.log(`[LOGIN] Checking subscription for user ${email}, organization ID: ${user.organizationId}`);
       const subscription = await storage.getOrganizationSubscription(user.organizationId);
       
@@ -1619,14 +1662,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paymentStatus: subscription.paymentStatus
         });
         
+        // FIRST: Check subscription status - block "expired" or "cancelled" immediately
+        if (!["trial", "active"].includes(subscription.status)) {
+          console.log(`[LOGIN] ❌ Subscription inactive for user ${email}, org ID: ${user.organizationId}, status: ${subscription.status}`);
+          return res.status(403).json({ 
+            error: `Your subscription is inactive. Please renew your subscription. Status: ${subscription.status}` 
+          });
+        }
+        
+        // SECOND: Check if subscription has expired based on expiresAt
+        // This ensures expired subscriptions are blocked even if status is still "active"
+        let isExpired = false;
         if (subscription.expiresAt) {
-          const expiresAt = new Date(subscription.expiresAt);
+          // Parse expiresAt - handle both Date objects and ISO strings
+          let expiresAt: Date;
+          if (subscription.expiresAt instanceof Date) {
+            expiresAt = subscription.expiresAt;
+          } else if (typeof subscription.expiresAt === 'string') {
+            expiresAt = new Date(subscription.expiresAt);
+          } else {
+            expiresAt = new Date(subscription.expiresAt);
+          }
+          
+          // Validate date parsing
+          if (isNaN(expiresAt.getTime())) {
+            console.log(`[LOGIN] ⚠️ Invalid expiresAt date for org ${user.organizationId}: ${subscription.expiresAt}`);
+            return res.status(403).json({ 
+              error: `Invalid subscription expiration date. Please contact support.` 
+            });
+          }
+          
           const now = new Date();
           
-          console.log(`[LOGIN] Comparing dates - Now: ${now.toISOString()}, ExpiresAt: ${expiresAt.toISOString()}`);
+          // Compare timestamps directly for accurate comparison
+          const expiresAtTimestamp = expiresAt.getTime();
+          const nowTimestamp = now.getTime();
           
-          // Compare current datetime with expires_at - if it's past, block login
-          if (expiresAt < now) {
+          console.log(`[LOGIN] Comparing dates - Now: ${now.toISOString()} (${nowTimestamp}), ExpiresAt: ${expiresAt.toISOString()} (${expiresAtTimestamp})`);
+          console.log(`[LOGIN] Time difference (ms): ${nowTimestamp - expiresAtTimestamp}, Is expired: ${expiresAtTimestamp < nowTimestamp}`);
+          
+          // Compare current datetime with expires_at - if it's past, mark as expired
+          isExpired = expiresAtTimestamp < nowTimestamp;
+          
+          if (isExpired) {
             // Format expiration date/time for display
             const expirationDate = expiresAt.toLocaleString('en-US', {
               year: 'numeric',
@@ -1638,15 +1716,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               timeZoneName: 'short'
             });
             
-            console.log(`[LOGIN] ❌ Subscription expired for user ${email}, org ID: ${user.organizationId}, expiresAt: ${expiresAt.toISOString()}`);
+            console.log(`[LOGIN] ❌ Subscription expired for user ${email}, org ID: ${user.organizationId}, expiresAt: ${expiresAt.toISOString()} (${expiresAtTimestamp}), now: ${now.toISOString()} (${nowTimestamp})`);
             return res.status(403).json({ 
               error: `Your subscription has expired. Please renew. Subscription expired on: ${expirationDate}` 
             });
           } else {
-            console.log(`[LOGIN] ✅ Subscription is valid for user ${email}, expiresAt: ${expiresAt.toISOString()}`);
+            console.log(`[LOGIN] ✅ Subscription expiration check passed for user ${email}, expiresAt: ${expiresAt.toISOString()}`);
           }
         } else {
-          console.log(`[LOGIN] ⚠️ Subscription found but expiresAt is null for org ${user.organizationId} - allowing login`);
+          console.log(`[LOGIN] ⚠️ Subscription found but expiresAt is null for org ${user.organizationId} - status check already passed`);
         }
       } else {
         console.log(`[LOGIN] ⚠️ No subscription found for org ${user.organizationId} - allowing login`);
@@ -2217,6 +2295,99 @@ The Cura EMR Team`,
     } catch (error) {
       console.error("[CHECK-ORG-NAME] Error:", error);
       res.status(500).json({ error: "Failed to check organization name" });
+    }
+  });
+
+  // Temporary endpoint to check subscription status for a user
+  app.get("/api/check-subscription/:email", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email } = req.params;
+      
+      if (!email) {
+        return res.status(400).json({ error: "Email parameter is required" });
+      }
+      
+      // Get user by email
+      const user = await storage.getUserByEmailGlobal(email);
+      if (!user) {
+        return res.status(404).json({ error: `User not found: ${email}` });
+      }
+      
+      // Get organization
+      const organization = await storage.getOrganization(user.organizationId);
+      
+      // Get subscription
+      const subscription = await storage.getOrganizationSubscription(user.organizationId);
+      
+      const now = new Date();
+      let isExpired = false;
+      let expirationDate = null;
+      let daysExpired = null;
+      let daysRemaining = null;
+      
+      if (subscription && subscription.expiresAt) {
+        expirationDate = new Date(subscription.expiresAt);
+        isExpired = expirationDate < now;
+        
+        if (isExpired) {
+          daysExpired = Math.floor((now.getTime() - expirationDate.getTime()) / (1000 * 60 * 60 * 24));
+        } else {
+          daysRemaining = Math.floor((expirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        }
+      }
+      
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          organizationId: user.organizationId,
+          role: user.role,
+          isActive: user.isActive
+        },
+        organization: organization ? {
+          id: organization.id,
+          name: organization.name,
+          subdomain: organization.subdomain
+        } : null,
+        subscription: subscription ? {
+          id: subscription.subscriptionId,
+          organizationId: subscription.organizationId,
+          packageId: subscription.packageId,
+          status: subscription.status,
+          paymentStatus: subscription.paymentStatus,
+          currentPeriodStart: subscription.currentPeriodStart,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          expiresAt: subscription.expiresAt,
+          maxUsers: subscription.maxUsers,
+          maxPatients: subscription.maxPatients,
+          details: subscription.details
+        } : null,
+        expiration: {
+          expiresAt: subscription?.expiresAt || null,
+          isExpired: isExpired,
+          currentDateTime: now.toISOString(),
+          expirationDateTime: expirationDate ? expirationDate.toISOString() : null,
+          daysExpired: daysExpired,
+          daysRemaining: daysRemaining,
+          formattedExpirationDate: expirationDate ? expirationDate.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            timeZoneName: 'short'
+          }) : null
+        },
+        verdict: subscription?.expiresAt 
+          ? (isExpired ? "EXPIRED" : "ACTIVE")
+          : "NO_EXPIRATION_DATE"
+      });
+    } catch (error) {
+      console.error("Check subscription error:", error);
+      res.status(500).json({ error: "Failed to check subscription" });
     }
   });
 
