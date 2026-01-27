@@ -250,7 +250,7 @@ interface LowStockItem {
 }
 
 export default function Inventory() {
-  const { canCreate, canEdit, canDelete } = useRolePermissions();
+  const { canCreate, canEdit, canDelete, getUserRole, isAdmin, isDoctor, isNurse } = useRolePermissions();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<
     number | undefined
@@ -1110,7 +1110,7 @@ export default function Inventory() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     Generate Report
                                   </DropdownMenuItem>
-                                  {canDelete('inventory') && (
+                                  {(canDelete('inventory') || isAdmin() || isDoctor() || isNurse()) && (
                                     <>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem
@@ -1748,7 +1748,14 @@ export default function Inventory() {
         {showStockDialog && selectedItem && (
           <StockAdjustmentDialog
             open={showStockDialog}
-            onOpenChange={setShowStockDialog}
+            onOpenChange={(open) => {
+              setShowStockDialog(open);
+              if (!open) {
+                // Refresh the selected item when dialog closes
+                queryClient.invalidateQueries({ queryKey: ["/api/inventory/items"] });
+                queryClient.invalidateQueries({ queryKey: [`/api/inventory/items/${selectedItem.id}`] });
+              }
+            }}
             item={selectedItem}
           />
         )}

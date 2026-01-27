@@ -20565,11 +20565,11 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     }
   });
 
-  // Delete Inventory Item
-  app.delete("/api/inventory/items/:id", authMiddleware, requireRole(["admin"]), async (req: TenantRequest, res) => {
+  // Delete Inventory Item - Allow admin, doctor, and nurse
+  app.delete("/api/inventory/items/:id", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
     try {
       const itemId = parseInt(req.params.id);
-      console.log(`Deleting inventory item ${itemId} for organization ${req.tenant!.id}`);
+      console.log(`Deleting inventory item ${itemId} for organization ${req.tenant!.id} by user ${req.user?.id} (${req.user?.role})`);
 
       if (isNaN(itemId)) {
         return res.status(400).json({ error: "Invalid item ID" });
@@ -21201,6 +21201,129 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("Error fetching stock adjustments:", error);
       res.status(500).json({ error: "Failed to fetch stock adjustments" });
+    }
+  });
+
+  // Stock Movements endpoint for stock adjustments - Comprehensive implementation
+  app.post("/api/inventory/stock-movements", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      const payload = z.object({
+        itemId: z.number(),
+        movementType: z.enum([
+          "purchase", 
+          "sale", 
+          "return", 
+          "waste", 
+          "damaged", 
+          "adjustment_in", 
+          "adjustment_out",
+          "transfer_in",
+          "transfer_out"
+        ]),
+        quantity: z.number().positive(),
+        reason: z.string(),
+        notes: z.string().optional(),
+      }).parse(req.body);
+
+      const organizationId = req.tenant!.id;
+      
+      // Movement Type Master List - Source of Truth
+      const MOVEMENT_DIRECTIONS: Record<string, "IN" | "OUT"> = {
+        purchase: "IN",
+        return: "IN",
+        adjustment_in: "IN",
+        transfer_in: "IN",
+        sale: "OUT",
+        waste: "OUT",
+        damaged: "OUT",
+        adjustment_out: "OUT",
+        transfer_out: "OUT",
+      };
+
+      // Determine direction
+      const direction = MOVEMENT_DIRECTIONS[payload.movementType];
+      if (!direction) {
+        return res.status(400).json({ error: `Invalid movement type: ${payload.movementType}` });
+      }
+
+      // Get current item for validation
+      const item = await inventoryService.getItem(payload.itemId, organizationId);
+      if (!item) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      // Validate stock for OUT movements
+      if (direction === "OUT" && payload.quantity > item.currentStock) {
+        return res.status(400).json({ 
+          error: `Insufficient stock. Cannot remove ${payload.quantity} units. Only ${item.currentStock} units available.` 
+        });
+      }
+
+      // Calculate signed quantity based on direction
+      const signedQuantity = direction === "IN" ? payload.quantity : -payload.quantity;
+
+      // Map frontend movement types to backend movement types for database storage
+      const MOVEMENT_TYPE_MAP: Record<string, string> = {
+        purchase: "purchase",
+        sale: "sale",
+        return: "return",
+        waste: "expired",
+        damaged: "expired",
+        adjustment_in: "adjustment",
+        adjustment_out: "adjustment",
+        transfer_in: "transfer",
+        transfer_out: "transfer",
+      };
+
+      const backendMovementType = MOVEMENT_TYPE_MAP[payload.movementType] || payload.movementType;
+
+      // Combine reason and notes for comprehensive audit trail
+      const notes = payload.notes 
+        ? `Reason: ${payload.reason}. Notes: ${payload.notes}` 
+        : `Reason: ${payload.reason}`;
+
+      // Update stock using the service
+      const result = await inventoryService.updateStock(
+        payload.itemId,
+        organizationId,
+        signedQuantity,
+        backendMovementType,
+        notes,
+        req.user.id
+      );
+
+      // Create comprehensive audit trail response
+      const auditTrail = {
+        sku: item.sku,
+        productName: item.name,
+        movementType: payload.movementType,
+        direction: direction,
+        reason: payload.reason,
+        quantity: payload.quantity,
+        previousStock: result.previousStock,
+        newStock: result.newStock,
+        notes: payload.notes || null,
+        performedBy: req.user.id,
+        performedByName: req.user.name || req.user.email,
+        timestamp: new Date().toISOString(),
+      };
+
+      console.log(`[INVENTORY] Stock adjustment recorded:`, auditTrail);
+
+      res.json({
+        ...result,
+        auditTrail,
+      });
+    } catch (error: any) {
+      console.error("Error creating stock movement:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      res.status(500).json({ error: error.message || "Failed to create stock movement" });
     }
   });
 
