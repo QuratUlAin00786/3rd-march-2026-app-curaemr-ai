@@ -2128,7 +2128,7 @@ The Cura EMR Team`,
       <p>Thank you for starting your 14-day free trial with Cura EMR!</p>
       <p>Please verify your email address by clicking the button below:</p>
       <div style="text-align: center;">
-        <a href="${verificationUrl}" class="button">Verify Email Address</a>
+        <a href="${verificationUrl}" class="button" style="display: inline-block; background-color: #4A7DFF; color: white !important; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 20px 0;">Verify Email Address</a>
       </div>
       <p style="font-size: 12px; color: #666;">This link will expire in 24 hours.</p>
       <p>After verification, you'll be able to set your password and start using your account.</p>
