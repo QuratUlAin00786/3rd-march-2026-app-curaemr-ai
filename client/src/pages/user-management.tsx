@@ -466,6 +466,110 @@ const userSchema = z.object({
     planType: z.string().optional(),
     effectiveDate: z.string().optional(),
   }).optional(),
+}).superRefine((data, ctx) => {
+  // Validate Patient-specific required fields
+  if (data.role === 'patient') {
+    // Phone Number validation - must be exactly 10 digits excluding country code
+    if (!data.phone || data.phone.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Phone Number is required",
+        path: ["phone"],
+      });
+    } else {
+      // Validate phone number format (should have country code and exactly 10 digits)
+      const phoneWithoutCode = data.phone.replace(/^\+?\d+\s/, '').replace(/\s/g, '').trim();
+      if (!phoneWithoutCode || phoneWithoutCode.length !== 10 || !/^\d{10}$/.test(phoneWithoutCode)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Phone Number must be exactly 10 digits (excluding country code)",
+          path: ["phone"],
+        });
+      }
+    }
+
+    // Country validation
+    if (!data.address?.country || data.address.country.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Country is required",
+        path: ["address", "country"],
+      });
+    }
+
+    // Postal Code / ZIP Code validation
+    if (!data.address?.postcode || data.address.postcode.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Postal Code / ZIP Code is required",
+        path: ["address", "postcode"],
+      });
+    }
+
+    // Street Address validation
+    if (!data.address?.street || data.address.street.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Street Address is required",
+        path: ["address", "street"],
+      });
+    }
+
+    // City/Town validation
+    if (!data.address?.city || data.address.city.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "City/Town is required",
+        path: ["address", "city"],
+      });
+    }
+
+    // Department validation
+    if (!data.department || data.department.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Department is required",
+        path: ["department"],
+      });
+    }
+
+    // Emergency Contact Name validation
+    if (!data.emergencyContact?.name || data.emergencyContact.name.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Emergency Contact Name is required",
+        path: ["emergencyContact", "name"],
+      });
+    }
+
+    // Emergency Contact Relationship validation
+    if (!data.emergencyContact?.relationship || data.emergencyContact.relationship.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Relationship is required",
+        path: ["emergencyContact", "relationship"],
+      });
+    }
+
+    // Emergency Contact Phone validation - must be exactly 10 digits excluding country code
+    if (!data.emergencyContact?.phone || data.emergencyContact.phone.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Emergency Contact Phone is required",
+        path: ["emergencyContact", "phone"],
+      });
+    } else {
+      // Validate emergency contact phone number format
+      const emergencyPhoneWithoutCode = data.emergencyContact.phone.replace(/^\+?\d+\s/, '').replace(/\s/g, '').trim();
+      if (!emergencyPhoneWithoutCode || emergencyPhoneWithoutCode.length !== 10 || !/^\d{10}$/.test(emergencyPhoneWithoutCode)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Emergency Contact Phone must be exactly 10 digits (excluding country code)",
+          path: ["emergencyContact", "phone"],
+        });
+      }
+    }
+  }
 });
 
 const roleSchema = z.object({
@@ -1598,6 +1702,9 @@ export default function UserManagement() {
 
   const form = useForm<UserFormData>({
     resolver: zodResolver(userSchema),
+    mode: "onSubmit",
+    reValidateMode: "onChange",
+    shouldFocusError: true,
     defaultValues: {
       email: "",
       firstName: "",
@@ -2332,10 +2439,112 @@ export default function UserManagement() {
     },
   });
 
+  const onError = (errors: any) => {
+    console.log("❌ FORM VALIDATION ERRORS:", errors);
+    // Scroll to first error
+    const firstErrorField = Object.keys(errors)[0];
+    if (firstErrorField) {
+      const element = document.querySelector(`[name="${firstErrorField}"]`) || 
+                     document.querySelector(`[id="${firstErrorField}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  };
+
   const onSubmit = (data: UserFormData) => {
     console.log("📝 FORM SUBMITTED - onSubmit called");
     console.log("  Form data:", data);
     console.log("  Editing user:", editingUser?.id);
+    
+    // Validate Patient-specific required fields FIRST (before any other checks)
+    if (data.role === 'patient') {
+      const patientValidationErrors: string[] = [];
+      
+      // Validate Phone Number - must be exactly 10 digits excluding country code
+      const phoneValue = data.phone || '';
+      const phoneWithoutCode = phoneValue.replace(/^\+?\d+\s/, '').replace(/\s/g, '').trim();
+      if (!phoneValue || phoneValue.trim() === '' || phoneWithoutCode === '' || phoneWithoutCode.length !== 10 || !/^\d{10}$/.test(phoneWithoutCode)) {
+        patientValidationErrors.push("Phone Number");
+        form.setError("phone", { type: "manual", message: "Phone Number must be exactly 10 digits (excluding country code)" });
+      }
+      
+      // Validate Country
+      const countryValue = data.address?.country || '';
+      if (!countryValue || countryValue.trim() === '') {
+        patientValidationErrors.push("Country");
+        form.setError("address.country", { type: "manual", message: "Country is required" });
+      }
+      
+      // Validate Postal Code / ZIP Code
+      const postcodeValue = data.address?.postcode || '';
+      if (!postcodeValue || postcodeValue.trim() === '') {
+        patientValidationErrors.push("Postal Code / ZIP Code");
+        form.setError("address.postcode", { type: "manual", message: "Postal Code / ZIP Code is required" });
+      }
+      
+      // Validate Street Address
+      const streetValue = data.address?.street || '';
+      if (!streetValue || streetValue.trim() === '') {
+        patientValidationErrors.push("Street Address");
+        form.setError("address.street", { type: "manual", message: "Street Address is required" });
+      }
+      
+      // Validate City/Town
+      const cityValue = data.address?.city || '';
+      if (!cityValue || cityValue.trim() === '') {
+        patientValidationErrors.push("City/Town");
+        form.setError("address.city", { type: "manual", message: "City/Town is required" });
+      }
+      
+      // Validate Department
+      const departmentValue = data.department || '';
+      if (!departmentValue || departmentValue.trim() === '') {
+        patientValidationErrors.push("Department");
+        form.setError("department", { type: "manual", message: "Department is required" });
+      }
+      
+      // Validate Emergency Contact Name
+      const emergencyName = data.emergencyContact?.name || '';
+      if (!emergencyName || emergencyName.trim() === '') {
+        patientValidationErrors.push("Emergency Contact Name");
+        form.setError("emergencyContact.name", { type: "manual", message: "Emergency Contact Name is required" });
+      }
+      
+      // Validate Emergency Contact Relationship
+      const emergencyRelationship = data.emergencyContact?.relationship || '';
+      if (!emergencyRelationship || emergencyRelationship.trim() === '') {
+        patientValidationErrors.push("Emergency Contact Relationship");
+        form.setError("emergencyContact.relationship", { type: "manual", message: "Relationship is required" });
+      }
+      
+      // Validate Emergency Contact Phone - must be exactly 10 digits excluding country code
+      const emergencyPhoneValue = data.emergencyContact?.phone || '';
+      const emergencyPhoneWithoutCode = emergencyPhoneValue.replace(/^\+?\d+\s/, '').replace(/\s/g, '').trim();
+      if (!emergencyPhoneValue || emergencyPhoneValue.trim() === '' || emergencyPhoneWithoutCode === '' || emergencyPhoneWithoutCode.length !== 10 || !/^\d{10}$/.test(emergencyPhoneWithoutCode)) {
+        patientValidationErrors.push("Emergency Contact Phone");
+        form.setError("emergencyContact.phone", { type: "manual", message: "Emergency Contact Phone must be exactly 10 digits (excluding country code)" });
+      }
+      
+      // If there are Patient field validation errors, stop here and show them
+      if (patientValidationErrors.length > 0) {
+        // Trigger validation to show field-level errors for all patient fields
+        form.trigger([
+          "phone", 
+          "address.country", 
+          "address.postcode",
+          "address.street",
+          "address.city",
+          "department",
+          "emergencyContact.name", 
+          "emergencyContact.relationship", 
+          "emergencyContact.phone"
+        ]);
+        // DO NOT show toast - only show field-level errors
+        // Prevent form submission - this is critical to stop the form from proceeding
+        return;
+      }
+    }
     
     // Validate working hours for non-patient roles
     if (data.role !== 'patient') {
@@ -2435,11 +2644,8 @@ export default function UserManagement() {
     } else {
       // When creating new user, password is required
       if (!submitData.password || submitData.password.trim() === '') {
-        toast({
-          title: "Password Required",
-          description: "Password is required when creating a new user",
-          variant: "destructive",
-        });
+        form.setError("password", { type: "manual", message: "Password is required when creating a new user" });
+        form.trigger("password");
         return;
       }
       createUserMutation.mutate(submitData);
@@ -3016,7 +3222,7 @@ export default function UserManagement() {
                 )}
               </DialogHeader>
               
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={form.handleSubmit(onSubmit, onError)} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="firstName">First Name</Label>
@@ -3765,7 +3971,7 @@ export default function UserManagement() {
                                 variant="outline"
                                 role="combobox"
                                 aria-expanded={countryCodePopoverOpen}
-                                className="w-[180px] justify-between"
+                                className={`w-[180px] justify-between ${form.formState.errors.phone ? "border-red-500" : ""}`}
                                 data-testid="button-country-code"
                               >
                                 <div className="flex items-center gap-2">
@@ -3824,7 +4030,7 @@ export default function UserManagement() {
                           <Input
                             id="phone"
                             type="tel"
-                            className="flex-1"
+                            className={`flex-1 ${form.formState.errors.phone ? "border-red-500" : ""}`}
                             placeholder="123 456 7890"
                             data-testid="input-phone"
                             maxLength={COUNTRY_DIGIT_LIMITS[selectedPhoneCountryCode] || 15}
@@ -3843,6 +4049,10 @@ export default function UserManagement() {
                               }
                               
                               form.setValue("phone", value ? `${selectedPhoneCountryCode} ${value}` : "");
+                              // Clear error when user starts typing
+                              if (form.formState.errors.phone) {
+                                form.clearErrors("phone");
+                              }
                             }}
                           />
                         </div>
@@ -3865,6 +4075,10 @@ export default function UserManagement() {
                           <Select 
                             onValueChange={(value) => {
                               form.setValue("address.country", value);
+                              // Clear error when user selects a country
+                              if (form.formState.errors.address?.country) {
+                                form.clearErrors("address.country");
+                              }
                               // Re-fetch city if postal code is already entered
                               const currentPostcode = form.watch("address.postcode");
                               if (currentPostcode && currentPostcode.trim().length >= 3) {
@@ -3875,7 +4089,10 @@ export default function UserManagement() {
                             }} 
                             value={form.watch("address.country") || "United Kingdom"}
                           >
-                            <SelectTrigger data-testid="select-country">
+                            <SelectTrigger 
+                              data-testid="select-country"
+                              className={form.formState.errors.address?.country ? "border-red-500" : ""}
+                            >
                               <SelectValue placeholder="Select country" />
                             </SelectTrigger>
                             <SelectContent>
@@ -3918,6 +4135,9 @@ export default function UserManagement() {
                               <SelectItem value="New Zealand">🇳🇿 New Zealand</SelectItem>
                             </SelectContent>
                           </Select>
+                          {form.formState.errors.address?.country && (
+                            <p className="text-sm text-red-500">{form.formState.errors.address.country.message}</p>
+                          )}
                         </div>
                         
                         {/* Postcode - Step 2 */}
@@ -3929,10 +4149,15 @@ export default function UserManagement() {
                               {...form.register("address.postcode")}
                               placeholder="Enter postcode"
                               data-testid="input-postcode"
-                              className="flex-1"
+                              className={`flex-1 ${form.formState.errors.address?.postcode ? "border-red-500" : ""}`}
                               onChange={(e) => {
                                 const value = e.target.value;
                                 form.setValue("address.postcode", value);
+                                
+                                // Clear error when user starts typing
+                                if (form.formState.errors.address?.postcode) {
+                                  form.clearErrors("address.postcode");
+                                }
                                 
                                 // Clear existing timeout
                                 if (detectionTimeout) {
@@ -4019,6 +4244,9 @@ export default function UserManagement() {
                               )}
                             </div>
                           )}
+                          {form.formState.errors.address?.postcode && (
+                            <p className="text-sm text-red-500">{form.formState.errors.address.postcode.message}</p>
+                          )}
                         </div>
                         
                         {/* Street Address */}
@@ -4029,7 +4257,17 @@ export default function UserManagement() {
                             {...form.register("address.street")}
                             placeholder="Enter address"
                             data-testid="input-street-address"
+                            className={form.formState.errors.address?.street ? "border-red-500" : ""}
+                            onChange={(e) => {
+                              form.setValue("address.street", e.target.value);
+                              if (form.formState.errors.address?.street) {
+                                form.clearErrors("address.street");
+                              }
+                            }}
                           />
+                          {form.formState.errors.address?.street && (
+                            <p className="text-sm text-red-500">{form.formState.errors.address.street.message}</p>
+                          )}
                         </div>
                         
                         {/* City/Town - Step 3 (Auto-filled) */}
@@ -4040,7 +4278,17 @@ export default function UserManagement() {
                             {...form.register("address.city")}
                             placeholder="Auto-filled from postcode"
                             data-testid="input-city"
+                            className={form.formState.errors.address?.city ? "border-red-500" : ""}
+                            onChange={(e) => {
+                              form.setValue("address.city", e.target.value);
+                              if (form.formState.errors.address?.city) {
+                                form.clearErrors("address.city");
+                              }
+                            }}
                           />
+                          {form.formState.errors.address?.city && (
+                            <p className="text-sm text-red-500">{form.formState.errors.address.city.message}</p>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -4054,11 +4302,18 @@ export default function UserManagement() {
                             <Label htmlFor="emergencyName">Name</Label>
                             <Input
                               id="emergencyName"
-                              {...form.register("emergencyContact.name")}
+                              {...form.register("emergencyContact.name", {
+                                onChange: () => {
+                                  if (form.formState.errors.emergencyContact?.name) {
+                                    form.clearErrors("emergencyContact.name");
+                                  }
+                                }
+                              })}
                               minLength={2}
                               maxLength={50}
                               placeholder="Enter name"
                               data-testid="input-emergency-name"
+                              className={form.formState.errors.emergencyContact?.name ? "border-red-500" : ""}
                             />
                             {form.formState.errors.emergencyContact?.name && (
                               <p className="text-sm text-red-500">{form.formState.errors.emergencyContact.name.message}</p>
@@ -4067,10 +4322,19 @@ export default function UserManagement() {
                           <div className="space-y-2">
                             <Label htmlFor="emergencyRelationship">Relationship</Label>
                             <Select 
-                              onValueChange={(value) => form.setValue("emergencyContact.relationship", value)} 
+                              onValueChange={(value) => {
+                                form.setValue("emergencyContact.relationship", value);
+                                // Clear error when user selects a relationship
+                                if (form.formState.errors.emergencyContact?.relationship) {
+                                  form.clearErrors("emergencyContact.relationship");
+                                }
+                              }} 
                               value={form.watch("emergencyContact.relationship") || ""}
                             >
-                              <SelectTrigger data-testid="dropdown-emergency-relationship">
+                              <SelectTrigger 
+                                data-testid="dropdown-emergency-relationship"
+                                className={form.formState.errors.emergencyContact?.relationship ? "border-red-500" : ""}
+                              >
                                 <SelectValue placeholder="Select relationship" />
                               </SelectTrigger>
                               <SelectContent>
@@ -4086,6 +4350,9 @@ export default function UserManagement() {
                                 <SelectItem value="Other">Other</SelectItem>
                               </SelectContent>
                             </Select>
+                            {form.formState.errors.emergencyContact?.relationship && (
+                              <p className="text-sm text-red-500">{form.formState.errors.emergencyContact.relationship.message}</p>
+                            )}
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -4101,6 +4368,7 @@ export default function UserManagement() {
                                     : form.watch("emergencyContact.phone") || "";
                                   form.setValue("emergencyContact.phone", phoneWithoutCode ? `${value} ${phoneWithoutCode}` : "");
                                 }}
+                                className={form.formState.errors.emergencyContact?.phone ? "border-red-500" : ""}
                               >
                                 <SelectTrigger className="w-[140px]">
                                   <SelectValue>
@@ -4134,7 +4402,7 @@ export default function UserManagement() {
                               <Input
                                 id="emergencyPhone"
                                 type="tel"
-                                className="flex-1"
+                                className={`flex-1 ${form.formState.errors.emergencyContact?.phone ? "border-red-500" : ""}`}
                                 placeholder="123 456 7890"
                                 data-testid="input-emergency-phone"
                                 maxLength={COUNTRY_DIGIT_LIMITS[selectedEmergencyPhoneCountryCode] || 15}
@@ -4153,6 +4421,10 @@ export default function UserManagement() {
                                   }
                                   
                                   form.setValue("emergencyContact.phone", value ? `${selectedEmergencyPhoneCountryCode} ${value}` : "");
+                                  // Clear error when user starts typing
+                                  if (form.formState.errors.emergencyContact?.phone) {
+                                    form.clearErrors("emergencyContact.phone");
+                                  }
                                 }}
                               />
                             </div>
@@ -4327,14 +4599,14 @@ export default function UserManagement() {
                 {/* Department (Optional), Password in one row */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="department">Department (Optional)</Label>
+                    <Label htmlFor="department">{selectedRole === 'patient' ? "Department" : "Department (Optional)"}</Label>
                     <Popover open={departmentOpen} onOpenChange={setDepartmentOpen}>
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
                           role="combobox"
                           aria-expanded={departmentOpen}
-                          className="w-full justify-between font-normal"
+                          className={`w-full justify-between font-normal ${form.formState.errors.department ? "border-red-500" : ""}`}
                           data-testid="button-department"
                         >
                           <span className={form.watch("department") ? "text-foreground" : "text-muted-foreground"}>
@@ -4350,6 +4622,10 @@ export default function UserManagement() {
                             onValueChange={(value) => {
                               // Allow typing custom values
                               form.setValue("department", value, { shouldDirty: true });
+                              // Clear error when user starts typing
+                              if (form.formState.errors.department) {
+                                form.clearErrors("department");
+                              }
                             }}
                             data-testid="command-input-department"
                           />
@@ -4382,6 +4658,10 @@ export default function UserManagement() {
                                   value={dept}
                                   onSelect={(currentValue) => {
                                     form.setValue("department", currentValue, { shouldDirty: true });
+                                    // Clear error when user selects
+                                    if (form.formState.errors.department) {
+                                      form.clearErrors("department");
+                                    }
                                     setDepartmentOpen(false);
                                   }}
                                   data-testid={`command-item-department-${dept.toLowerCase().replace(/\s+/g, '-')}`}
@@ -4397,6 +4677,9 @@ export default function UserManagement() {
                         </Command>
                       </PopoverContent>
                     </Popover>
+                    {form.formState.errors.department && (
+                      <p className="text-sm text-red-500">{form.formState.errors.department.message}</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="password">

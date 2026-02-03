@@ -348,6 +348,13 @@ export default function MessagingPage() {
   const [messagePatientSearch, setMessagePatientSearch] = useState<string>("");
   const [selectedRecipientRole, setSelectedRecipientRole] = useState<string>("");
   const [selectedRecipientUser, setSelectedRecipientUser] = useState<string>("");
+  const [validationErrors, setValidationErrors] = useState<{
+    recipientRole?: string;
+    recipientName?: string;
+    subject?: string;
+    phoneNumber?: string;
+    content?: string;
+  }>({});
   const { toast } = useToast();
 
   // Authentication token and headers
@@ -782,6 +789,10 @@ export default function MessagingPage() {
       phoneNumber: "",
       messageType: "email"
     });
+    setValidationErrors({});
+    setSelectedRecipientRole("");
+    setSelectedRecipientUser("");
+    setSelectedMessagePatient("");
   };
 
 
@@ -2237,29 +2248,48 @@ export default function MessagingPage() {
   }, [currentUser, toast, selectedConversation, fetchMessages]);
 
   const handleSendNewMessage = () => {
+    // Reset validation errors
+    const errors: {
+      recipientRole?: string;
+      recipientName?: string;
+      subject?: string;
+      phoneNumber?: string;
+      content?: string;
+    } = {};
+
     // Validate required fields
-    const missingFields = [];
-    if (!newMessage.recipient.trim()) missingFields.push("Recipient");
-    if (!newMessage.subject.trim()) missingFields.push("Subject");  
-    if (!newMessage.content.trim()) missingFields.push("Message Content");
-    
-    if (missingFields.length > 0) {
-      toast({
-        title: "Validation Error",
-        description: `Please fill in: ${missingFields.join(", ")}`,
-        variant: "destructive"
-      });
-      return;
+    if (user?.role === 'admin' || user?.role === 'patient') {
+      if (!selectedRecipientRole.trim()) {
+        errors.recipientRole = "Please select a role";
+      }
+      if (!selectedRecipientUser.trim()) {
+        errors.recipientName = "Please select a recipient";
+      }
+    } else {
+      if (!newMessage.recipient.trim()) {
+        errors.recipientName = "Please select a recipient";
+      }
     }
 
-    // Additional validation for SMS/WhatsApp/Voice - allow empty phone number for testing
+    if (!newMessage.subject.trim()) {
+      errors.subject = "Please enter a subject";
+    }
+
+    if (!newMessage.content.trim()) {
+      errors.content = "Please enter message content";
+    }
+
+    // Validate phone number for SMS/WhatsApp/Voice
     if ((newMessage.messageType === 'sms' || newMessage.messageType === 'whatsapp' || newMessage.messageType === 'voice') && !newMessage.phoneNumber.trim()) {
-      // Show warning but allow message to proceed for testing purposes
-      toast({
-        title: "Phone Number Missing",
-        description: "SMS/WhatsApp/Voice call requires a phone number. The system will attempt to look up the recipient's phone number.",
-        variant: "default"
-      });
+      errors.phoneNumber = "Please enter a phone number";
+    }
+
+    // Set validation errors
+    setValidationErrors(errors);
+
+    // If there are any errors, don't proceed
+    if (Object.keys(errors).length > 0) {
+      return;
     }
 
     // Determine the message type - if sending via SMS/WhatsApp/Email/Voice externally, type should be "patient" not "internal"
@@ -2300,7 +2330,28 @@ export default function MessagingPage() {
     const messageContent = newMessageContent.trim();
     console.log('Sending message to conversation:', selectedConversation);
     console.log('Message content:', messageContent);
-    setNewMessageContent(""); // Clear immediately
+    
+    // Store a temporary message ID for optimistic update
+    const tempMessageId = `temp-${Date.now()}`;
+    const optimisticMessage = {
+      id: tempMessageId,
+      senderId: currentUser?.id,
+      senderName: currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'You',
+      senderRole: currentUser?.role || 'user',
+      recipientId: '',
+      recipientName: '',
+      subject: '',
+      content: messageContent,
+      timestamp: new Date().toISOString(),
+      isRead: false,
+      priority: 'normal' as const,
+      type: 'internal' as const,
+      isStarred: false
+    };
+    
+    // Optimistically add message to UI immediately
+    setMessages(prev => [...prev, optimisticMessage]);
+    setNewMessageContent(""); // Clear input immediately
     
     try {
       // Find the other participant (patient) in the conversation
@@ -2355,6 +2406,28 @@ export default function MessagingPage() {
       const responseData = await response.json();
       console.log('🔥 CONVERSATION MESSAGE RESPONSE:', responseData);
       
+      // Replace the optimistic message with the real one from server
+      setMessages(prev => {
+        // Remove the temporary message and add the real one
+        const filtered = prev.filter(m => m.id !== tempMessageId);
+        const realMessage = {
+          id: responseData.id,
+          senderId: responseData.senderId || currentUser?.id,
+          senderName: currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'You',
+          senderRole: currentUser?.role || 'user',
+          recipientId: responseData.recipientId,
+          recipientName: responseData.recipientName,
+          subject: responseData.subject || '',
+          content: responseData.content || messageContent,
+          timestamp: responseData.timestamp || new Date().toISOString(),
+          isRead: false,
+          priority: responseData.priority || 'normal',
+          type: responseData.type || 'internal',
+          isStarred: false
+        };
+        return [...filtered, realMessage];
+      });
+      
       // Update conversations cache for persistence
       const currentConversations = queryClient.getQueryData(['/api/messaging/conversations']) as any[] || [];
       const existingConversation = currentConversations.find(conv => conv.id === responseData.conversationId);
@@ -2386,13 +2459,15 @@ export default function MessagingPage() {
         queryClient.invalidateQueries({ queryKey: ['/api/messaging/conversations'] });
       }
       
-      // Force immediate UI update using direct fetch to ensure message appears
+      // Refetch messages to ensure we have the latest data from server (with a small delay to ensure server has processed)
       console.log('🔥 FORCE IMMEDIATE UI UPDATE: Triggering direct fetch after send');
-      if (selectedConversation && fetchMessages) {
-        console.log('🔥 Using direct fetch for immediate message visibility');
-        await fetchMessages(selectedConversation);
-        console.log('🔥 DIRECT FETCH COMPLETED after message send');
-      }
+      setTimeout(async () => {
+        if (selectedConversation && fetchMessages) {
+          console.log('🔥 Using direct fetch for immediate message visibility');
+          await fetchMessages(selectedConversation);
+          console.log('🔥 DIRECT FETCH COMPLETED after message send');
+        }
+      }, 500);
       
       // Show success notification
       toast({
@@ -2401,6 +2476,9 @@ export default function MessagingPage() {
       });
       
     } catch (error: any) {
+      // Remove the optimistic message since send failed
+      setMessages(prev => prev.filter(m => m.id !== tempMessageId));
+      
       // Restore the message content if send failed
       setNewMessageContent(messageContent);
       console.error('🔥 CONVERSATION MESSAGE ERROR:', error);
@@ -2918,7 +2996,12 @@ export default function MessagingPage() {
               </div>
             </DialogContent>
           </Dialog>
-          <Dialog open={showNewMessage} onOpenChange={setShowNewMessage}>
+          <Dialog open={showNewMessage} onOpenChange={(open) => {
+            setShowNewMessage(open);
+            if (!open) {
+              resetNewMessage();
+            }
+          }}>
             {canCreate('messaging') && (
             <DialogTrigger asChild>
               <Button>
@@ -2957,9 +3040,10 @@ export default function MessagingPage() {
                             setSelectedRecipientRole(value);
                             setSelectedRecipientUser("");
                             setNewMessage(prev => ({ ...prev, recipient: "", phoneNumber: "" }));
+                            setValidationErrors(prev => ({ ...prev, recipientRole: undefined }));
                           }}
                         >
-                          <SelectTrigger data-testid="select-recipient-role">
+                          <SelectTrigger data-testid="select-recipient-role" className={validationErrors.recipientRole ? "border-red-500" : ""}>
                             <SelectValue placeholder="Select a role..." />
                           </SelectTrigger>
                           <SelectContent>
@@ -2970,6 +3054,9 @@ export default function MessagingPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        {validationErrors.recipientRole && (
+                          <p className="text-sm text-red-500">{validationErrors.recipientRole}</p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="selectName">Select Name *</Label>
@@ -2978,6 +3065,7 @@ export default function MessagingPage() {
                           onValueChange={(value) => {
                             setSelectedRecipientUser(value);
                             setNewMessage(prev => ({ ...prev, recipient: value }));
+                            setValidationErrors(prev => ({ ...prev, recipientName: undefined }));
                             
                             // Auto-populate phone number for patient role
                             if (selectedRecipientRole === 'patient') {
@@ -2993,7 +3081,7 @@ export default function MessagingPage() {
                           }}
                           disabled={!selectedRecipientRole}
                         >
-                          <SelectTrigger data-testid="select-recipient-name">
+                          <SelectTrigger data-testid="select-recipient-name" className={validationErrors.recipientName ? "border-red-500" : ""}>
                             <SelectValue placeholder={selectedRecipientRole ? "Select a name..." : "Select role first..."} />
                           </SelectTrigger>
                           <SelectContent>
@@ -3011,6 +3099,9 @@ export default function MessagingPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        {validationErrors.recipientName && (
+                          <p className="text-sm text-red-500">{validationErrors.recipientName}</p>
+                        )}
                       </div>
                     </>
                   ) : (
@@ -3027,10 +3118,11 @@ export default function MessagingPage() {
                               recipient: value,
                               phoneNumber: patient.phone || patient.phoneNumber || patient.mobile || ""
                             }));
+                            setValidationErrors(prev => ({ ...prev, recipientName: undefined }));
                           }
                         }}
                       >
-                        <SelectTrigger data-testid="select-patient-recipient">
+                        <SelectTrigger data-testid="select-patient-recipient" className={validationErrors.recipientName ? "border-red-500" : ""}>
                           <SelectValue placeholder="Select a patient..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -3048,6 +3140,9 @@ export default function MessagingPage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {validationErrors.recipientName && (
+                        <p className="text-sm text-red-500">{validationErrors.recipientName}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3059,8 +3154,15 @@ export default function MessagingPage() {
                       id="messageSubject"
                       placeholder="Enter message subject"
                       value={newMessage.subject}
-                      onChange={(e) => setNewMessage(prev => ({ ...prev, subject: e.target.value }))}
+                      onChange={(e) => {
+                        setNewMessage(prev => ({ ...prev, subject: e.target.value }));
+                        setValidationErrors(prev => ({ ...prev, subject: undefined }));
+                      }}
+                      className={validationErrors.subject ? "border-red-500" : ""}
                     />
+                    {validationErrors.subject && (
+                      <p className="text-sm text-red-500">{validationErrors.subject}</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="messagePriority">Priority</Label>
@@ -3110,8 +3212,15 @@ export default function MessagingPage() {
                         id="phoneNumber"
                         placeholder="Enter phone number (e.g., +44 7123 456789)"
                         value={newMessage.phoneNumber}
-                        onChange={(e) => setNewMessage(prev => ({ ...prev, phoneNumber: e.target.value }))}
+                        onChange={(e) => {
+                          setNewMessage(prev => ({ ...prev, phoneNumber: e.target.value }));
+                          setValidationErrors(prev => ({ ...prev, phoneNumber: undefined }));
+                        }}
+                        className={validationErrors.phoneNumber ? "border-red-500" : ""}
                       />
+                      {validationErrors.phoneNumber && (
+                        <p className="text-sm text-red-500">{validationErrors.phoneNumber}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3123,8 +3232,15 @@ export default function MessagingPage() {
                     placeholder="Enter your message content..."
                     rows={8}
                     value={newMessage.content}
-                    onChange={(e) => setNewMessage(prev => ({ ...prev, content: e.target.value }))}
+                    onChange={(e) => {
+                      setNewMessage(prev => ({ ...prev, content: e.target.value }));
+                      setValidationErrors(prev => ({ ...prev, content: undefined }));
+                    }}
+                    className={validationErrors.content ? "border-red-500" : ""}
                   />
+                  {validationErrors.content && (
+                    <p className="text-sm text-red-500">{validationErrors.content}</p>
+                  )}
                 </div>
 
                 <div className="flex justify-end gap-3">
@@ -3390,7 +3506,20 @@ export default function MessagingPage() {
                                   </span>
                                   <div className={`w-2 h-2 rounded-full ${getPriorityColor(message.priority)}`}></div>
                                 </div>
-                               
+                                <div className="bg-blue-50 dark:bg-slate-700 rounded-lg p-3 border border-blue-200">
+                                  <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{message.content}</p>
+                                  {message.attachments && message.attachments.length > 0 && (
+                                    <div className="mt-2 space-y-1">
+                                      {message.attachments.map((attachment) => (
+                                        <div key={attachment.id} className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                                          <Paperclip className="h-3 w-3" />
+                                          <span>{attachment.name}</span>
+                                          <span className="text-gray-500 dark:text-gray-400">({(attachment.size / 1024).toFixed(1)} KB)</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                               <div className="flex-shrink-0">
                                 <DropdownMenu>
@@ -3400,9 +3529,20 @@ export default function MessagingPage() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => {
-                                      toast({ title: "Forward", description: `Forwarding message: ${message.content.substring(0, 30)}...` });
-                                    }}>
+                                    <DropdownMenuItem 
+                                      onSelect={(e) => {
+                                        e.preventDefault();
+                                        // Open new message dialog with pre-filled content
+                                        setNewMessage(prev => ({
+                                          ...prev,
+                                          content: message.content,
+                                          subject: `Forwarded: ${message.subject || 'Message'}`,
+                                          priority: message.priority || "normal"
+                                        }));
+                                        setValidationErrors({});
+                                        setShowNewMessage(true);
+                                      }}
+                                    >
                                       <Forward className="mr-2 h-4 w-4" />
                                       Forward
                                     </DropdownMenuItem>
@@ -3556,7 +3696,20 @@ export default function MessagingPage() {
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    onClick={() => refetchSmsMessages()}
+                    onClick={async () => {
+                      try {
+                        // Invalidate and refetch to ensure fresh data
+                        queryClient.invalidateQueries({ queryKey: ['/api/messaging/sms-messages'] });
+                        await refetchSmsMessages();
+                      } catch (error) {
+                        console.error('Error refreshing SMS messages:', error);
+                        toast({
+                          title: "Error",
+                          description: "Failed to refresh SMS messages",
+                          variant: "destructive"
+                        });
+                      }
+                    }}
                     disabled={smsLoading}
                   >
                     <RefreshCw className={`h-4 w-4 mr-2 ${smsLoading ? 'animate-spin' : ''}`} />

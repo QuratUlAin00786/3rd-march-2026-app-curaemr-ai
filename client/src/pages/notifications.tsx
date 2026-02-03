@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { 
   Bell, 
   CheckCircle, 
@@ -47,6 +47,82 @@ interface Notification {
   };
   createdAt: string;
   readAt?: string;
+}
+
+// Component to display relative time that updates in real-time
+function TimeAgo({ date }: { date: string }) {
+  const [timeAgo, setTimeAgo] = useState<string>("");
+
+  useEffect(() => {
+    const updateTime = () => {
+      try {
+        const now = new Date();
+        let notificationDate: Date;
+        
+        // Handle different date formats - ensure we parse correctly
+        if (typeof date === 'string') {
+          // Try parsing as ISO string first (most common format from APIs)
+          notificationDate = new Date(date);
+          
+          // If invalid, try parsing as timestamp
+          if (isNaN(notificationDate.getTime())) {
+            const timestamp = Date.parse(date);
+            if (!isNaN(timestamp)) {
+              notificationDate = new Date(timestamp);
+            } else {
+              // If still invalid, use current time (shouldn't happen)
+              console.warn("Invalid date format:", date);
+              setTimeAgo("just now");
+              return;
+            }
+          }
+        } else {
+          notificationDate = new Date(date);
+        }
+        
+        // Check if date is valid
+        if (isNaN(notificationDate.getTime())) {
+          setTimeAgo("just now");
+          return;
+        }
+
+        // Calculate difference in seconds
+        const secondsDiff = Math.floor(differenceInSeconds(now, notificationDate));
+
+        // Check if date is in the future (shouldn't happen, but handle it)
+        if (secondsDiff < 0) {
+          setTimeAgo("just now");
+          return;
+        }
+
+        // For very recent notifications (less than 1 minute), show precise time
+        if (secondsDiff === 0) {
+          setTimeAgo("just now");
+        } else if (secondsDiff < 5) {
+          setTimeAgo("just now");
+        } else if (secondsDiff < 60) {
+          setTimeAgo(`${secondsDiff} seconds ago`);
+        } else {
+          // Use formatDistanceToNow for longer durations
+          setTimeAgo(formatDistanceToNow(notificationDate, { addSuffix: true }));
+        }
+      } catch (error) {
+        console.error("Error calculating time ago:", error, "Date:", date);
+        setTimeAgo("just now");
+      }
+    };
+
+    // Update immediately
+    updateTime();
+
+    // Always update every second for accurate real-time display
+    // This ensures very recent notifications show correct time
+    const intervalId = setInterval(updateTime, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [date]);
+
+  return <span>{timeAgo}</span>;
 }
 
 export default function NotificationsPage() {
@@ -452,7 +528,7 @@ export default function NotificationsPage() {
                       <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-500">
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
+                          <TimeAgo date={notification.createdAt} />
                         </span>
                         {notification.metadata?.patientName && (
                           <span className="flex items-center gap-1">

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { 
   Bell, 
   CheckCircle, 
@@ -54,6 +54,109 @@ interface Notification {
   };
   createdAt: string;
   readAt?: string;
+}
+
+// Component to display relative time that updates in real-time
+function TimeAgo({ date }: { date: string }) {
+  const [timeAgo, setTimeAgo] = useState<string>("");
+
+  useEffect(() => {
+    const updateTime = () => {
+      try {
+        const now = new Date();
+        let notificationDate: Date;
+        
+        // Handle different date formats - ensure we parse correctly
+        if (typeof date === 'string') {
+          let dateString = date.trim();
+          
+          // Check if it's already a valid ISO string with timezone
+          if (dateString.includes('T') && (dateString.includes('Z') || dateString.match(/[+-]\d{2}:\d{2}$/))) {
+            notificationDate = new Date(dateString);
+          } else if (dateString.includes('T')) {
+            // ISO format without timezone - PostgreSQL timestamps without timezone are stored in UTC
+            // Always interpret as UTC to avoid timezone issues
+            notificationDate = new Date(dateString + 'Z');
+          } else {
+            // Try parsing as-is first
+            notificationDate = new Date(dateString);
+            
+            // If invalid, try adding UTC
+            if (isNaN(notificationDate.getTime())) {
+              notificationDate = new Date(dateString + ' UTC');
+            }
+            
+            // If still invalid, try parsing as timestamp
+            if (isNaN(notificationDate.getTime())) {
+              const timestamp = Date.parse(dateString);
+              if (!isNaN(timestamp)) {
+                notificationDate = new Date(timestamp);
+              } else {
+                console.warn("Invalid date format:", date);
+                setTimeAgo("just now");
+                return;
+              }
+            }
+          }
+        } else {
+          notificationDate = new Date(date);
+        }
+        
+        // Check if date is valid
+        if (isNaN(notificationDate.getTime())) {
+          setTimeAgo("just now");
+          return;
+        }
+
+        // Calculate difference in seconds
+        // differenceInSeconds(now, notificationDate) returns positive if notificationDate is in the past
+        const secondsDiff = Math.floor(differenceInSeconds(now, notificationDate));
+
+        // If the date is in the future (negative difference), show "just now"
+        if (secondsDiff < 0) {
+          setTimeAgo("just now");
+          return;
+        }
+
+        // For very recent notifications, show precise time
+        if (secondsDiff === 0) {
+          setTimeAgo("just now");
+        } else if (secondsDiff < 5) {
+          setTimeAgo("just now");
+        } else if (secondsDiff < 60) {
+          setTimeAgo(`${secondsDiff} seconds ago`);
+        } else if (secondsDiff < 120) {
+          setTimeAgo("1 minute ago");
+        } else if (secondsDiff < 3600) {
+          // Less than 1 hour - show minutes
+          const minutes = Math.floor(secondsDiff / 60);
+          setTimeAgo(`${minutes} minute${minutes === 1 ? '' : 's'} ago`);
+        } else if (secondsDiff < 86400) {
+          // Less than 1 day - show hours
+          const hours = Math.floor(secondsDiff / 3600);
+          setTimeAgo(`${hours} hour${hours === 1 ? '' : 's'} ago`);
+        } else {
+          // Use formatDistanceToNow for longer durations
+          const distance = formatDistanceToNow(notificationDate, { addSuffix: true });
+          setTimeAgo(distance);
+        }
+      } catch (error) {
+        console.error("Error calculating time ago:", error, "Date:", date);
+        setTimeAgo("just now");
+      }
+    };
+
+    // Update immediately
+    updateTime();
+
+    // Update every second for accurate real-time display
+    // This ensures very recent notifications show correct time immediately
+    const intervalId = setInterval(updateTime, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [date]);
+
+  return <span>{timeAgo}</span>;
 }
 
 export function NotificationBell() {
@@ -238,9 +341,7 @@ export function NotificationBell() {
       
       <DropdownMenuContent 
         align="end" 
-        className={`w-96 p-0 flex flex-col ${
-          isPatientNurseDoctor ? "max-h-[400px]" : "max-h-[840px]"
-        }`}
+        className="w-96 p-0 flex flex-col max-h-[400px] h-[400px]"
         sideOffset={5}
       >
         <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
@@ -263,16 +364,8 @@ export function NotificationBell() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden">
-          <ScrollArea
-            className={
-              isAdminUser 
-                ? "h-full" 
-                : isPatientNurseDoctor 
-                  ? "h-full" 
-                  : "h-full"
-            }
-          >
+        <div className="flex-1 overflow-hidden min-h-0">
+          <ScrollArea className="h-full">
           {isLoading ? (
             <div className="p-4 text-center text-gray-500">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
@@ -315,9 +408,7 @@ export function NotificationBell() {
                         </p>
                         
                         <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <span>
-                            {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
-                          </span>
+                          <TimeAgo date={notification.createdAt} />
                           {notification.metadata?.patientName && (
                             <>
                               <span>•</span>
