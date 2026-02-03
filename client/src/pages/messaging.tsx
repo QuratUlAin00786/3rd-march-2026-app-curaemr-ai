@@ -3390,20 +3390,7 @@ export default function MessagingPage() {
                                   </span>
                                   <div className={`w-2 h-2 rounded-full ${getPriorityColor(message.priority)}`}></div>
                                 </div>
-                                <div className="bg-blue-50 dark:bg-slate-700 rounded-lg p-3 border border-blue-200">
-                                  <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{message.content}</p>
-                                  {message.attachments && message.attachments.length > 0 && (
-                                    <div className="mt-2 space-y-1">
-                                      {message.attachments.map((attachment) => (
-                                        <div key={attachment.id} className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                                          <Paperclip className="h-3 w-3" />
-                                          <span>{attachment.name}</span>
-                                          <span className="text-gray-500 dark:text-gray-400">({(attachment.size / 1024).toFixed(1)} KB)</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
+                               
                               </div>
                               <div className="flex-shrink-0">
                                 <DropdownMenu>
@@ -3530,9 +3517,6 @@ export default function MessagingPage() {
                         className="flex-1 min-h-[80px] bg-white dark:bg-slate-600"
                       />
                       <div className="flex flex-col gap-2">
-                        <Button variant="outline" size="sm">
-                          <Paperclip className="h-4 w-4" />
-                        </Button>
                         <Button 
                           size="sm"
                           onClick={handleSendConversationMessage}
