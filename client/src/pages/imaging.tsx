@@ -76,6 +76,7 @@ import {
   CalendarIcon,
   Save,
   PenTool,
+  MoreVertical,
 } from "lucide-react";
 import { format } from "date-fns";
 import { isDoctorLike, formatRoleLabel } from "@/lib/role-utils";
@@ -305,6 +306,8 @@ export default function ImagingPage() {
   const [studyToDelete, setStudyToDelete] = useState<any>(null);
   const [showShareSuccessDialog, setShowShareSuccessDialog] = useState(false);
   const [shareSuccessEmail, setShareSuccessEmail] = useState("");
+  const [showDetailsDialog, setShowDetailsDialog] = useState(false);
+  const [selectedStudyDetails, setSelectedStudyDetails] = useState<any>(null);
   const [modalityFilter, setModalityFilter] = useState<string>("all");
   const [selectedStudyId, setSelectedStudyId] = useState<string | null>(null);
   const [shareFormData, setShareFormData] = useState<{
@@ -1259,18 +1262,52 @@ export default function ImagingPage() {
     const files = event.target.files;
     if (files && files.length > 0) {
       const fileList = Array.from(files);
+      
       // Append new files to existing selectedFiles instead of replacing
       setSelectedFiles(prevFiles => {
         // Create a map to track existing files by name and size to avoid duplicates
         const existingFilesMap = new Map(prevFiles.map(f => [`${f.name}-${f.size}`, f]));
+        const newFilesToAdd: File[] = [];
+        
         // Add new files, skipping duplicates
         fileList.forEach(newFile => {
           const key = `${newFile.name}-${newFile.size}`;
           if (!existingFilesMap.has(key)) {
             existingFilesMap.set(key, newFile);
+            newFilesToAdd.push(newFile);
           }
         });
-        return Array.from(existingFilesMap.values());
+        
+        const updatedFiles = Array.from(existingFilesMap.values());
+        
+        // Create preview URLs for newly added image files
+        if (newFilesToAdd.length > 0) {
+          const previewPromises = newFilesToAdd.map((file) => {
+            return new Promise<string>((resolve) => {
+              if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                  resolve(e.target?.result as string);
+                };
+                reader.onerror = () => {
+                  resolve(''); // Return empty string on error
+                };
+                reader.readAsDataURL(file);
+              } else {
+                // For non-image files (like DICOM), create a placeholder
+                resolve('');
+              }
+            });
+          });
+
+          Promise.all(previewPromises).then((previews) => {
+            // Only add valid previews (non-empty strings)
+            const validPreviews = previews.filter(p => p !== '');
+            setUploadedImagePreviews(prev => [...prev, ...validPreviews]);
+          });
+        }
+        
+        return updatedFiles;
       });
     }
     // Reset the input so the same file can be selected again if needed
@@ -1930,6 +1967,7 @@ export default function ImagingPage() {
             }
 
             // Save all uploaded images to radiology_images table
+            // This is CRITICAL - images must be saved to database before PDF generation
             if (uploadedImageFileNames.length > 0 && study.id) {
               try {
                 const token = localStorage.getItem("auth_token");
@@ -1952,6 +1990,11 @@ export default function ImagingPage() {
                 if (saveRadiologyResponse.ok) {
                   const saveResult = await saveRadiologyResponse.json();
                   console.log('📷 CLIENT: Saved images to radiology_images table:', saveResult);
+                  console.log(`📷 CLIENT: Successfully saved ${saveResult.savedCount || uploadedImageFileNames.length} image(s) to database before PDF generation`);
+                  
+                  // Wait a brief moment to ensure database transaction is committed
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                  
                   toast({
                     title: "Images Saved",
                     description: `Successfully saved ${saveResult.savedCount || uploadedImageFileNames.length} image(s) to radiology_images table`,
@@ -1983,6 +2026,8 @@ export default function ImagingPage() {
 
           // Clear selected files after successful upload
           setSelectedFiles([]);
+          // Clear previews after successful upload
+          setUploadedImagePreviews([]);
         } catch (uploadError) {
           console.error('Error uploading images:', uploadError);
           toast({
@@ -1994,6 +2039,12 @@ export default function ImagingPage() {
       }
 
       // Fetch radiology images from database (from radiology_images table)
+      // IMPORTANT: Wait a moment after upload to ensure database transaction is committed
+      if (uploadedImageFileNames.length > 0) {
+        console.log('📷 CLIENT: Waiting 1 second for database transaction to commit before fetching radiology images...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
       let radiologyImagePaths: string[] = [];
       try {
         const radiologyResponse = await apiRequest(
@@ -2015,11 +2066,27 @@ export default function ImagingPage() {
             
             console.log('📷 CLIENT: Found radiology images from database:', radiologyImagePaths.length);
             console.log('📷 CLIENT: Radiology image paths:', radiologyImagePaths);
+            
+            if (radiologyImagePaths.length === 0 && uploadedImageFileNames.length > 0) {
+              console.warn('📷 CLIENT: ⚠️ No radiology image paths found in database, but images were uploaded. This may indicate a save issue.');
+            }
           }
         }
       } catch (radiologyError) {
         console.error('Error fetching radiology images:', radiologyError);
         // Continue with report generation even if radiology images fetch fails
+      }
+
+      // Prepare image data for embedding in PDF
+      // Include both uploaded filenames and preview data URLs to ensure images are embedded
+      const imageDataForPDF: any = {
+        uploadedImageFileNames: uploadedImageFileNames,
+        radiologyImagePaths: radiologyImagePaths,
+      };
+
+      // Also include preview data URLs if available (for immediate embedding)
+      if (uploadedImagePreviews.length > 0) {
+        imageDataForPDF.previewImageDataUrls = uploadedImagePreviews;
       }
 
       // Call server-side PDF generation endpoint with fileName, uploaded image filenames, radiology image paths, and signature data
@@ -2037,6 +2104,7 @@ export default function ImagingPage() {
           },
           uploadedImageFileNames,
           radiologyImagePaths, // Pass file paths from radiology_images table
+          previewImageDataUrls: uploadedImagePreviews.length > 0 ? uploadedImagePreviews : undefined, // Pass preview data URLs for direct embedding
           signatureData: study.signatureData || null,
           signatureDate: study.signatureDate || null,
         },
@@ -2577,9 +2645,10 @@ export default function ImagingPage() {
         const signatureDate = new Date().toISOString();
 
         // Invalidate and refetch queries to get updated data
+        // Use exact: true to only invalidate medical-images queries, not other API queries
         await queryClient.invalidateQueries({ 
           queryKey: ["/api/medical-images"],
-          exact: false 
+          exact: true 
         });
         
         // Also refetch to ensure data is updated
@@ -3214,19 +3283,6 @@ export default function ImagingPage() {
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
                             Radiologist
                           </th>
-                          {activeTab !== "order-study" && activeTab !== "generate-report" && (
-                            <>
-                              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                                Scheduled
-                              </th>
-                              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                                Performed
-                              </th>
-                              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                                Created
-                              </th>
-                            </>
-                          )}
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '5%' }}>
                             Priority
                           </th>
@@ -3751,31 +3807,6 @@ export default function ImagingPage() {
                               {study.radiologist || "N/A"}
                               </div>
                             </td>
-                            {activeTab !== "order-study" && activeTab !== "generate-report" && (
-                              <>
-                                <td className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400">
-                                  <div className="truncate" title={study.scheduledAt ? format(new Date(study.scheduledAt), "MMM dd, yyyy") : "N/A"}>
-                                  {study.scheduledAt
-                                    ? format(new Date(study.scheduledAt), "MMM dd, yyyy")
-                                    : "N/A"}
-                                  </div>
-                                </td>
-                                <td className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400">
-                                  <div className="truncate" title={study.performedAt ? format(new Date(study.performedAt), "MMM dd, yyyy") : "N/A"}>
-                                  {study.performedAt
-                                    ? format(new Date(study.performedAt), "MMM dd, yyyy")
-                                    : "N/A"}
-                                  </div>
-                                </td>
-                                <td className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400">
-                                  <div className="truncate" title={study.createdAt ? format(new Date(study.createdAt), "MMM dd, yyyy") : "N/A"}>
-                                  {study.createdAt
-                                    ? format(new Date(study.createdAt), "MMM dd, yyyy")
-                                    : "N/A"}
-                                  </div>
-                                </td>
-                              </>
-                            )}
                             <td className="px-2 py-2 text-xs">
                               <Badge
                                 variant={study.priority === "stat" || study.priority === "urgent" ? "destructive" : "secondary"}
@@ -3784,14 +3815,14 @@ export default function ImagingPage() {
                                 {study.priority || "routine"}
                               </Badge>
                             </td>
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-2 py-2 text-xs min-w-0">
                               {selectedStudyId === study.id && editModes.status ? (
-                                <div className="flex items-center gap-1">
+                                <div className="flex flex-col gap-1 w-full min-w-0">
                                   <Select
                                     value={editingStatus}
                                     onValueChange={setEditingStatus}
                                   >
-                                    <SelectTrigger className="w-24 h-7 text-xs">
+                                    <SelectTrigger className="w-full h-6 text-[10px]">
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -3803,30 +3834,34 @@ export default function ImagingPage() {
                                       <SelectItem value="preliminary">Preliminary</SelectItem>
                                     </SelectContent>
                                   </Select>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleFieldSave("status")}
-                                    disabled={saving.status}
-                                    className="h-7 px-1.5 text-xs"
-                                    data-testid="button-save-status"
-                                  >
-                                    {saving.status ? "..." : "Save"}
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleFieldCancel("status")}
-                                    disabled={saving.status}
-                                    className="h-7 px-1.5 text-xs"
-                                    data-testid="button-cancel-status"
-                                  >
-                                    Cancel
-                                  </Button>
+                                  <div className="flex items-center gap-1 justify-center">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleFieldSave("status")}
+                                      disabled={saving.status}
+                                      className="h-5 w-5 p-0 flex-shrink-0"
+                                      title="Save"
+                                      data-testid="button-save-status"
+                                    >
+                                      <Check className="h-2.5 w-2.5" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleFieldCancel("status")}
+                                      disabled={saving.status}
+                                      className="h-5 w-5 p-0 flex-shrink-0"
+                                      title="Cancel"
+                                      data-testid="button-cancel-status"
+                                    >
+                                      <X className="h-2.5 w-2.5" />
+                                    </Button>
+                                  </div>
                                 </div>
                               ) : (
-                                <div className="flex items-center gap-1">
-                                  <Badge className={`${getStatusColor(study.status)} text-xs px-1.5 py-0`}>
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <Badge className={`${getStatusColor(study.status)} text-[10px] px-1 py-0.5 flex-shrink`}>
                                     {study.status}
                                   </Badge>
                                   {user?.role !== 'patient' && activeTab !== "order-study" && (
@@ -3837,10 +3872,11 @@ export default function ImagingPage() {
                                         setSelectedStudyId(study.id);
                                         handleFieldEdit("status");
                                       }}
-                                      className="h-5 w-5 p-0"
+                                      className="h-4 w-4 p-0 flex-shrink-0 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                      title="Edit Status"
                                       data-testid={`button-edit-status-${study.id}`}
                                     >
-                                      <Edit className="h-3 w-3" />
+                                      <Edit className="h-2.5 w-2.5" />
                                     </Button>
                                   )}
                                 </div>
@@ -3857,13 +3893,13 @@ export default function ImagingPage() {
                                 </div>
                               </td>
                             )}
-                            <td className="px-2 py-2 text-xs">
-                              <div className="flex items-center justify-center">
+                            <td className="px-2 py-2 text-xs min-w-0 flex-shrink-0">
+                              <div className="flex items-center justify-center min-w-0">
                                 {study.signatureData && String(study.signatureData).trim() !== "" ? (
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    className="h-6 px-1.5 flex items-center gap-0.5 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                    className="h-6 px-1.5 flex items-center gap-0.5 text-green-600 hover:text-green-700 hover:bg-green-50 flex-shrink-0"
                                     onClick={() => {
                                       setSelectedSignatureData({
                                         signatureData: study.signatureData,
@@ -3876,19 +3912,19 @@ export default function ImagingPage() {
                                     }}
                                     title="View signature details"
                                   >
-                                    <CheckCircle className="h-3 w-3" />
-                                    <span className="text-xs">✓</span>
+                                    <CheckCircle className="h-3 w-3 flex-shrink-0" />
+                                    <span className="text-xs whitespace-nowrap">✓</span>
                                   </Button>
                                 ) : (
-                                  <div className="flex items-center gap-0.5 text-red-600">
-                                    <X className="h-3 w-3" />
-                                    <span className="text-xs">✗</span>
+                                  <div className="flex items-center gap-0.5 text-red-600 flex-shrink-0">
+                                    <X className="h-3 w-3 flex-shrink-0" />
+                                    <span className="text-xs whitespace-nowrap">✗</span>
                                   </div>
                                 )}
                               </div>
                             </td>
                             <td className="px-2 py-2 text-xs">
-                              <div className="flex items-center gap-0.5 justify-center flex-wrap">
+                              <div className={`flex items-center ${activeTab === 'imaging-results' ? 'gap-0.5' : 'gap-0.5'} justify-center ${activeTab === 'imaging-results' ? 'flex-nowrap' : 'flex-wrap'}`}>
                                 {user?.role !== 'patient' && (
                                   <>
                                     {activeTab === "order-study" ? (
@@ -3932,21 +3968,21 @@ export default function ImagingPage() {
                                               handleViewStudy(study);
                                             }
                                           }}
-                                            className="h-6 w-6 p-0"
+                                            className={activeTab === 'imaging-results' ? "h-5 w-5 p-0" : "h-6 w-6 p-0"}
                                           data-testid={`button-view-${study.id}`}
                                           title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}
                                         >
-                                            <Eye className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                            <Eye className={activeTab === 'imaging-results' ? "h-2.5 w-2.5 text-gray-600 dark:text-gray-400" : "h-3 w-3 text-gray-600 dark:text-gray-400"} />
                                         </Button>
                                         )}
                                         <Button
                                           variant="ghost"
                                           size="sm"
                                           onClick={() => handleViewStudy(study)}
-                                          className="h-6 w-6 p-0"
+                                          className={activeTab === 'imaging-results' ? "h-5 w-5 p-0" : "h-6 w-6 p-0"}
                                           data-testid={`button-edit-${study.id}`}
                                         >
-                                          <Edit className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                          <Edit className={activeTab === 'imaging-results' ? "h-2.5 w-2.5 text-gray-600 dark:text-gray-400" : "h-3 w-3 text-gray-600 dark:text-gray-400"} />
                                         </Button>
                                       </>
                                     )}
@@ -3984,10 +4020,25 @@ export default function ImagingPage() {
                                           setStudyToDelete(study);
                                           setShowDeleteDialog(true);
                                         }}
-                                        className="h-6 w-6 p-0"
+                                        className={activeTab === 'imaging-results' ? "h-5 w-5 p-0" : "h-6 w-6 p-0"}
                                         data-testid={`button-delete-${study.id}`}
                                       >
-                                        <Trash2 className="h-3 w-3 text-red-600 dark:text-red-400" />
+                                        <Trash2 className={activeTab === 'imaging-results' ? "h-2.5 w-2.5 text-red-600 dark:text-red-400" : "h-3 w-3 text-red-600 dark:text-red-400"} />
+                                      </Button>
+                                    )}
+                                    {activeTab === "imaging-results" && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedStudyDetails(study);
+                                          setShowDetailsDialog(true);
+                                        }}
+                                        className="h-5 w-5 p-0"
+                                        data-testid={`button-details-${study.id}`}
+                                        title="View Details"
+                                      >
+                                        <MoreVertical className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                       </Button>
                                     )}
                                   </>
@@ -5609,6 +5660,12 @@ export default function ImagingPage() {
                                 onClick={() => {
                                   const newFiles = selectedFiles.filter((_, i) => i !== index);
                                   setSelectedFiles(newFiles);
+                                  // Also remove the corresponding preview
+                                  setUploadedImagePreviews(prev => {
+                                    const newPreviews = [...prev];
+                                    newPreviews.splice(index, 1);
+                                    return newPreviews;
+                                  });
                                 }}
                                 className="h-5 w-5 p-0 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
                                 title="Remove this image"
@@ -8787,43 +8844,11 @@ export default function ImagingPage() {
                       <Trash2 className="h-4 w-4 mr-2" />
                       Clear
                     </Button>
-                    <Button 
-                      variant="outline" 
-                      className="flex-1"
-                      onClick={previewSignature}
-                    >
-                      <Eye className="h-4 w-4 mr-2" />
-                      Preview
-                    </Button>
                   </div>
                 </div>
 
                 {/* Signature Analytics */}
                 <div className="space-y-4">
-                  {/* Signature Preview Display */}
-                  {signaturePreview && (
-                    <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border-2 border-blue-200 dark:border-blue-800">
-                      <h5 className="font-medium text-blue-900 dark:text-blue-100 mb-3 flex items-center gap-2">
-                        <Eye className="h-4 w-4" />
-                        Signature Preview
-                      </h5>
-                      <div className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-4 flex items-center justify-center" style={{ minHeight: '150px' }}>
-                        <img 
-                          src={signaturePreview} 
-                          alt="Signature Preview" 
-                          className="max-w-full max-h-[150px] object-contain"
-                          onError={(e) => {
-                            console.error("Error loading signature preview");
-                            e.currentTarget.style.display = 'none';
-                          }}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-2 text-center">
-                        This is how your signature will appear when saved
-                      </p>
-                    </div>
-                  )}
-
                   <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border">
                     <h5 className="font-medium text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
                       <CheckCircle className="h-4 w-4 text-green-600" />
@@ -9004,6 +9029,99 @@ export default function ImagingPage() {
               </Card>
             </TabsContent>
           </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      {/* Study Details Dialog */}
+      <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Study Details</DialogTitle>
+          </DialogHeader>
+          {selectedStudyDetails && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 text-sm">
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Image ID:</p>
+                  <p className="text-gray-900 dark:text-gray-100 break-words">{selectedStudyDetails.imageId || selectedStudyDetails.id || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Patient Name:</p>
+                  <p className="text-gray-900 dark:text-gray-100 break-words">{selectedStudyDetails.patientName || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Provider Name:</p>
+                  <p className="text-gray-900 dark:text-gray-100 break-words">
+                    {(() => {
+                      const providerUser = allUsers?.find((u: any) => 
+                        u.id === selectedStudyDetails.selectedUserId || 
+                        u.id === selectedStudyDetails.providerId ||
+                        u.id === selectedStudyDetails.doctorId
+                      );
+                      if (!providerUser) return "N/A";
+                      const firstName = providerUser.firstName || "";
+                      const lastName = providerUser.lastName || "";
+                      let fullName = `${firstName} ${lastName}`.trim();
+                      if (!fullName) return "N/A";
+                      const role = providerUser.role || selectedStudyDetails.selectedRole || "";
+                      const roleLabel = role ? formatRoleLabel(role) : "";
+                      const alreadyHasDr = fullName.toLowerCase().startsWith("dr.");
+                      const prefix = (role?.toLowerCase() === "doctor" && !alreadyHasDr) ? "Dr. " : "";
+                      return roleLabel ? `${prefix}${fullName} (${roleLabel})` : `${prefix}${fullName}`;
+                    })()}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Radiologist (Created By):</p>
+                  <p className="text-gray-900 dark:text-gray-100 break-words">{selectedStudyDetails.radiologist || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">File Name:</p>
+                  <p className="text-gray-900 dark:text-gray-100 break-words">{selectedStudyDetails.fileName || selectedStudyDetails.file_name || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Status:</p>
+                  <div>
+                    <Badge className={`${getStatusColor(selectedStudyDetails.status || "ordered")} text-xs px-2 py-0.5`}>
+                      {selectedStudyDetails.status || "N/A"}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Scheduled:</p>
+                  <p className="text-gray-900 dark:text-gray-100">
+                    {selectedStudyDetails.scheduledAt 
+                      ? format(new Date(selectedStudyDetails.scheduledAt), "MMM dd, yyyy")
+                      : "N/A"}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Performed:</p>
+                  <p className="text-gray-900 dark:text-gray-100">
+                    {selectedStudyDetails.performedAt 
+                      ? format(new Date(selectedStudyDetails.performedAt), "MMM dd, yyyy")
+                      : "N/A"}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Created:</p>
+                  <p className="text-gray-900 dark:text-gray-100">
+                    {selectedStudyDetails.createdAt 
+                      ? format(new Date(selectedStudyDetails.createdAt), "MMM dd, yyyy")
+                      : "N/A"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowDetailsDialog(false)}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>

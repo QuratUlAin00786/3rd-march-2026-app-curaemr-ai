@@ -701,7 +701,7 @@ export default function LabResultsPage() {
     dueDate: new Date().toISOString().split('T')[0],
     items: [] as any[],
     totalAmount: 0,
-    paymentMethod: '',
+    paymentMethod: 'cash',
     insuranceProvider: '',
     notes: ''
   });
@@ -2797,22 +2797,6 @@ Report generated from Cura EMR System`;
       {/* Report Generated Indicator */}
       <div className="px-6 pt-2">
         <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="inline-flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Report Generated:</span>
-                <i 
-                  className="fa fa-bar-chart" 
-                  style={{ 
-                    color: hasGeneratedReport ? 'green' : 'red'
-                  }}
-                ></i>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{hasGeneratedReport ? "report generated" : "report not generated"}</p>
-            </TooltipContent>
-          </Tooltip>
         </TooltipProvider>
       </div>
 
@@ -4355,38 +4339,20 @@ Report generated from Cura EMR System`;
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label className="text-sm font-medium">Patient</Label>
-                <Select
-                  value={pendingOrderData?.patientId?.toString() || ""}
-                  onValueChange={(value) => {
-                    const patient = patients.find((p: any) => p.id.toString() === value);
-                    if (patient) {
-                      setPendingOrderData({
-                        ...pendingOrderData,
-                        patientId: patient.id,
-                        patientName: `${patient.firstName || ''} ${patient.lastName || ''}`.trim()
-                      });
-                    }
-                  }}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select patient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {patients.map((patient: any) => (
-                      <SelectItem key={patient.id} value={patient.id.toString()}>
-                        {patient.firstName} {patient.lastName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="h-10 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm mt-1">
+                  {pendingOrderData?.patientName || (() => {
+                    const patient = patients.find((p: any) => p.id === pendingOrderData?.patientId);
+                    return patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : 'N/A';
+                  })()}
+                </div>
               </div>
               <div>
                 <Label className="text-sm font-medium">Service Date</Label>
                 <Input
                   type="date"
                   value={invoiceData.serviceDate}
-                  onChange={(e) => setInvoiceData({ ...invoiceData, serviceDate: e.target.value })}
-                  className="mt-1"
+                  readOnly
+                  className="mt-1 bg-gray-50 dark:bg-gray-800 cursor-not-allowed"
                 />
               </div>
             </div>
@@ -4418,8 +4384,8 @@ Report generated from Cura EMR System`;
                 <Input
                   type="date"
                   value={invoiceData.invoiceDate}
-                  onChange={(e) => setInvoiceData({ ...invoiceData, invoiceDate: e.target.value })}
-                  className="mt-1"
+                  readOnly
+                  className="mt-1 bg-gray-50 dark:bg-gray-800 cursor-not-allowed"
                 />
               </div>
               <div>
@@ -4427,8 +4393,8 @@ Report generated from Cura EMR System`;
                 <Input
                   type="date"
                   value={invoiceData.dueDate}
-                  onChange={(e) => setInvoiceData({ ...invoiceData, dueDate: e.target.value })}
-                  className="mt-1"
+                  readOnly
+                  className="mt-1 bg-gray-50 dark:bg-gray-800 cursor-not-allowed"
                 />
               </div>
             </div>
@@ -4599,7 +4565,7 @@ Report generated from Cura EMR System`;
             <div>
               <Label className="text-sm font-medium">Payment Method</Label>
               <Select
-                value={invoiceData.paymentMethod}
+                value={invoiceData.paymentMethod || 'cash'}
                 onValueChange={(value) => setInvoiceData({ ...invoiceData, paymentMethod: value })}
               >
                 <SelectTrigger className="mt-1" data-testid="select-payment-method">
@@ -7894,10 +7860,6 @@ Report generated from Cura EMR System`;
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
                       Clear
-                    </Button>
-                    <Button variant="outline" className="flex-1">
-                      <Eye className="h-4 w-4 mr-2" />
-                      Preview
                     </Button>
                   </div>
                 </div>

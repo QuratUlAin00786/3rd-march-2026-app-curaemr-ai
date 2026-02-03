@@ -41,6 +41,7 @@ import { Header } from "@/components/layout/header";
 import { useAuth } from "@/hooks/use-auth";
 import { isDoctorLike } from "@/lib/role-utils";
 import { useRolePermissions } from "@/hooks/use-role-permissions";
+import { apiRequest } from "@/lib/queryClient";
 
 function getTenantSubdomain(): string {
   return localStorage.getItem('user_subdomain') || 'demo';
@@ -105,6 +106,8 @@ export default function AnalyticsPage() {
   const { user } = useAuth();
   const { canView } = useRolePermissions();
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [showAppointmentsDialog, setShowAppointmentsDialog] = useState(false);
+  const [completedAppointments, setCompletedAppointments] = useState<any[]>([]);
   const [filters, setFilters] = useState({
     dateRange: '30',
     department: 'all',
@@ -132,6 +135,49 @@ export default function AnalyticsPage() {
     },
     enabled: !!user
   });
+
+  // Fetch completed appointments (not past today)
+  const fetchCompletedAppointments = async () => {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Start of today
+      
+      const response = await apiRequest("GET", "/api/appointments");
+      if (response.ok) {
+        const allAppointments = await response.json();
+        
+        // Filter for completed appointments that are today or future (not past)
+        const completed = allAppointments.filter((apt: any) => {
+          const appointmentDate = new Date(apt.scheduledAt || apt.scheduled_at || apt.date);
+          appointmentDate.setHours(0, 0, 0, 0);
+          
+          return apt.status === 'completed' && appointmentDate >= today;
+        });
+        
+        return completed;
+      }
+      return [];
+    } catch (error) {
+      console.error("Failed to fetch completed appointments:", error);
+      return [];
+    }
+  };
+
+  // Fetch completed appointments data
+  const { data: completedAppointmentsData } = useQuery({
+    queryKey: ['completed-appointments', user?.id],
+    queryFn: fetchCompletedAppointments,
+    enabled: !!user
+  });
+
+  const completedCount = completedAppointmentsData?.length || 0;
+
+  const handleAppointmentsClick = () => {
+    if (completedAppointmentsData) {
+      setCompletedAppointments(completedAppointmentsData);
+      setShowAppointmentsDialog(true);
+    }
+  };
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-GB', {
@@ -442,10 +488,13 @@ export default function AnalyticsPage() {
               {/* Appointments Today */}
               <div>
                 <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">Appointments </div>
-                <Card className="p-3">
+                <Card 
+                  className="p-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  onClick={handleAppointmentsClick}
+                >
                   <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">Appointments</div>
                   <div className="text-2xl font-bold text-blue-600">{analytics.overview.totalAppointments || 0}</div>
-                  <div className="text-xs text-gray-500">{analytics.overview.completedAppointments || 0} completed</div>
+                  <div className="text-xs text-gray-500">{completedCount || 0} completed</div>
                 </Card>
               </div>
 
@@ -1083,6 +1132,73 @@ export default function AnalyticsPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Completed Appointments Dialog */}
+      <Dialog open={showAppointmentsDialog} onOpenChange={setShowAppointmentsDialog}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Completed Appointments (Today & Future)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {completedAppointments.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                No completed appointments found for today or future dates.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {completedAppointments.map((appointment: any) => {
+                  const appointmentDate = new Date(appointment.scheduledAt || appointment.scheduled_at || appointment.date);
+                  const patientName = appointment.patientName || 
+                    (appointment.patient ? `${appointment.patient.firstName || ''} ${appointment.patient.lastName || ''}`.trim() : 'N/A');
+                  const providerName = appointment.providerName || 
+                    (appointment.provider ? `${appointment.provider.firstName || ''} ${appointment.provider.lastName || ''}`.trim() : 'N/A');
+                  
+                  return (
+                    <Card key={appointment.id} className="p-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Patient:</p>
+                          <p className="text-gray-900 dark:text-gray-100">{patientName}</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Provider:</p>
+                          <p className="text-gray-900 dark:text-gray-100">{providerName}</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Date & Time:</p>
+                          <p className="text-gray-900 dark:text-gray-100">
+                            {format(appointmentDate, "MMM dd, yyyy")} at {format(appointmentDate, "h:mm a")}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Status:</p>
+                          <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                            {appointment.status || 'completed'}
+                          </Badge>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Type:</p>
+                          <p className="text-gray-900 dark:text-gray-100">{appointment.type || appointment.appointmentType || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Duration:</p>
+                          <p className="text-gray-900 dark:text-gray-100">{appointment.duration || 'N/A'} minutes</p>
+                        </div>
+                        {appointment.notes && (
+                          <div className="md:col-span-3">
+                            <p className="font-medium text-gray-600 dark:text-gray-400 text-xs">Notes:</p>
+                            <p className="text-gray-900 dark:text-gray-100 text-sm">{appointment.notes}</p>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -124,6 +124,7 @@ export function PatientCommunicationDialog({ open, onOpenChange, patient, mode }
   const [flagSeverity, setFlagSeverity] = useState<"low" | "medium" | "high" | "critical">("medium");
   const [scheduledFor, setScheduledFor] = useState("");
   const [selectedTimezone, setSelectedTimezone] = useState("Europe/London");
+  const [currentTimeDisplay, setCurrentTimeDisplay] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -161,21 +162,57 @@ export function PatientCommunicationDialog({ open, onOpenChange, patient, mode }
   };
 
   // Get current date/time in the selected timezone for display
+  // Uses actual timezone to handle DST automatically
   const getCurrentTimeInTimezone = (): string => {
     const tz = TIMEZONES.find(t => t.value === selectedTimezone);
     if (!tz) return "";
     
-    const now = new Date();
-    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const tzTime = new Date(utcTime + (tz.offset * 3600000));
-    
-    const hours = tzTime.getHours().toString().padStart(2, '0');
-    const minutes = tzTime.getMinutes().toString().padStart(2, '0');
-    const day = tzTime.getDate().toString().padStart(2, '0');
-    const month = (tzTime.getMonth() + 1).toString().padStart(2, '0');
-    const year = tzTime.getFullYear();
-    
-    return `Current time in ${tz.label.split(' ')[0]}: ${hours}:${minutes} (${day}/${month}/${year})`;
+    try {
+      const now = new Date();
+      
+      // Use Intl.DateTimeFormat to get accurate time in the selected timezone
+      // This automatically handles DST (Daylight Saving Time)
+      const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz.value,
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour12: false
+      });
+      
+      const parts = formatter.formatToParts(now);
+      const hours = parts.find(p => p.type === 'hour')?.value || '00';
+      const minutes = parts.find(p => p.type === 'minute')?.value || '00';
+      const day = parts.find(p => p.type === 'day')?.value || '01';
+      const month = parts.find(p => p.type === 'month')?.value || '01';
+      const year = parts.find(p => p.type === 'year')?.value || '2024';
+      
+      // Get timezone abbreviation (e.g., GMT, BST, PKT)
+      const tzFormatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz.value,
+        timeZoneName: 'short'
+      });
+      const tzParts = tzFormatter.formatToParts(now);
+      const tzName = tzParts.find(p => p.type === 'timeZoneName')?.value || '';
+      
+      return `Current time in ${tz.label.split(' ')[0]}: ${hours}:${minutes} (${day}/${month}/${year}) ${tzName}`;
+    } catch (error) {
+      console.error("Error getting timezone time:", error);
+      // Fallback to simple calculation if Intl fails
+      const now = new Date();
+      const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const tzTime = new Date(utcTime + (tz.offset * 3600000));
+      
+      const hours = tzTime.getHours().toString().padStart(2, '0');
+      const minutes = tzTime.getMinutes().toString().padStart(2, '0');
+      const day = tzTime.getDate().toString().padStart(2, '0');
+      const month = (tzTime.getMonth() + 1).toString().padStart(2, '0');
+      const year = tzTime.getFullYear();
+      
+      return `Current time in ${tz.label.split(' ')[0]}: ${hours}:${minutes} (${day}/${month}/${year})`;
+    }
   };
 
   // Get minimum datetime value for the selected timezone
@@ -417,6 +454,64 @@ export function PatientCommunicationDialog({ open, onOpenChange, patient, mode }
     }
   }, [open]);
 
+  // Update current time display when timezone changes and keep it live
+  useEffect(() => {
+    if (!open) return;
+    
+    // Update immediately
+    const updateTime = () => {
+      const tz = TIMEZONES.find(t => t.value === selectedTimezone);
+      if (!tz) {
+        setCurrentTimeDisplay("");
+        return;
+      }
+      
+      try {
+        const now = new Date();
+        
+        // Use Intl.DateTimeFormat to get accurate time in the selected timezone
+        // This automatically handles DST (Daylight Saving Time)
+        const formatter = new Intl.DateTimeFormat('en-GB', {
+          timeZone: tz.value,
+          hour: '2-digit',
+          minute: '2-digit',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour12: false
+        });
+        
+        const parts = formatter.formatToParts(now);
+        const hours = parts.find(p => p.type === 'hour')?.value || '00';
+        const minutes = parts.find(p => p.type === 'minute')?.value || '00';
+        const day = parts.find(p => p.type === 'day')?.value || '01';
+        const month = parts.find(p => p.type === 'month')?.value || '01';
+        const year = parts.find(p => p.type === 'year')?.value || '2024';
+        
+        // Get timezone abbreviation (e.g., GMT, BST, PKT)
+        const tzFormatter = new Intl.DateTimeFormat('en-GB', {
+          timeZone: tz.value,
+          timeZoneName: 'short'
+        });
+        const tzParts = tzFormatter.formatToParts(now);
+        const tzName = tzParts.find(p => p.type === 'timeZoneName')?.value || '';
+        
+        setCurrentTimeDisplay(`Current time in ${tz.label.split(' ')[0]}: ${hours}:${minutes} (${day}/${month}/${year}) ${tzName}`);
+      } catch (error) {
+        console.error("Error getting timezone time:", error);
+        setCurrentTimeDisplay("");
+      }
+    };
+    
+    // Update immediately
+    updateTime();
+    
+    // Update every second to show live time
+    const interval = setInterval(updateTime, 1000);
+    
+    return () => clearInterval(interval);
+  }, [selectedTimezone, open]);
+
   if (!patient) return null;
 
   return (
@@ -518,7 +613,7 @@ export function PatientCommunicationDialog({ open, onOpenChange, patient, mode }
                 <div className="space-y-2">
                   <Label htmlFor="scheduled-for">Schedule For (Optional)</Label>
                   <p className="text-xs text-blue-600 dark:text-blue-400 mb-1">
-                    {getCurrentTimeInTimezone()}
+                    {currentTimeDisplay || getCurrentTimeInTimezone()}
                   </p>
                   <input
                     type="datetime-local"

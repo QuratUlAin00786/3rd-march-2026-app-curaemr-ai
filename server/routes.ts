@@ -5914,6 +5914,43 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     }
   });
 
+  // Create imaging pricing
+  app.post("/api/pricing/imaging", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant || !req.user) {
+        return res.status(401).json({ error: "Organization or user not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const userId = req.user.id;
+
+      // Validate request body
+      const pricingData = schema.insertImagingPricingSchema.parse({
+        ...req.body,
+        organizationId,
+        createdBy: userId,
+        isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+        currency: req.body.currency || "GBP",
+        version: req.body.version || 1
+      });
+
+      // Insert the imaging pricing
+      const [newPricing] = await db
+        .insert(imagingPricing)
+        .values(pricingData)
+        .returning();
+
+      console.log(`[IMAGING PRICING] Created imaging pricing ${newPricing.id} for organization ${organizationId}`);
+      res.status(201).json(newPricing);
+    } catch (error) {
+      console.error("Error creating imaging pricing:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create imaging pricing", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   // Get doctors fees pricing
   app.get("/api/pricing/doctors-fees", authMiddleware, async (req: TenantRequest, res) => {
     try {
@@ -6139,6 +6176,264 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("Error fetching treatments pricing:", error);
       res.status(500).json({ error: "Failed to fetch treatments pricing" });
+    }
+  });
+
+  // Create treatment pricing
+  app.post("/api/pricing/treatments", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant || !req.user) {
+        return res.status(401).json({ error: "Organization or user not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const userId = req.user.id;
+
+      // Validate request body
+      const treatmentData = schema.insertTreatmentSchema.parse({
+        ...req.body,
+        organizationId,
+        createdBy: userId,
+        isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+        currency: req.body.currency || "GBP",
+        version: req.body.version || 1
+      });
+
+      // Insert the treatment pricing
+      const [newTreatment] = await db
+        .insert(schema.treatments)
+        .values(treatmentData)
+        .returning();
+
+      console.log(`[TREATMENTS PRICING] Created treatment ${newTreatment.id} for organization ${organizationId}`);
+      res.status(201).json(newTreatment);
+    } catch (error) {
+      console.error("Error creating treatment pricing:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create treatment pricing", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Update treatment pricing
+  app.patch("/api/pricing/treatments/:id", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const treatmentId = parseInt(req.params.id);
+
+      if (isNaN(treatmentId)) {
+        return res.status(400).json({ error: "Invalid treatment ID" });
+      }
+
+      // Check if treatment exists and belongs to organization
+      const existingTreatment = await db
+        .select()
+        .from(schema.treatments)
+        .where(
+          and(
+            eq(schema.treatments.id, treatmentId),
+            eq(schema.treatments.organizationId, organizationId)
+          )
+        )
+        .limit(1);
+
+      if (existingTreatment.length === 0) {
+        return res.status(404).json({ error: "Treatment not found" });
+      }
+
+      // Update the treatment
+      const updateData = { ...req.body };
+      delete updateData.id;
+      delete updateData.organizationId;
+      delete updateData.createdAt;
+      delete updateData.createdBy;
+
+      const [updatedTreatment] = await db
+        .update(schema.treatments)
+        .set({
+          ...updateData,
+          updatedAt: new Date()
+        })
+        .where(
+          and(
+            eq(schema.treatments.id, treatmentId),
+            eq(schema.treatments.organizationId, organizationId)
+          )
+        )
+        .returning();
+
+      console.log(`[TREATMENTS PRICING] Updated treatment ${treatmentId} for organization ${organizationId}`);
+      res.json(updatedTreatment);
+    } catch (error) {
+      console.error("Error updating treatment pricing:", error);
+      res.status(500).json({ error: "Failed to update treatment pricing", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Delete treatment pricing
+  app.delete("/api/pricing/treatments/:id", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const treatmentId = parseInt(req.params.id);
+
+      if (isNaN(treatmentId)) {
+        return res.status(400).json({ error: "Invalid treatment ID" });
+      }
+
+      // Check if treatment exists and belongs to organization
+      const existingTreatment = await db
+        .select()
+        .from(schema.treatments)
+        .where(
+          and(
+            eq(schema.treatments.id, treatmentId),
+            eq(schema.treatments.organizationId, organizationId)
+          )
+        )
+        .limit(1);
+
+      if (existingTreatment.length === 0) {
+        return res.status(404).json({ error: "Treatment not found" });
+      }
+
+      // Delete the treatment
+      await db
+        .delete(schema.treatments)
+        .where(
+          and(
+            eq(schema.treatments.id, treatmentId),
+            eq(schema.treatments.organizationId, organizationId)
+          )
+        );
+
+      console.log(`[TREATMENTS PRICING] Deleted treatment ${treatmentId} for organization ${organizationId}`);
+      res.json({ success: true, message: "Treatment deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting treatment pricing:", error);
+      res.status(500).json({ error: "Failed to delete treatment pricing", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Get treatments info (metadata)
+  app.get("/api/treatments-info", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const treatmentsInfo = await storage.getTreatmentsInfo(organizationId);
+      res.json(treatmentsInfo);
+    } catch (error) {
+      console.error("Error fetching treatments info:", error);
+      res.status(500).json({ error: "Failed to fetch treatments info" });
+    }
+  });
+
+  // Create treatments info (metadata)
+  app.post("/api/treatments-info", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant || !req.user) {
+        return res.status(401).json({ error: "Organization or user not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const userId = req.user.id;
+
+      // Validate request body
+      const treatmentInfoData = schema.insertTreatmentsInfoSchema.parse({
+        ...req.body,
+        organizationId,
+        createdBy: userId
+      });
+
+      // Insert the treatment info
+      const newTreatmentInfo = await storage.createTreatmentsInfo(treatmentInfoData);
+
+      console.log(`[TREATMENTS INFO] Created treatment info ${newTreatmentInfo.id} for organization ${organizationId}`);
+      res.status(201).json(newTreatmentInfo);
+    } catch (error) {
+      console.error("Error creating treatment info:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create treatment info", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Update treatments info (metadata)
+  app.patch("/api/treatments-info/:id", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const treatmentInfoId = parseInt(req.params.id);
+
+      if (isNaN(treatmentInfoId)) {
+        return res.status(400).json({ error: "Invalid treatment info ID" });
+      }
+
+      // Validate update data
+      const updateData = schema.insertTreatmentsInfoSchema.partial().parse(req.body);
+      delete (updateData as any).organizationId;
+      delete (updateData as any).createdBy;
+      delete (updateData as any).createdAt;
+
+      // Update the treatment info
+      const updatedTreatmentInfo = await storage.updateTreatmentsInfo(treatmentInfoId, organizationId, updateData);
+
+      if (!updatedTreatmentInfo) {
+        return res.status(404).json({ error: "Treatment info not found" });
+      }
+
+      console.log(`[TREATMENTS INFO] Updated treatment info ${treatmentInfoId} for organization ${organizationId}`);
+      res.json(updatedTreatmentInfo);
+    } catch (error) {
+      console.error("Error updating treatment info:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update treatment info", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Delete treatments info (metadata)
+  app.delete("/api/treatments-info/:id", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const treatmentInfoId = parseInt(req.params.id);
+
+      if (isNaN(treatmentInfoId)) {
+        return res.status(400).json({ error: "Invalid treatment info ID" });
+      }
+
+      // Delete the treatment info
+      const deleted = await storage.deleteTreatmentsInfo(treatmentInfoId, organizationId);
+
+      if (!deleted) {
+        return res.status(404).json({ error: "Treatment info not found" });
+      }
+
+      console.log(`[TREATMENTS INFO] Deleted treatment info ${treatmentInfoId} for organization ${organizationId}`);
+      res.json({ success: true, message: "Treatment info deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting treatment info:", error);
+      res.status(500).json({ error: "Failed to delete treatment info", details: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -18483,7 +18778,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           console.log(`📷 SERVER: File size: ${fileStats.size} bytes`);
           console.log(`📷 SERVER: File exists and is accessible ✅`);
           
-          // Read file to get MIME type
+          // Read file to get MIME type and convert to base64
           const ext = path.extname(fileName).toLowerCase();
           let mimeType = 'image/jpeg'; // default
           if (ext === '.png') mimeType = 'image/png';
@@ -18494,13 +18789,40 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           else if (ext === '.svg') mimeType = 'image/svg+xml';
           else if (ext === '.dcm' || ext === '.dicom') mimeType = 'application/dicom';
 
-          // Store absolute path in database (for Windows compatibility)
-          // This matches the path where the file actually exists
+          // Read file and convert to base64 for storage in database
+          // This ensures we always have the image data available for PDF embedding
+          const fileBuffer = await fse.readFile(filePath);
+          const base64ImageData = `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+          console.log(`📷 SERVER: Read file and converted to base64 (${fileBuffer.length} bytes -> ${base64ImageData.length} chars)`);
+
+          // Store relative path in database (relative to project root) for better portability
+          // Calculate relative path from process.cwd() to the file
           const absoluteFilePath = path.resolve(filePath);
-          console.log(`📷 SERVER: Absolute file path to store in DB: "${absoluteFilePath}"`);
+          const projectRoot = process.cwd();
+          let relativeFilePath: string;
+          
+          // Try to get relative path from project root
+          try {
+            relativeFilePath = path.relative(projectRoot, absoluteFilePath);
+            // Normalize to use forward slashes (works on both Windows and Unix)
+            relativeFilePath = relativeFilePath.replace(/\\/g, '/');
+            // Ensure it starts with 'uploads' for consistency
+            if (!relativeFilePath.startsWith('uploads')) {
+              // If relative path doesn't start with uploads, use the absolute path
+              // This handles cases where the file is outside the project root
+              relativeFilePath = absoluteFilePath;
+            }
+          } catch (relError) {
+            // If relative path calculation fails, use absolute path
+            console.warn(`📷 SERVER: Could not calculate relative path, using absolute: ${relError}`);
+            relativeFilePath = absoluteFilePath;
+          }
+          
+          console.log(`📷 SERVER: Absolute file path: "${absoluteFilePath}"`);
+          console.log(`📷 SERVER: Relative file path to store in DB: "${relativeFilePath}"`);
           console.log(`📷 SERVER: Verifying absolute path exists: ${await fse.pathExists(absoluteFilePath) ? '✅ YES' : '❌ NO'}`);
 
-          // Insert into radiology_images table
+          // Insert into radiology_images table with base64 imageData
           const [radiologyImage] = await db
             .insert(schema.radiologyImages)
             .values({
@@ -18508,12 +18830,12 @@ This treatment plan should be reviewed and adjusted based on individual patient 
               organizationId: orgId,
               patientId: patId,
               fileName: fileName,
-              filePath: absoluteFilePath, // Store absolute path
+              filePath: relativeFilePath, // Store relative path (or absolute if relative fails)
               fileSize: fileStats.size,
               mimeType: mimeType,
               uploadedBy: req.user.id,
               displayOrder: i,
-              imageData: null, // Don't store base64, use file path
+              imageData: base64ImageData, // Store base64 image data for reliable PDF embedding
             })
             .returning();
 
@@ -25281,6 +25603,7 @@ Cura EMR Team
       // Get the actual medical image from database to ensure we use the correct image_id and patient_id
       const imageId = parseInt(study.id);
       console.log(`\n🔍 PDF GENERATION START: study.id=${study.id}, parsed imageId=${imageId}`);
+      console.log(`🔍 PDF GENERATION: organizationId=${organizationId}, tenant.id=${req.tenant!.id}`);
       
       // Initialize embeddedCount at the very beginning to ensure it's always in scope
       let embeddedCount = 0;
@@ -25292,6 +25615,7 @@ Cura EMR Team
       }
       
       console.log(`✅ PDF GENERATION: Found medical image - id=${medicalImage.id}, imageId=${medicalImage.imageId}, patientId=${medicalImage.patientId}`);
+      console.log(`✅ PDF GENERATION: Will query radiology_images table with medical_image_id=${medicalImage.id} (this is the numeric database ID)`);
       
       // Use image_id from database as PDF filename (e.g., IMG1760647135I10NC.pdf)
       const reportId = medicalImage.imageId;
@@ -25892,16 +26216,51 @@ Cura EMR Team
               if (radiologyImage.imageData) {
                 try {
                   console.log(`📷 [${idx + 1}] PRIORITY 1: Using base64 imageData from database`);
+                  console.log(`📷 [${idx + 1}]    imageData length: ${radiologyImage.imageData.length} characters`);
+                  
                   // Extract base64 data (remove data URL prefix if present)
-                  const base64Data = radiologyImage.imageData.includes(',') 
-                    ? radiologyImage.imageData.split(',')[1] 
-                    : radiologyImage.imageData;
+                  let base64Data: string;
+                  if (radiologyImage.imageData.includes(',')) {
+                    // Data URL format: data:image/png;base64,<base64data>
+                    base64Data = radiologyImage.imageData.split(',')[1];
+                    console.log(`📷 [${idx + 1}]    Extracted base64 data (after comma): ${base64Data.length} characters`);
+                  } else if (radiologyImage.imageData.startsWith('data:')) {
+                    // Data URL without comma (unlikely but handle it)
+                    const base64Index = radiologyImage.imageData.indexOf('base64');
+                    if (base64Index !== -1) {
+                      base64Data = radiologyImage.imageData.substring(base64Index + 7); // Skip "base64,"
+                    } else {
+                      base64Data = radiologyImage.imageData;
+                    }
+                  } else {
+                    // Pure base64 string
+                    base64Data = radiologyImage.imageData;
+                  }
+                  
+                  // Validate base64 string
+                  if (!base64Data || base64Data.trim().length === 0) {
+                    throw new Error('Base64 data is empty after extraction');
+                  }
                   
                   imageBuffer = Buffer.from(base64Data, 'base64');
+                  
+                  // Validate buffer
+                  if (!imageBuffer || imageBuffer.length === 0) {
+                    throw new Error('Image buffer is empty after base64 decoding');
+                  }
+                  
                   console.log(`📷 [${idx + 1}] ✅ PRIORITY 1 SUCCESS: Loaded ${imageBuffer.length} bytes from base64 imageData`);
+                  console.log(`📷 [${idx + 1}]    Buffer validation: is Buffer=${imageBuffer instanceof Buffer}, length=${imageBuffer.length}`);
                 } catch (base64Error) {
                   console.warn(`📷 [${idx + 1}] ⚠️ PRIORITY 1 FAILED: Error decoding base64 imageData:`, base64Error);
+                  if (base64Error instanceof Error) {
+                    console.warn(`📷 [${idx + 1}]    Error message: ${base64Error.message}`);
+                  }
+                  // Clear buffer to try next priority
+                  imageBuffer = null;
                 }
+              } else {
+                console.log(`📷 [${idx + 1}] PRIORITY 1: No base64 imageData in database, will try filePath`);
               }
               
               // PRIORITY 2: Use filePath from database to read file directly from server filesystem
@@ -25913,8 +26272,12 @@ Cura EMR Team
                   let rawPath = radiologyImage.filePath.trim();
                   let imagePath: string;
                   
-                  // Always resolve to absolute path from project root for production safety
-                  if (rawPath.includes('uploads')) {
+                  // First, try to use the path as-is (it might already be absolute)
+                  if (path.isAbsolute(rawPath)) {
+                    // Already absolute - normalize it and use directly
+                    imagePath = path.normalize(rawPath);
+                    console.log(`📷 [${idx + 1}]    Using absolute path from DB: "${imagePath}"`);
+                  } else if (rawPath.includes('uploads')) {
                     // Extract relative path starting from "uploads" (handles both Windows and Unix paths)
                     const uploadsIndex = rawPath.indexOf('uploads');
                     const relativePath = rawPath.substring(uploadsIndex);
@@ -25923,11 +26286,7 @@ Cura EMR Team
                     // Resolve from process.cwd() to get absolute server path
                     imagePath = path.resolve(process.cwd(), normalizedRelative);
                     console.log(`📷 [${idx + 1}]    Extracted relative path: "${normalizedRelative}"`);
-                    console.log(`📷 [${idx + 1}]    Absolute server path: "${imagePath}"`);
-                  } else if (path.isAbsolute(rawPath)) {
-                    // Already absolute - normalize it
-                    imagePath = path.normalize(rawPath);
-                    console.log(`📷 [${idx + 1}]    Using absolute path: "${imagePath}"`);
+                    console.log(`📷 [${idx + 1}]    Resolved absolute server path: "${imagePath}"`);
                   } else {
                     // Relative path - resolve from project root
                     imagePath = path.resolve(process.cwd(), rawPath);
@@ -25936,7 +26295,7 @@ Cura EMR Team
                   
                   // Verify file exists using filesystem access
                   const fileExists = await fse.pathExists(imagePath);
-                  console.log(`📷 [${idx + 1}]    File exists: ${fileExists ? '✅ YES' : '❌ NO'}`);
+                  console.log(`📷 [${idx + 1}]    File exists at resolved path: ${fileExists ? '✅ YES' : '❌ NO'}`);
                   
                   if (fileExists) {
                     // Read file as binary buffer from filesystem (not URL, not blob)
@@ -25949,69 +26308,83 @@ Cura EMR Team
                     
                     console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS: Read ${imageBuffer.length} bytes from filesystem`);
                     console.log(`📷 [${idx + 1}]    Buffer type: ${imageBuffer instanceof Buffer ? 'Buffer' : typeof imageBuffer}`);
-                  } else {
-                    console.warn(`📷 [${idx + 1}] ⚠️ PRIORITY 2: File not found at path: "${imagePath}"`);
                     
-                    // List directory contents to help debug
-                    try {
-                      const dirPath = path.dirname(imagePath);
-                      if (await fse.pathExists(dirPath)) {
-                        const dirContents = await fse.readdir(dirPath);
-                        console.log(`📷 [${idx + 1}]    Directory exists: "${dirPath}"`);
-                        console.log(`📷 [${idx + 1}]    Directory contents (${dirContents.length} files):`, dirContents.slice(0, 10).join(', '));
-                        if (dirContents.length > 10) {
-                          console.log(`📷 [${idx + 1}]    ... and ${dirContents.length - 10} more files`);
-                        }
+                    // If we successfully read the file but imageData is missing, convert to base64 and update database
+                    // This ensures future PDF generations can use Priority 1 (faster)
+                    if (!radiologyImage.imageData && imageBuffer) {
+                      try {
+                        const mimeType = radiologyImage.mimeType || 'image/jpeg';
+                        const base64ImageData = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
                         
-                        // Try to find file by partial name match (in case of filename mismatch)
-                        const fileNameWithoutExt = path.parse(radiologyImage.fileName).name;
-                        const matchingFile = dirContents.find(f => f.includes(fileNameWithoutExt) || fileNameWithoutExt.includes(path.parse(f).name));
-                        if (matchingFile) {
-                          const matchedPath = path.join(dirPath, matchingFile);
-                          console.log(`📷 [${idx + 1}]    Found potential match: "${matchingFile}"`);
-                          console.log(`📷 [${idx + 1}]    Trying matched path: "${matchedPath}"`);
-                          if (await fse.pathExists(matchedPath)) {
-                            imagePath = matchedPath;
-                            imageBuffer = await fse.readFile(imagePath);
-                            if (imageBuffer && imageBuffer.length > 0) {
-                              console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS (matched file): Read ${imageBuffer.length} bytes`);
+                        // Update the database record with base64 data (async, don't wait)
+                        db.update(schema.radiologyImages)
+                          .set({ imageData: base64ImageData })
+                          .where(eq(schema.radiologyImages.id, radiologyImage.id))
+                          .execute()
+                          .then(() => {
+                            console.log(`📷 [${idx + 1}] ✅ Updated database with base64 imageData for future use`);
+                          })
+                          .catch((updateError) => {
+                            console.warn(`📷 [${idx + 1}] ⚠️ Failed to update database with base64 (non-critical):`, updateError);
+                          });
+                      } catch (convertError) {
+                        console.warn(`📷 [${idx + 1}] ⚠️ Failed to convert file to base64 (non-critical):`, convertError);
+                      }
+                    }
+                  } else {
+                    console.warn(`📷 [${idx + 1}] ⚠️ PRIORITY 2: File not found at resolved path: "${imagePath}"`);
+                    
+                    // Try fallback: construct path from expected location using fileName
+                    const imagesDir = path.resolve(process.cwd(), 'uploads', 'Imaging_Images', String(organizationId), 'patients', String(patientId));
+                    const constructedPath = path.join(imagesDir, radiologyImage.fileName);
+                    console.log(`📷 [${idx + 1}]    Trying fallback path: "${constructedPath}"`);
+                    
+                    const constructedExists = await fse.pathExists(constructedPath);
+                    if (constructedExists) {
+                      imagePath = constructedPath;
+                      imageBuffer = await fse.readFile(imagePath);
+                      
+                      if (!imageBuffer || imageBuffer.length === 0) {
+                        throw new Error(`Fallback file exists but buffer is empty`);
+                      }
+                      
+                      console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS (fallback): Read ${imageBuffer.length} bytes`);
+                    } else {
+                      console.warn(`📷 [${idx + 1}] ⚠️ PRIORITY 2: File not found at fallback path either`);
+                      
+                      // List directory contents to help debug
+                      try {
+                        if (await fse.pathExists(imagesDir)) {
+                          const dirContents = await fse.readdir(imagesDir);
+                          console.log(`📷 [${idx + 1}]    Directory exists: "${imagesDir}"`);
+                          console.log(`📷 [${idx + 1}]    Directory contents (${dirContents.length} files):`, dirContents.slice(0, 10).join(', '));
+                          if (dirContents.length > 10) {
+                            console.log(`📷 [${idx + 1}]    ... and ${dirContents.length - 10} more files`);
+                          }
+                          
+                          // Try to find file by partial name match (in case of filename mismatch)
+                          const fileNameWithoutExt = path.parse(radiologyImage.fileName).name;
+                          const matchingFile = dirContents.find(f => {
+                            const fName = path.parse(f).name;
+                            return fName.includes(fileNameWithoutExt) || fileNameWithoutExt.includes(fName) || f.includes(fileNameWithoutExt);
+                          });
+                          if (matchingFile) {
+                            const matchedPath = path.join(imagesDir, matchingFile);
+                            console.log(`📷 [${idx + 1}]    Found potential match: "${matchingFile}"`);
+                            console.log(`📷 [${idx + 1}]    Trying matched path: "${matchedPath}"`);
+                            if (await fse.pathExists(matchedPath)) {
+                              imagePath = matchedPath;
+                              imageBuffer = await fse.readFile(imagePath);
+                              if (imageBuffer && imageBuffer.length > 0) {
+                                console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS (matched file): Read ${imageBuffer.length} bytes`);
+                              }
                             }
                           }
+                        } else {
+                          console.warn(`📷 [${idx + 1}]    Directory does not exist: "${imagesDir}"`);
                         }
-                      } else {
-                        console.warn(`📷 [${idx + 1}]    Directory does not exist: "${dirPath}"`);
-                      }
-                    } catch (dirError) {
-                      console.error(`📷 [${idx + 1}]    Error listing directory:`, dirError);
-                    }
-                    
-                    // Fallback: construct path from expected location
-                    if (!imageBuffer) {
-                      const imagesDir = path.resolve(process.cwd(), 'uploads', 'Imaging_Images', String(organizationId), 'patients', String(patientId));
-                      const constructedPath = path.join(imagesDir, radiologyImage.fileName);
-                      console.log(`📷 [${idx + 1}]    Fallback path: "${constructedPath}"`);
-                      
-                      const constructedExists = await fse.pathExists(constructedPath);
-                      if (constructedExists) {
-                        imagePath = constructedPath;
-                        imageBuffer = await fse.readFile(imagePath);
-                        
-                        if (!imageBuffer || imageBuffer.length === 0) {
-                          throw new Error(`Fallback file exists but buffer is empty`);
-                        }
-                        
-                        console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS (fallback): Read ${imageBuffer.length} bytes`);
-                      } else {
-                        console.warn(`📷 [${idx + 1}] ⚠️ PRIORITY 2 FAILED: File not found at fallback path either`);
-                        // List fallback directory contents
-                        try {
-                          if (await fse.pathExists(imagesDir)) {
-                            const fallbackContents = await fse.readdir(imagesDir);
-                            console.log(`📷 [${idx + 1}]    Fallback directory contents (${fallbackContents.length} files):`, fallbackContents.slice(0, 10).join(', '));
-                          }
-                        } catch (e) {
-                          console.error(`📷 [${idx + 1}]    Error listing fallback directory:`, e);
-                        }
+                      } catch (dirError) {
+                        console.error(`📷 [${idx + 1}]    Error listing directory:`, dirError);
                       }
                     }
                   }

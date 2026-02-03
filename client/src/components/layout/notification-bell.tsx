@@ -56,42 +56,63 @@ interface Notification {
   readAt?: string;
 }
 
-// Component to display relative time that updates in real-time
+/**
+ * Component to display relative time that updates in real-time
+ * 
+ * EXPLANATION:
+ * - Backend now stores notifications with CURRENT TIME (explicitly set, no UTC conversion)
+ * - We parse the date string and calculate the difference from NOW
+ * - If date has timezone (ends with 'Z'), parse directly
+ * - If date has no timezone, treat it as UTC (backend stores in UTC format)
+ * - Calculate seconds difference and display accordingly
+ * - This component is used in the notification bell popup for ALL roles
+ */
 function TimeAgo({ date }: { date: string }) {
   const [timeAgo, setTimeAgo] = useState<string>("");
 
   useEffect(() => {
     const updateTime = () => {
       try {
+        // Get CURRENT TIME in user's local timezone
         const now = new Date();
         let notificationDate: Date;
         
-        // Handle different date formats - ensure we parse correctly
+        // Parse the date string from backend
         if (typeof date === 'string') {
           let dateString = date.trim();
           
-          // Check if it's already a valid ISO string with timezone
-          if (dateString.includes('T') && (dateString.includes('Z') || dateString.match(/[+-]\d{2}:\d{2}$/))) {
+          // Check if date has timezone indicator ('Z' for UTC or +/-HH:MM)
+          const hasTimezone = dateString.includes('Z') || dateString.match(/[+-]\d{2}:\d{2}$/);
+          
+          if (hasTimezone) {
+            // Has timezone info - parse directly (JavaScript handles timezone conversion)
             notificationDate = new Date(dateString);
-          } else if (dateString.includes('T')) {
-            // ISO format without timezone - PostgreSQL timestamps without timezone are stored in UTC
-            // Always interpret as UTC to avoid timezone issues
-            notificationDate = new Date(dateString + 'Z');
           } else {
-            // Try parsing as-is first
-            notificationDate = new Date(dateString);
+            // No timezone info - backend returns ISO format without 'Z'
+            // We need to append 'Z' to tell JavaScript this is UTC
+            let normalizedDate = dateString;
             
-            // If invalid, try adding UTC
-            if (isNaN(notificationDate.getTime())) {
-              notificationDate = new Date(dateString + ' UTC');
+            // Remove milliseconds if present (e.g., "2024-01-15T10:00:00.123" -> "2024-01-15T10:00:00")
+            if (normalizedDate.includes('.')) {
+              normalizedDate = normalizedDate.split('.')[0];
             }
             
-            // If still invalid, try parsing as timestamp
+            // Convert space-separated to ISO format (e.g., "2024-01-15 10:00:00" -> "2024-01-15T10:00:00")
+            if (normalizedDate.includes(' ') && !normalizedDate.includes('T')) {
+              normalizedDate = normalizedDate.replace(' ', 'T');
+            }
+            
+            // Append 'Z' to indicate UTC - this is CRITICAL for correct parsing
+            if (!normalizedDate.endsWith('Z')) {
+              normalizedDate = normalizedDate + 'Z';
+            }
+            
+            notificationDate = new Date(normalizedDate);
+            
+            // Fallback parsing if above fails
             if (isNaN(notificationDate.getTime())) {
-              const timestamp = Date.parse(dateString);
-              if (!isNaN(timestamp)) {
-                notificationDate = new Date(timestamp);
-              } else {
+              notificationDate = new Date(dateString + ' UTC');
+              if (isNaN(notificationDate.getTime())) {
                 console.warn("Invalid date format:", date);
                 setTimeAgo("just now");
                 return;
@@ -102,23 +123,23 @@ function TimeAgo({ date }: { date: string }) {
           notificationDate = new Date(date);
         }
         
-        // Check if date is valid
+        // Validate the parsed date
         if (isNaN(notificationDate.getTime())) {
           setTimeAgo("just now");
           return;
         }
 
-        // Calculate difference in seconds
-        // differenceInSeconds(now, notificationDate) returns positive if notificationDate is in the past
-        const secondsDiff = Math.floor(differenceInSeconds(now, notificationDate));
+        // Calculate time difference in seconds
+        // differenceInSeconds(now, notificationDate) = positive if notificationDate is in the past
+        let secondsDiff = Math.floor(differenceInSeconds(now, notificationDate));
 
-        // If the date is in the future (negative difference), show "just now"
+        // If date is in the future (negative difference), show "just now"
         if (secondsDiff < 0) {
           setTimeAgo("just now");
           return;
         }
 
-        // For very recent notifications, show precise time
+        // Display time based on how long ago it was
         if (secondsDiff === 0) {
           setTimeAgo("just now");
         } else if (secondsDiff < 5) {
@@ -136,7 +157,7 @@ function TimeAgo({ date }: { date: string }) {
           const hours = Math.floor(secondsDiff / 3600);
           setTimeAgo(`${hours} hour${hours === 1 ? '' : 's'} ago`);
         } else {
-          // Use formatDistanceToNow for longer durations
+          // More than 1 day - use formatDistanceToNow for better formatting
           const distance = formatDistanceToNow(notificationDate, { addSuffix: true });
           setTimeAgo(distance);
         }
@@ -178,13 +199,25 @@ export function NotificationBell() {
   const { data: unreadCountData } = useQuery({
     queryKey: unreadCountQueryKey,
     queryFn: async () => {
-      const response = await apiRequest("GET", "/api/notifications/unread-count");
-      if (!response.ok) {
-        throw new Error("Failed to fetch unread count");
+      try {
+        const response = await apiRequest("GET", "/api/notifications/unread-count");
+        if (!response.ok) {
+          // If authentication error, return 0 count instead of throwing
+          if (response.status === 401 || response.status === 500) {
+            console.warn("Failed to fetch unread count - authentication issue, returning 0");
+            return { count: 0 };
+          }
+          throw new Error("Failed to fetch unread count");
+        }
+        return response.json();
+      } catch (error) {
+        // Handle errors gracefully - return 0 count instead of breaking the UI
+        console.error("Error fetching unread count:", error);
+        return { count: 0 };
       }
-      return response.json();
     },
     refetchInterval: 30000, // Refetch every 30 seconds
+    retry: false, // Don't retry on error to avoid spam
   });
 
   const unreadCount = (unreadCountData as { count: number })?.count || 0;

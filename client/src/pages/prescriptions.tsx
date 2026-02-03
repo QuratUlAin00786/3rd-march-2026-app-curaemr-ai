@@ -2178,11 +2178,46 @@ export default function PrescriptionsPage() {
   };
 
   const handlePrintPrescription = async (prescriptionId: string) => {
-    // Get prescription details
-    const prescription = Array.isArray(prescriptions)
-      ? prescriptions.find((p: any) => p.id === prescriptionId)
-      : null;
-    if (!prescription) return;
+    // First, fetch prescription from database to ensure we have latest data with all fields
+    let prescription = null;
+    try {
+      // Try fetching by ID first
+      const prescriptionResponse = await apiRequest(
+        "GET",
+        `/api/prescriptions/${prescriptionId}`
+      );
+      if (prescriptionResponse.ok) {
+        prescription = await prescriptionResponse.json();
+        console.log("Fetched prescription from database:", prescription);
+      } else {
+        // If not found by ID, try to find in local state
+        prescription = Array.isArray(prescriptions)
+          ? prescriptions.find((p: any) => p.id === prescriptionId || p.prescriptionNumber === prescriptionId)
+          : null;
+        if (prescription) {
+          console.log("Using prescription from local state:", prescription);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch prescription from database, using local state:", err);
+      // Fallback to local state
+      prescription = Array.isArray(prescriptions)
+        ? prescriptions.find((p: any) => p.id === prescriptionId || p.prescriptionNumber === prescriptionId)
+        : null;
+      if (prescription) {
+        console.log("Using prescription from local state (fallback):", prescription);
+      }
+    }
+
+    if (!prescription) {
+      console.error("Prescription not found:", prescriptionId);
+      toast({
+        title: "Error",
+        description: "Prescription not found. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     // Get patient details
     const patient = patients.find((p) => p.id === prescription.patientId);
@@ -2211,9 +2246,35 @@ export default function PrescriptionsPage() {
       console.error("Failed to fetch clinic footer:", err);
     }
 
-    // Fetch prescribing provider information - try doctorId first, then prescriptionCreatedBy
+    // Fetch prescribing provider information from database - try providerId, doctorId, then prescriptionCreatedBy
     let doctorInfo = null;
-    if (prescription.doctorId) {
+    
+    console.log("Prescription data for provider lookup:", {
+      providerId: prescription.providerId,
+      doctorId: prescription.doctorId,
+      prescriptionCreatedBy: prescription.prescriptionCreatedBy
+    });
+    
+    // Try providerId first (from prescriptions table)
+    if (prescription.providerId) {
+      try {
+        const providerResponse = await apiRequest(
+          "GET",
+          `/api/users/${prescription.providerId}`,
+        );
+        if (providerResponse.ok) {
+          doctorInfo = await providerResponse.json();
+          console.log("Fetched provider info by providerId:", doctorInfo);
+        } else {
+          console.warn("Failed to fetch provider by providerId, status:", providerResponse.status);
+        }
+      } catch (err) {
+        console.error("Failed to fetch provider info by providerId:", err);
+      }
+    }
+    
+    // If providerId not available, try doctorId (from prescriptions table)
+    if (!doctorInfo && prescription.doctorId) {
       try {
         const doctorResponse = await apiRequest(
           "GET",
@@ -2221,13 +2282,16 @@ export default function PrescriptionsPage() {
         );
         if (doctorResponse.ok) {
           doctorInfo = await doctorResponse.json();
+          console.log("Fetched provider info by doctorId:", doctorInfo);
+        } else {
+          console.warn("Failed to fetch provider by doctorId, status:", doctorResponse.status);
         }
       } catch (err) {
-        console.error("Failed to fetch doctor info:", err);
+        console.error("Failed to fetch doctor info by doctorId:", err);
       }
     }
 
-    // If doctorId is not available, try prescriptionCreatedBy
+    // If still not available, try prescriptionCreatedBy (from prescriptions table)
     if (!doctorInfo && prescription.prescriptionCreatedBy) {
       try {
         const doctorResponse = await apiRequest(
@@ -2236,13 +2300,20 @@ export default function PrescriptionsPage() {
         );
         if (doctorResponse.ok) {
           doctorInfo = await doctorResponse.json();
+          console.log("Fetched provider info by prescriptionCreatedBy:", doctorInfo);
+        } else {
+          console.warn("Failed to fetch provider by prescriptionCreatedBy, status:", doctorResponse.status);
         }
       } catch (err) {
         console.error("Failed to fetch doctor info from prescriptionCreatedBy:", err);
       }
     }
+    
+    if (!doctorInfo) {
+      console.warn("No provider information found for prescription:", prescriptionId);
+    }
 
-    // Fetch creator information (who entered the prescription)
+    // Fetch creator information from database (who entered the prescription from prescriptions table)
     let creatorInfo = null;
     if (prescription.prescriptionCreatedBy) {
       try {
@@ -2252,10 +2323,15 @@ export default function PrescriptionsPage() {
         );
         if (creatorResponse.ok) {
           creatorInfo = await creatorResponse.json();
+          console.log("Fetched creator info:", creatorInfo);
+        } else {
+          console.warn("Failed to fetch creator info, status:", creatorResponse.status);
         }
       } catch (err) {
         console.error("Failed to fetch creator info:", err);
       }
+    } else {
+      console.warn("No prescriptionCreatedBy field found in prescription");
     }
 
     // Calculate age from DOB
@@ -2299,6 +2375,23 @@ export default function PrescriptionsPage() {
 
     // Get first medication for main prescription details
     const firstMed = prescription.medications[0] || {};
+
+    // Format provider name with role
+    const formatProviderName = (userInfo: any) => {
+      if (!userInfo) return "N/A";
+      const firstName = userInfo.firstName || "";
+      const lastName = userInfo.lastName || "";
+      const fullName = `${firstName} ${lastName}`.trim();
+      if (!fullName) return "N/A";
+      const role = userInfo.role || "";
+      const roleLabel = role ? formatRoleLabel(role) : "";
+      const alreadyHasDr = fullName.toLowerCase().startsWith("dr.");
+      const prefix = (role?.toLowerCase() === "doctor" && !alreadyHasDr) ? "Dr. " : "";
+      return `${prefix}${fullName}${roleLabel ? ` (${roleLabel})` : ""}`;
+    };
+
+    const providerDisplayName = formatProviderName(doctorInfo);
+    const creatorDisplayName = creatorInfo ? formatProviderName(creatorInfo) : null;
 
     const printWindow = window.open("", "_blank");
     if (printWindow) {
@@ -2631,7 +2724,7 @@ export default function PrescriptionsPage() {
                   font-style: ${clinicHeader?.fontStyle || "normal"};
                   text-decoration: ${clinicHeader?.textDecoration || "none"};
                 ">
-                  ${doctorInfo ? `${doctorInfo.firstName || ""} ${doctorInfo.lastName || ""}`.trim() : "Provider undefined"}<br>
+                  Provider: ${providerDisplayName}<br>
                   <span style="font-size: ${clinicHeader?.clinicNameFontSize || "16pt"}; font-weight: bold;">
                     ${clinicHeader?.clinicName || "Halo Health Clinic"}
                   </span><br>
@@ -2677,11 +2770,11 @@ export default function PrescriptionsPage() {
               <!-- Provider and Creator Information -->
               <div style="margin: 15px 0; padding: 12px; background: #f8f9fa; border-radius: 5px; border-left: 3px solid #4A7DFF;">
                 <div class="info-line" style="margin-bottom: 5px;">
-                  <span class="info-label" style="color: #2c3e50; font-weight: bold;">Provider:</span> ${doctorInfo ? `${doctorInfo.firstName || ""} ${doctorInfo.lastName || ""}`.trim() || "N/A" : "N/A"}${doctorInfo?.role ? ` (${doctorInfo.role.charAt(0).toUpperCase() + doctorInfo.role.slice(1)})` : ""}
+                  <span class="info-label" style="color: #2c3e50; font-weight: bold;">Provider:</span> ${providerDisplayName}
                 </div>
-                ${creatorInfo && creatorInfo.id !== doctorInfo?.id ? `
+                ${creatorDisplayName ? `
                 <div class="info-line">
-                  <span class="info-label" style="color: #2c3e50; font-weight: bold;">Created by:</span> ${creatorInfo.firstName} ${creatorInfo.lastName}${creatorInfo.role ? ` (${creatorInfo.role.charAt(0).toUpperCase() + creatorInfo.role.slice(1)})` : ""}
+                  <span class="info-label" style="color: #2c3e50; font-weight: bold;">Created by:</span> ${creatorDisplayName}
                 </div>
                 ` : ""}
               </div>
@@ -5069,13 +5162,13 @@ export default function PrescriptionsPage() {
                   className="border-b border-gray-200 dark:border-gray-700 flex items-center gap-4 py-2 bg-white dark:bg-slate-900 hover:bg-gray-50 dark:hover:bg-slate-800"
                 >
                   <div className={`flex-1 grid ${user?.role === "nurse" || user?.role === "doctor" ? "grid-cols-7" : "grid-cols-8"} gap-4 items-center text-sm`}>
-                    <div className="text-gray-600 dark:text-gray-400">
+                    <div className="text-gray-600 dark:text-gray-400 min-w-0">
                       {prescription.prescriptionNumber || prescription.id || "N/A"}
                     </div>
-                    <div className="font-medium text-gray-900 dark:text-gray-100">
+                    <div className="font-medium text-gray-900 dark:text-gray-100 min-w-0">
                       {prescription.patientName || "Unknown Patient"}
                     </div>
-                    <div className="text-gray-600 dark:text-gray-400">
+                    <div className="text-gray-600 dark:text-gray-400 min-w-0">
                       {(() => {
                         const providerInfo = allUsers?.find((p: any) => 
                           p.id === prescription.doctorId || 
@@ -5087,28 +5180,28 @@ export default function PrescriptionsPage() {
                           : "Unknown Provider";
                       })()}
                     </div>
-                    <div className="text-gray-600 dark:text-gray-400">
+                    <div className="text-gray-600 dark:text-gray-400 min-w-0">
                       {prescription.clientCreatedAt
                         ? formatTimestampFromSystem(prescription.clientCreatedAt)
                         : prescription.createdAt
                         ? formatTimestampFromSystem(prescription.createdAt)
                         : "N/A"}
                     </div>
-                    <div className="text-gray-600 dark:text-gray-400">
+                    <div className="text-gray-600 dark:text-gray-400 min-w-0">
                       {prescription.clientUpdatedAt
                         ? formatTimestampFromSystem(prescription.clientUpdatedAt)
                         : prescription.updatedAt
                         ? formatTimestampFromSystem(prescription.updatedAt)
                         : "N/A"}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-col gap-1 min-w-0 max-w-full">
                       {editingStatusId === prescription.id ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col gap-1 w-full">
                           <Select
                             value={tempStatus}
                             onValueChange={setTempStatus}
                           >
-                            <SelectTrigger className="h-8 w-32">
+                            <SelectTrigger className="h-7 w-full text-xs">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -5118,28 +5211,32 @@ export default function PrescriptionsPage() {
                               <SelectItem value="cancelled">Cancelled</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleSaveStatus(prescription.id)}
-                            className="h-8 px-2"
-                          >
-                            <Check className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingStatusId(null);
-                              setTempStatus("");
-                            }}
-                            className="h-8 px-2"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center gap-1 justify-center">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleSaveStatus(prescription.id)}
+                              className="h-6 w-6 p-0 flex-shrink-0"
+                              title="Save"
+                            >
+                              <Check className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setEditingStatusId(null);
+                                setTempStatus("");
+                              }}
+                              className="h-6 w-6 p-0 flex-shrink-0"
+                              title="Cancel"
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
                         </div>
                       ) : (
-                        <>
+                        <div className="flex items-center gap-1.5">
                           <Badge className={getStatusColor(prescription.status)}>
                             {prescription.status || "active"}
                           </Badge>
@@ -5151,22 +5248,22 @@ export default function PrescriptionsPage() {
                                 setEditingStatusId(prescription.id);
                                 setTempStatus(prescription.status || "active");
                               }}
-                              className="h-6 w-6 p-0 hover:bg-gray-100"
+                              className="h-5 w-5 p-0 hover:bg-gray-100 flex-shrink-0"
                               title="Edit Status"
                             >
                               <Edit className="h-3 w-3" />
                             </Button>
                           )}
-                        </>
+                        </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
                       {prescription.signature?.doctorSignature && 
                        String(prescription.signature.doctorSignature).trim() !== "" ? (
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 px-2 flex items-center gap-1 text-green-600 hover:text-green-700 hover:bg-green-50"
+                          className="h-8 px-2 flex items-center gap-1 text-green-600 hover:text-green-700 hover:bg-green-50 flex-shrink-0"
                           onClick={() => {
                             let signerName = prescription.signature?.signedBy || "N/A";
                             if (prescription.signature?.signerId && allUsers) {
@@ -5186,13 +5283,13 @@ export default function PrescriptionsPage() {
                           }}
                           title="View signature details"
                         >
-                          <CheckCircle className="h-4 w-4" />
-                          <span className="text-xs">signed</span>
+                          <CheckCircle className="h-4 w-4 flex-shrink-0" />
+                          <span className="text-xs whitespace-nowrap">signed</span>
                         </Button>
                       ) : (
-                        <div className="flex items-center gap-1 text-red-600">
-                          <X className="h-4 w-4" />
-                          <span className="text-xs">not signed</span>
+                        <div className="flex items-center gap-1 text-red-600 flex-shrink-0">
+                          <X className="h-4 w-4 flex-shrink-0" />
+                          <span className="text-xs whitespace-nowrap">not signed</span>
                         </div>
                       )}
                     </div>
@@ -5213,7 +5310,10 @@ export default function PrescriptionsPage() {
                       variant="ghost"
                       size="sm"
                       className="h-8 w-8 p-0"
-                      onClick={() => handlePrintPrescription(prescription)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePrintPrescription(prescription.id || prescription.prescriptionNumber);
+                      }}
                       title="Print"
                     >
                       <Printer className="h-4 w-4" />

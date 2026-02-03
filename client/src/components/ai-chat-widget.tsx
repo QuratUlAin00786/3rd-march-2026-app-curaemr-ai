@@ -1736,27 +1736,27 @@ export function AIChatWidget() {
 
   if (!isOpen) {
     return (
-      <div className="fixed bottom-6 right-6 z-[9999]">
+      <div className="fixed bottom-4 right-4 z-[9999]">
         <Button
           onClick={() => setIsOpen(true)}
-          size="lg"
-          className="rounded-full h-16 w-16 shadow-2xl hover:shadow-3xl transition-all duration-200 bg-primary hover:bg-primary/90 text-white"
+          size="sm"
+          className="rounded-full h-12 w-12 shadow-lg hover:shadow-xl transition-all duration-200 bg-primary hover:bg-primary/90 text-white"
           style={{ 
             backgroundColor: 'hsl(210, 100%, 46%)', 
-            minHeight: '64px', 
-            minWidth: '64px',
+            minHeight: '48px', 
+            minWidth: '48px',
             position: 'relative',
             zIndex: 9999
           }}
         >
-          <Bot className="h-7 w-7" />
+          <Bot className="h-5 w-5" />
         </Button>
       </div>
     );
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-[9999]" style={{ zIndex: 9999 }}>
+    <div className="fixed bottom-4 right-4 z-[9999]" style={{ zIndex: 9999 }}>
       <Card className={`shadow-2xl transition-all duration-300 border-2 border-primary/20 ${
         isMinimized ? 'w-80 h-16' : 'w-96 h-[600px]'
       }`} style={{ position: 'relative', zIndex: 9999 }}>
@@ -1765,20 +1765,22 @@ export function AIChatWidget() {
             <Bot className="h-5 w-5 text-primary" />
             <CardTitle className="text-lg">Cura AI Assistant</CardTitle>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setIsMinimized(!isMinimized)}
+              className="h-7 w-7 p-0"
             >
-              {isMinimized ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}
+              {isMinimized ? <Maximize2 className="h-3.5 w-3.5" /> : <Minimize2 className="h-3.5 w-3.5" />}
             </Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setIsOpen(false)}
+              className="h-7 w-7 p-0"
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </Button>
           </div>
         </CardHeader>

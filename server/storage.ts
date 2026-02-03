@@ -2294,9 +2294,10 @@ export class DatabaseStorage implements IStorage {
    * Creates a notification
    * 
    * EXPLANATION:
-   * - If createdAt is provided, use it (explicitly set in notification-helper.ts)
-   * - If not provided, database will use defaultNow() (UTC)
-   * - We preserve the explicit createdAt to ensure correct time
+   * - If createdAt is NOT provided, we set it to CURRENT TIME (explicitly)
+   * - This ensures ALL notifications use CURRENT TIME, not database default
+   * - Works for ALL roles (admin, doctor, nurse, patient, etc.)
+   * - This is called directly from API routes, so we need to set createdAt here too
    */
   async createNotification(notification: InsertNotification): Promise<Notification> {
     const cleanNotification: any = { ...notification };
@@ -2305,8 +2306,16 @@ export class DatabaseStorage implements IStorage {
       cleanNotification.metadata = JSON.parse(JSON.stringify(cleanNotification.metadata));
     }
     
-    // Preserve explicit createdAt if provided (set in notification-helper.ts)
-    // This ensures notifications use CURRENT TIME, not database default
+    // CRITICAL: If createdAt is not provided, set it to CURRENT TIME
+    // This ensures notifications show "just now" when created (for ALL roles)
+    const currentTime = new Date();
+    if (!cleanNotification.createdAt) {
+      cleanNotification.createdAt = currentTime;
+    }
+    if (!cleanNotification.updatedAt) {
+      cleanNotification.updatedAt = currentTime;
+    }
+    
     const [created] = await db
       .insert(notifications)
       .values([cleanNotification])

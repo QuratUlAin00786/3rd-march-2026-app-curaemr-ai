@@ -224,6 +224,10 @@ function PricingManagementDashboard() {
   const [isAddingDefaultImaging, setIsAddingDefaultImaging] = useState(false);
   const [showImagingExistsModal, setShowImagingExistsModal] = useState(false);
   const [showTestsExistsModal, setShowTestsExistsModal] = useState(false);
+  const [showDeleteAllImagingDialog, setShowDeleteAllImagingDialog] = useState(false);
+  const [isDeletingAllImaging, setIsDeletingAllImaging] = useState(false);
+  const [currentlyDeletingImaging, setCurrentlyDeletingImaging] = useState<string>("");
+  const [deleteProgress, setDeleteProgress] = useState({ current: 0, total: 0 });
   
   // Validation error states
   const [doctorRoleError, setDoctorRoleError] = useState("");
@@ -277,11 +281,60 @@ function PricingManagementDashboard() {
   const createTreatmentsInfoMutation = useMutation({
     mutationFn: async (payload: { name: string; colorCode: string }) => {
       const response = await apiRequest("POST", "/api/treatments-info", payload);
+      
+      // Check response status first
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Failed to create treatment entry");
+        let errorMessage = "Failed to create treatment entry";
+        try {
+          const errorText = await response.text();
+          // Try to parse as JSON first
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || errorJson.message || errorMessage;
+          } catch {
+            // If not JSON, check if it's HTML
+            if (errorText.trim().startsWith("<!DOCTYPE") || errorText.trim().startsWith("<html")) {
+              if (response.status === 404) {
+                errorMessage = "API endpoint not found. Please check if the server endpoint exists.";
+              } else if (response.status === 500) {
+                errorMessage = "Server error occurred. Please check the server logs.";
+              } else {
+                errorMessage = `Server returned an error (Status: ${response.status}). Please check the server logs.`;
+              }
+            } else {
+              errorMessage = errorText || errorMessage;
+            }
+          }
+        } catch (e) {
+          errorMessage = `Failed to create treatment entry (Status: ${response.status})`;
+        }
+        throw new Error(errorMessage);
       }
-      return response.json();
+      
+      // Response is OK, try to parse as JSON
+      try {
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          return await response.json();
+        } else {
+          // If content type suggests it's not JSON, read as text and try to parse
+          const text = await response.text();
+          if (text.trim() === "") {
+            return {};
+          }
+          // Try to parse as JSON
+          try {
+            return JSON.parse(text);
+          } catch {
+            // If parsing fails, return empty object for successful responses
+            return {};
+          }
+        }
+      } catch (error: any) {
+        // If JSON parsing fails but response was OK, return empty object
+        console.warn("Failed to parse response as JSON, but response was OK:", error);
+        return {};
+      }
     },
     onMutate: () => {
       setIsSavingTreatmentInfo(true);
@@ -309,11 +362,60 @@ function PricingManagementDashboard() {
   const updateTreatmentsInfoMutation = useMutation({
     mutationFn: async (payload: { id: number; name: string; colorCode: string }) => {
       const response = await apiRequest("PATCH", `/api/treatments-info/${payload.id}`, payload);
+      
+      // Check response status first
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Failed to update treatment entry");
+        let errorMessage = "Failed to update treatment entry";
+        try {
+          const errorText = await response.text();
+          // Try to parse as JSON first
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || errorJson.message || errorMessage;
+          } catch {
+            // If not JSON, check if it's HTML
+            if (errorText.trim().startsWith("<!DOCTYPE") || errorText.trim().startsWith("<html")) {
+              if (response.status === 404) {
+                errorMessage = "API endpoint not found. Please check if the server endpoint exists.";
+              } else if (response.status === 500) {
+                errorMessage = "Server error occurred. Please check the server logs.";
+              } else {
+                errorMessage = `Server returned an error (Status: ${response.status}). Please check the server logs.`;
+              }
+            } else {
+              errorMessage = errorText || errorMessage;
+            }
+          }
+        } catch (e) {
+          errorMessage = `Failed to update treatment entry (Status: ${response.status})`;
+        }
+        throw new Error(errorMessage);
       }
-      return response.json();
+      
+      // Response is OK, try to parse as JSON
+      try {
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          return await response.json();
+        } else {
+          // If content type suggests it's not JSON, read as text and try to parse
+          const text = await response.text();
+          if (text.trim() === "") {
+            return {};
+          }
+          // Try to parse as JSON
+          try {
+            return JSON.parse(text);
+          } catch {
+            // If parsing fails, return empty object for successful responses
+            return {};
+          }
+        }
+      } catch (error: any) {
+        // If JSON parsing fails but response was OK, return empty object
+        console.warn("Failed to parse response as JSON, but response was OK:", error);
+        return {};
+      }
     },
     onMutate: () => {
       setIsSavingTreatmentInfo(true);
@@ -529,8 +631,26 @@ function PricingManagementDashboard() {
   const handleDelete = async (type: string, id: number) => {
     try {
       const apiPath = getApiPath(type);
-      await apiRequest('DELETE', `/api/pricing/${apiPath}/${id}`, {});
-      queryClient.invalidateQueries({ queryKey: [`/api/pricing/${apiPath}`] });
+      const response = await apiRequest('DELETE', `/api/pricing/${apiPath}/${id}`, {});
+      
+      // Check if the response is OK
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to delete pricing entry");
+      }
+      
+      // Use exact query key format that matches the useQuery hooks
+      const queryKey = [`/api/pricing/${apiPath}`];
+      
+      // Remove the deleted item from cache immediately for instant UI update
+      queryClient.setQueryData(queryKey, (oldData: any[] = []) => {
+        return oldData.filter((item: any) => item.id !== id);
+      });
+      
+      // Invalidate and refetch to ensure data consistency
+      await queryClient.invalidateQueries({ queryKey });
+      await queryClient.refetchQueries({ queryKey });
+      
       toast({ title: "Success", description: "Pricing entry deleted successfully" });
     } catch (error: any) {
       let errorMessage = "Failed to delete pricing entry";
@@ -550,6 +670,130 @@ function PricingManagementDashboard() {
         description: errorMessage, 
         variant: "destructive" 
       });
+    }
+  };
+
+  const handleDeleteAllImaging = () => {
+    if (imaging.length === 0) {
+      toast({
+        title: "No items to delete",
+        description: "There are no imaging items to delete.",
+        variant: "destructive"
+      });
+      return;
+    }
+    setShowDeleteAllImagingDialog(true);
+  };
+
+  const confirmDeleteAllImaging = async () => {
+    setShowDeleteAllImagingDialog(false);
+    setIsDeletingAllImaging(true);
+    setCurrentlyDeletingImaging("");
+    setDeleteProgress({ current: 0, total: imaging.length });
+
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      const errors: string[] = [];
+      const deletedIds = new Set<number>();
+
+      // Delete all imaging items one by one with proper error handling
+      for (let i = 0; i < imaging.length; i++) {
+        const img = imaging[i];
+        try {
+          setCurrentlyDeletingImaging(img.imagingType);
+          setDeleteProgress({ current: i + 1, total: imaging.length });
+          const response = await apiRequest('DELETE', `/api/pricing/imaging/${img.id}`, {});
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            errors.push(`${img.imagingType}: ${errorText}`);
+            failCount++;
+          } else {
+            successCount++;
+            deletedIds.add(img.id);
+          }
+        } catch (error: any) {
+          errors.push(`${img.imagingType}: ${error.message || 'Failed to delete'}`);
+          failCount++;
+        }
+      }
+
+      // Update cache immediately - remove all successfully deleted items
+      // Use exact query key format that matches the useQuery hook
+      const queryKey = ["/api/pricing/imaging"];
+      
+      // Store the snapshot of current data before deletion
+      const currentData = queryClient.getQueryData<any[]>(queryKey) || [];
+      
+      // Remove the deleted items from cache immediately for instant UI update
+      // This prevents items from reappearing after deletion
+      const updatedData = currentData.filter((item: any) => !deletedIds.has(item.id));
+      
+      // Update cache with filtered data - this is the source of truth
+      queryClient.setQueryData(queryKey, updatedData);
+      
+      // Mark queries as stale but don't immediately refetch
+      // This ensures deleted items don't reappear from a server refetch
+      queryClient.invalidateQueries({ queryKey });
+      
+      // Only refetch in background after successful deletion to sync with server
+      // The cache update above ensures UI shows correct state even if refetch brings stale data
+      if (successCount > 0) {
+        // Use a longer delay to ensure server has processed all deletions
+        setTimeout(async () => {
+          try {
+            const refetchedData = await queryClient.refetchQueries({ queryKey });
+            // After refetch, ensure our cache update is still applied
+            // This handles edge cases where server might return stale data
+            const currentCache = queryClient.getQueryData<any[]>(queryKey) || [];
+            const finalData = currentCache.filter((item: any) => !deletedIds.has(item.id));
+            queryClient.setQueryData(queryKey, finalData);
+          } catch (error) {
+            // Silently handle refetch errors - cache update is already correct
+          }
+        }, 1000);
+      }
+
+      if (successCount > 0 && failCount === 0) {
+        toast({ 
+          title: "Success", 
+          description: `All ${successCount} imaging pricing entries deleted successfully` 
+        });
+      } else if (successCount > 0 && failCount > 0) {
+        toast({ 
+          title: "Partial Success", 
+          description: `Deleted ${successCount} entries, but ${failCount} failed. Check console for details.`,
+          variant: "destructive"
+        });
+        console.error("Delete errors:", errors);
+      } else {
+        toast({ 
+          title: "Delete Failed", 
+          description: `Failed to delete all entries. Check console for details.`,
+          variant: "destructive"
+        });
+        console.error("Delete errors:", errors);
+      }
+    } catch (error: any) {
+      let errorMessage = "Failed to delete all imaging entries";
+      
+      if (error.message && typeof error.message === 'string') {
+        if (!error.message.includes("{") && !error.message.includes(":")) {
+          errorMessage = error.message;
+        }
+      }
+      
+      toast({ 
+        title: "Delete Failed", 
+        description: errorMessage, 
+        variant: "destructive" 
+      });
+      console.error("Delete all error:", error);
+    } finally {
+      setIsDeletingAllImaging(false);
+      setCurrentlyDeletingImaging("");
+      setDeleteProgress({ current: 0, total: 0 });
     }
   };
 
@@ -620,11 +864,17 @@ function PricingManagementDashboard() {
         await apiRequest("PATCH", `/api/pricing/treatments/${editingTreatment.id}`, payload);
         toast({ title: "Success", description: "Treatment updated" });
       } else {
-        await apiRequest("POST", "/api/pricing/treatments", payload);
+        const response = await apiRequest("POST", "/api/pricing/treatments", payload);
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || "Failed to create treatment");
+        }
         toast({ title: "Success", description: "Treatment added" });
       }
 
-      queryClient.invalidateQueries({ queryKey: ["/api/pricing/treatments"] });
+      // Invalidate and refetch to update the table
+      await queryClient.invalidateQueries({ queryKey: ["/api/pricing/treatments"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/pricing/treatments"] });
       setShowAddTreatmentDialog(false);
       setEditingTreatment(null);
       setTreatmentForm({
@@ -828,17 +1078,14 @@ function PricingManagementDashboard() {
         { imagingType: "Nuclear Medicine Scans", code: "NM0792", basePrice: 1.00 },
         { imagingType: "DEXA (Bone Densitometry)", code: "DEXA0792", basePrice: 11.00 },
         { imagingType: "Angiography", code: "ANGIO0792", basePrice: 1.00 },
-        { imagingType: "Interventional Radiology (IR)", code: "IR0792", basePrice: 1.00 },
-        { imagingType: "Fluoroscopy", code: "FLUORO0792", basePrice: 1.00 },
-        { imagingType: "Mammography", code: "MAMMO0792", basePrice: 1.00 },
-        { imagingType: "Ultrasound (Sonography)", code: "US0792", basePrice: 1.00 },
-        { imagingType: "MRI (Magnetic Resonance Imaging)", code: "MRI0792", basePrice: 1.00 },
-        { imagingType: "CT (Computed Tomography)", code: "CT0792", basePrice: 1.00 },
-        { imagingType: "X-ray (Radiography)", code: "XRAY0792", basePrice: 1.00 }
+        { imagingType: "Interventional Radiology (IR)", code: "IR0792", basePrice: 1.00 }
       ];
 
       // Fetch existing imaging to check for duplicates
       const response = await apiRequest('GET', '/api/pricing/imaging');
+      if (!response.ok) {
+        throw new Error('Failed to fetch existing imaging data');
+      }
       const existingImaging = await response.json();
 
       let successCount = 0;
@@ -854,22 +1101,34 @@ function PricingManagementDashboard() {
         }
 
         try {
-          await apiRequest('POST', '/api/pricing/imaging', {
+          const response = await apiRequest('POST', '/api/pricing/imaging', {
             imagingType: img.imagingType,
             imagingCode: img.code,
             modality: '',
             bodyPart: '',
-            basePrice: img.basePrice,
+            basePrice: img.basePrice.toString(), // Convert number to string for decimal type
+            currency: 'GBP',
             isActive: true,
             version: 1
           });
+          
+          // Check if the response is OK
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Failed to add imaging ${img.imagingType}:`, errorText);
+            throw new Error(errorText || `Failed to add ${img.imagingType}`);
+          }
+          
           successCount++;
-        } catch (error) {
+        } catch (error: any) {
           console.error(`Failed to add imaging ${img.imagingType}:`, error);
+          // Continue with next item instead of stopping
         }
       }
 
-      queryClient.invalidateQueries({ queryKey: ['/api/pricing/imaging'] });
+      // Invalidate and refetch queries to ensure UI updates
+      await queryClient.invalidateQueries({ queryKey: ['/api/pricing/imaging'] });
+      await queryClient.refetchQueries({ queryKey: ['/api/pricing/imaging'] });
 
       if (alreadyExistsCount > 0 && successCount === 0) {
         setShowImagingExistsModal(true);
@@ -877,6 +1136,12 @@ function PricingManagementDashboard() {
         toast({ 
           title: "Success", 
           description: `Added ${successCount} default imaging services${alreadyExistsCount > 0 ? ` (${alreadyExistsCount} already existed)` : ''}` 
+        });
+      } else if (successCount === 0 && alreadyExistsCount === 0) {
+        toast({
+          title: "No items added",
+          description: "Failed to add any imaging services. Please check the console for errors.",
+          variant: "destructive"
         });
       }
     } catch (error: any) {
@@ -1190,7 +1455,7 @@ function PricingManagementDashboard() {
         <TabsTrigger value="lab-tests" data-testid="tab-lab-tests-pricing">Lab Tests</TabsTrigger>
         <TabsTrigger value="imaging" data-testid="tab-imaging-pricing">Imaging</TabsTrigger>
         <TabsTrigger value="treatments" data-testid="tab-treatments-pricing">Treatments</TabsTrigger>
-      <TabsTrigger value="all-treatments" data-testid="tab-all-treatments">All Treatments</TabsTrigger>
+      <TabsTrigger value="all-treatments" data-testid="tab-all-treatments">Add Treatments</TabsTrigger>
       </TabsList>
 
       <TabsContent value="doctors" className="space-y-4 mt-4">
@@ -1444,6 +1709,17 @@ function PricingManagementDashboard() {
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-semibold">Imaging Pricing</h3>
           <div className="flex gap-2">
+            {canDelete('billing') && imaging.length > 0 && (
+              <Button 
+                size="sm" 
+                variant="destructive"
+                onClick={handleDeleteAllImaging} 
+                data-testid="button-delete-all-imaging"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete All
+              </Button>
+            )}
             <Button 
               size="sm" 
               variant="outline"
@@ -1500,12 +1776,28 @@ function PricingManagementDashboard() {
                     <td className="p-3">
                       <div className="flex gap-2">
                         {canEdit('billing') && (
-                          <Button size="sm" variant="outline" onClick={() => openEditDialog(img)} data-testid={`button-edit-${img.id}`}>
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditDialog(img);
+                            }} 
+                            data-testid={`button-edit-${img.id}`}
+                          >
                             <Edit className="h-4 w-4" />
                           </Button>
                         )}
                         {canDelete('billing') && (
-                          <Button size="sm" variant="outline" onClick={() => handleDelete("imaging", img.id)} data-testid={`button-delete-${img.id}`}>
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete("imaging", img.id);
+                            }} 
+                            data-testid={`button-delete-${img.id}`}
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         )}
@@ -1616,7 +1908,7 @@ function PricingManagementDashboard() {
       <TabsContent value="all-treatments" className="space-y-4 mt-4">
         <div className="flex justify-between items-center mb-3">
           <div>
-            <h3 className="text-lg font-semibold">All Treatments Metadata</h3>
+            <h3 className="text-lg font-semibold">Add Treatments Metadata</h3>
             <span className="text-sm text-gray-500">
               {treatmentsInfoList.length} entries
             </span>
@@ -1659,26 +1951,26 @@ function PricingManagementDashboard() {
                     </div>
                   </td>
                   <td className="p-3">{new Date(info.createdAt).toLocaleString()}</td>
-                <td className="p-3">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openTreatmentsInfoModalForEdit(info)}
-                      data-testid={`button-edit-treatment-info-${info.id}`}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeleteTreatmentsInfo(info)}
-                      data-testid={`button-delete-treatment-info-${info.id}`}
-                    >
-                      <Trash2 className="h-4 w-4 text-rose-600" />
-                    </Button>
-                  </div>
-                </td>
+                  <td className="p-3">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openTreatmentsInfoModalForEdit(info)}
+                        data-testid={`button-edit-treatment-info-${info.id}`}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteTreatmentsInfo(info)}
+                        data-testid={`button-delete-treatment-info-${info.id}`}
+                      >
+                        <Trash2 className="h-4 w-4 text-rose-600" />
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2934,6 +3226,75 @@ function PricingManagementDashboard() {
               Delete
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete All Imaging Confirmation Dialog */}
+      <Dialog open={showDeleteAllImagingDialog} onOpenChange={setShowDeleteAllImagingDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete All Imaging Pricing</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete all {imaging.length} imaging pricing entries? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="space-x-2">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDeleteAllImagingDialog(false)}
+              disabled={isDeletingAllImaging}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDeleteAllImaging}
+              disabled={isDeletingAllImaging}
+              data-testid="button-confirm-delete-all-imaging"
+            >
+              {isDeletingAllImaging ? "Deleting..." : "Delete All"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete All Imaging Progress Dialog */}
+      <Dialog open={isDeletingAllImaging} onOpenChange={() => {}}>
+        <DialogContent className="max-w-md" onInteractOutside={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>Deleting Imaging Pricing...</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900 dark:border-gray-100"></div>
+              <div className="flex-1">
+                {currentlyDeletingImaging ? (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Deleting: <span className="font-medium text-gray-900 dark:text-gray-100">{currentlyDeletingImaging}</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Preparing to delete imaging entries...
+                  </p>
+                )}
+              </div>
+            </div>
+            {deleteProgress.total > 0 && (
+              <>
+                <div className="w-full bg-gray-200 rounded-full h-2 dark:bg-gray-700">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ 
+                      width: `${(deleteProgress.current / deleteProgress.total) * 100}%` 
+                    }}
+                  ></div>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                  {deleteProgress.current} of {deleteProgress.total} deleted
+                </p>
+              </>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </Tabs>
@@ -4691,11 +5052,10 @@ export default function BillingPage() {
       if (!matchesUniversalSearch) return false;
     }
     
-    // For non-doctors: Standard search by Invoice ID, Patient ID, or Patient Name
+    // For non-doctors: Search by Invoice No. (invoiceNumber) and Patient Name only
     const matchesSearch = !searchQuery || 
-      invoice.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      String(invoice.id).toLowerCase().includes(searchQuery.toLowerCase()) ||
-      String(invoice.patientId).toLowerCase().includes(searchQuery.toLowerCase());
+      (invoice.patientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(invoice.invoiceNumber || '').toLowerCase().includes(searchQuery.toLowerCase()));
     
     const matchesStatus = statusFilter === "all" || invoice.status === statusFilter;
     
@@ -5484,24 +5844,6 @@ export default function BillingPage() {
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          {user?.role === 'doctor' ? (
-                            <SearchComboBox
-                              value={universalSearch}
-                              onValueChange={setUniversalSearch}
-                              placeholder="Search all invoice fields..."
-                              className="w-80"
-                              testId="input-universal-search"
-                            />
-                          ) : (
-                            <SearchComboBox
-                              value={searchQuery}
-                              onValueChange={setSearchQuery}
-                              placeholder="Search by Invoice ID, Patient ID or Name..."
-                              className="w-80"
-                              testId="input-search-invoices"
-                            />
-                          )}
-                          
                           <Select value={statusFilter} onValueChange={setStatusFilter}>
                             <SelectTrigger className="w-40" data-testid="select-status-filter">
                               <SelectValue placeholder="Filter by status" />
@@ -6035,14 +6377,6 @@ export default function BillingPage() {
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
-                            <SearchComboBox
-                              value={searchQuery}
-                              onValueChange={setSearchQuery}
-                              placeholder="Search by Invoice ID, Patient ID or Name..."
-                              className="w-80"
-                              testId="input-search-invoices-doctor-fees"
-                            />
-                            
                             <Select value={statusFilter} onValueChange={setStatusFilter}>
                               <SelectTrigger className="w-40">
                                 <SelectValue placeholder="Filter by status" />
