@@ -25602,6 +25602,10 @@ Cura EMR Team
 
       // Get the actual medical image from database to ensure we use the correct image_id and patient_id
       const imageId = parseInt(study.id);
+      
+      // Initialize organizationId first before using it in logs
+      const organizationId = req.organizationId || req.tenant!.id;
+      
       console.log(`\n🔍 PDF GENERATION START: study.id=${study.id}, parsed imageId=${imageId}`);
       console.log(`🔍 PDF GENERATION: organizationId=${organizationId}, tenant.id=${req.tenant!.id}`);
       
@@ -25620,7 +25624,6 @@ Cura EMR Team
       // Use image_id from database as PDF filename (e.g., IMG1760647135I10NC.pdf)
       const reportId = medicalImage.imageId;
       const patientId = medicalImage.patientId; // Use numeric database patient ID
-      const organizationId = req.organizationId || req.tenant!.id;
       
       console.log(`🔍 PDF GENERATION: Using imageId=${imageId} (medical_images.id) to query radiology_images table`);
       console.log(`🔍 PDF GENERATION: Will look for rows where medical_image_id=${imageId}`);
@@ -25848,48 +25851,203 @@ Cura EMR Team
       if (reportFormData) {
         yPosition -= 20;
         
-        // Clinical sections with professional formatting
-        const clinicalSections = [
-          { title: 'CLINICAL INDICATION', content: reportFormData.clinicalIndication },
-          { title: 'TECHNIQUE', content: reportFormData.technique },
-          { title: 'FINDINGS', content: reportFormData.findings },
-          { title: 'IMPRESSION', content: reportFormData.impression }
-        ];
+        // Helper function to draw a clinical section
+        const drawClinicalSection = (title: string, content: string) => {
+          if (!content) return;
+          
+          // Calculate section height for text wrapping
+          const maxLineLength = 70;
+          const lines = content.match(new RegExp(`.{1,${maxLineLength}}(\\s|$)`, 'g')) || [content];
+          const sectionHeight = Math.max(60, lines.length * 15 + 40);
+          
+          // Draw section background
+          drawSectionBox(30, yPosition + 10, width - 60, sectionHeight);
+          
+          page.drawText(title, {
+            x: 40,
+            y: yPosition - 5,
+            size: 12,
+            font: boldFont,
+            color: primaryBlue
+          });
+          
+          // Draw content with text wrapping
+          let textY = yPosition - 25;
+          lines.forEach((line: string) => {
+            page.drawText(line.trim(), { 
+              x: 50, 
+              y: textY, 
+              size: 10, 
+              font,
+              maxWidth: width - 100
+            });
+            textY -= 15;
+          });
+          
+          yPosition -= sectionHeight + 10;
+        };
         
-        clinicalSections.forEach(section => {
-          if (section.content) {
-            // Calculate section height for text wrapping
-            const maxLineLength = 70;
-            const lines = section.content.match(new RegExp(`.{1,${maxLineLength}}(\\s|$)`, 'g')) || [section.content];
-            const sectionHeight = Math.max(60, lines.length * 15 + 40);
-            
-            // Draw section background
-            drawSectionBox(30, yPosition + 10, width - 60, sectionHeight);
-            
-            page.drawText(section.title, {
-              x: 40,
-              y: yPosition - 5,
-              size: 12,
-              font: boldFont,
-              color: primaryBlue
-            });
-            
-            // Draw content with text wrapping
-            let textY = yPosition - 25;
-            lines.forEach((line: string) => {
-              page.drawText(line.trim(), { 
-                x: 50, 
-                y: textY, 
-                size: 10, 
-                font,
-                maxWidth: width - 100
-              });
-              textY -= 15;
-            });
-            
-            yPosition -= sectionHeight + 10;
-          }
+        // Draw CLINICAL INDICATION
+        if (reportFormData.clinicalIndication) {
+          drawClinicalSection('CLINICAL INDICATION', reportFormData.clinicalIndication);
+        }
+        
+        // Draw TECHNIQUE
+        if (reportFormData.technique) {
+          drawClinicalSection('TECHNIQUE', reportFormData.technique);
+        }
+        
+        // Draw DOCTOR DETAILS before FINDINGS
+        yPosition -= 20;
+        const doctorDetailsHeight = 100;
+        drawSectionBox(30, yPosition + 10, width - 60, doctorDetailsHeight);
+        
+        page.drawText('DOCTOR DETAILS', {
+          x: 40,
+          y: yPosition - 5,
+          size: 12,
+          font: boldFont,
+          color: primaryBlue
         });
+        
+        // Fetch doctor details from database using selectedUserId
+        let doctorName = 'N/A';
+        let doctorSpecialization = 'N/A';
+        let doctorRole = 'N/A';
+        let doctorEmail = 'N/A';
+        let doctorDepartment = 'N/A';
+        
+        try {
+          // Get doctor info from selectedUserId
+          const doctorUserId = medicalImage.selectedUserId;
+          
+          if (doctorUserId) {
+            const doctorUser = await storage.getUser(doctorUserId, organizationId);
+            if (doctorUser) {
+              doctorName = `${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() || 'N/A';
+              doctorSpecialization = doctorUser.medicalSpecialtyCategory || doctorUser.subSpecialty || 'N/A';
+              doctorRole = doctorUser.role || 'N/A';
+              doctorEmail = doctorUser.email || 'N/A';
+              doctorDepartment = doctorUser.department || 'N/A';
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching doctor details:', error);
+          // Continue with N/A values if fetch fails
+        }
+        
+        let doctorY = yPosition - 30;
+        page.drawText(`Name: ${doctorName}`, { 
+          x: 50, 
+          y: doctorY, 
+          size: 10, 
+          font,
+          color: darkGray
+        });
+        doctorY -= 15;
+        
+        page.drawText(`Specialization: ${doctorSpecialization}`, { 
+          x: 50, 
+          y: doctorY, 
+          size: 10, 
+          font,
+          color: darkGray
+        });
+        doctorY -= 15;
+        
+        page.drawText(`Email: ${doctorEmail}`, { 
+          x: 50, 
+          y: doctorY, 
+          size: 10, 
+          font,
+          color: darkGray
+        });
+        doctorY -= 15;
+        
+        // Only show Department if it's not "N/A"
+        if (doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '') {
+          page.drawText(`Department: ${doctorDepartment}`, { 
+            x: 50, 
+            y: doctorY, 
+            size: 10, 
+            font,
+            color: darkGray
+          });
+          doctorY -= 15;
+        }
+        
+        // Adjust yPosition for doctor details section
+        const actualDoctorDetailsHeight = doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '' ? 75 : 60;
+        yPosition -= actualDoctorDetailsHeight;
+        
+        // Draw FINDINGS
+        if (reportFormData.findings) {
+          drawClinicalSection('FINDINGS', reportFormData.findings);
+        }
+        
+        // Draw RADIOLOGIST REPORT after FINDINGS
+        yPosition -= 20;
+        const signatureHeight = 120;
+        drawSectionBox(30, yPosition + 10, width - 60, signatureHeight);
+        
+        page.drawText('RADIOLOGIST REPORT', {
+          x: 40,
+          y: yPosition - 5,
+          size: 12,
+          font: boldFont,
+          color: primaryBlue
+        });
+        
+        // Radiologist information
+        const radiologistName = reportFormData?.radiologist || study.radiologist || "Dr. Sarah Johnson, MD";
+        
+        page.drawText(`Reported by: ${radiologistName}`, { 
+          x: 50, 
+          y: yPosition - 30, 
+          size: 11, 
+          font: boldFont,
+          color: blackColor
+        });
+        
+        page.drawText('Medical License: MD-RAD-2024', { 
+          x: 50, 
+          y: yPosition - 45, 
+          size: 10, 
+          font,
+          color: darkGray
+        });
+        
+        // Report completion info
+        const reportDate = new Date().toLocaleDateString('en-GB', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        page.drawText(`Report Date: ${reportDate}`, { 
+          x: width - 250, 
+          y: yPosition - 30, 
+          size: 10, 
+          font,
+          color: darkGray
+        });
+        
+        page.drawText(`Report ID: ${reportId}`, { 
+          x: width - 250, 
+          y: yPosition - 45, 
+          size: 9, 
+          font,
+          color: rgb(0.6, 0.6, 0.6)
+        });
+        
+        // Adjust yPosition for RADIOLOGIST REPORT section
+        yPosition -= 60;
+        
+        // Draw IMPRESSION
+        if (reportFormData.impression) {
+          drawClinicalSection('IMPRESSION', reportFormData.impression);
+        }
       } else {
         // Add indication and findings from study data if no form data
         yPosition -= 20;
@@ -25907,6 +26065,56 @@ Cura EMR Team
           yPosition -= 70;
         }
         
+        // Draw DOCTOR DETAILS before FINDINGS
+        yPosition -= 20;
+        const doctorDetailsHeight = 100;
+        drawSectionBox(30, yPosition + 10, width - 60, doctorDetailsHeight);
+        
+        page.drawText('DOCTOR DETAILS', {
+          x: 40,
+          y: yPosition - 5,
+          size: 12,
+          font: boldFont,
+          color: primaryBlue
+        });
+        
+        // Fetch doctor details from database using selectedUserId
+        let doctorName = 'N/A';
+        let doctorSpecialization = 'N/A';
+        let doctorEmail = 'N/A';
+        let doctorDepartment = 'N/A';
+        
+        try {
+          const doctorUserId = medicalImage.selectedUserId;
+          if (doctorUserId) {
+            const doctorUser = await storage.getUser(doctorUserId, organizationId);
+            if (doctorUser) {
+              doctorName = `${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() || 'N/A';
+              doctorSpecialization = doctorUser.medicalSpecialtyCategory || doctorUser.subSpecialty || 'N/A';
+              doctorEmail = doctorUser.email || 'N/A';
+              doctorDepartment = doctorUser.department || 'N/A';
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching doctor details:', error);
+        }
+        
+        let doctorY = yPosition - 30;
+        page.drawText(`Name: ${doctorName}`, { x: 50, y: doctorY, size: 10, font, color: darkGray });
+        doctorY -= 15;
+        page.drawText(`Specialization: ${doctorSpecialization}`, { x: 50, y: doctorY, size: 10, font, color: darkGray });
+        doctorY -= 15;
+        page.drawText(`Email: ${doctorEmail}`, { x: 50, y: doctorY, size: 10, font, color: darkGray });
+        doctorY -= 15;
+        
+        if (doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '') {
+          page.drawText(`Department: ${doctorDepartment}`, { x: 50, y: doctorY, size: 10, font, color: darkGray });
+          doctorY -= 15;
+        }
+        
+        const actualDoctorDetailsHeight = doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '' ? 75 : 60;
+        yPosition -= actualDoctorDetailsHeight;
+        
         if (study.findings) {
           drawSectionBox(30, yPosition + 10, width - 60, 50);
           page.drawText('FINDINGS', {
@@ -25919,151 +26127,62 @@ Cura EMR Team
           page.drawText(study.findings, { x: 50, y: yPosition - 25, size: 10, font });
           yPosition -= 70;
         }
-      }
-      
-      // Professional Signature Section
-      yPosition -= 20;
-      const signatureHeight = 120;
-      drawSectionBox(30, yPosition + 10, width - 60, signatureHeight);
-      
-      page.drawText('RADIOLOGIST REPORT', {
-        x: 40,
-        y: yPosition - 5,
-        size: 12,
-        font: boldFont,
-        color: primaryBlue
-      });
-      
-      // Radiologist information
-      const radiologistName = reportFormData?.radiologist || study.radiologist || "Dr. Sarah Johnson, MD";
-      
-      page.drawText(`Reported by: ${radiologistName}`, { 
-        x: 50, 
-        y: yPosition - 30, 
-        size: 11, 
-        font: boldFont,
-        color: blackColor
-      });
-      
-      page.drawText('Medical License: MD-RAD-2024', { 
-        x: 50, 
-        y: yPosition - 45, 
-        size: 10, 
-        font,
-        color: darkGray
-      });
-      
-      // Report completion info
-      const reportDate = new Date().toLocaleDateString('en-GB', { 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      page.drawText(`Report Date: ${reportDate}`, { 
-        x: width - 250, 
-        y: yPosition - 30, 
-        size: 10, 
-        font,
-        color: darkGray
-      });
-      
-      page.drawText(`Report ID: ${reportId}`, { 
-        x: width - 250, 
-        y: yPosition - 45, 
-        size: 9, 
-        font,
-        color: rgb(0.6, 0.6, 0.6)
-      });
-      
-      // Digital signature placeholder removed
-      
-      // Adjust yPosition for reduced content in RADIOLOGIST REPORT section
-      yPosition -= 60; // Reduced from 95 since we removed specialization and role
-      
-      // Doctor Details Section (using selectedUserId)
-      yPosition -= 20;
-      drawSectionBox(30, yPosition + 10, width - 60, 100);
-      
-      page.drawText('DOCTOR DETAILS', {
-        x: 40,
-        y: yPosition - 5,
-        size: 12,
-        font: boldFont,
-        color: primaryBlue
-      });
-      
-      // Fetch doctor details from database using selectedUserId
-      let doctorName = 'N/A';
-      let doctorSpecialization = 'N/A';
-      let doctorRole = 'N/A';
-      let doctorEmail = 'N/A';
-      let doctorDepartment = 'N/A';
-      
-      try {
-        // Get doctor info from selectedUserId
-        const doctorUserId = medicalImage.selectedUserId;
         
-        if (doctorUserId) {
-          const doctorUser = await storage.getUser(doctorUserId, organizationId);
-          if (doctorUser) {
-            doctorName = `${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() || 'N/A';
-            doctorSpecialization = doctorUser.medicalSpecialtyCategory || doctorUser.subSpecialty || 'N/A';
-            doctorRole = doctorUser.role || 'N/A';
-            doctorEmail = doctorUser.email || 'N/A';
-            doctorDepartment = doctorUser.department || 'N/A';
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching doctor details:', error);
-        // Continue with N/A values if fetch fails
-      }
-      
-      let doctorY = yPosition - 30;
-      page.drawText(`Name: ${doctorName}`, { 
-        x: 50, 
-        y: doctorY, 
-        size: 10, 
-        font,
-        color: darkGray
-      });
-      doctorY -= 15;
-      
-      page.drawText(`Specialization: ${doctorSpecialization}`, { 
-        x: 50, 
-        y: doctorY, 
-        size: 10, 
-        font,
-        color: darkGray
-      });
-      doctorY -= 15;
-      
-      page.drawText(`Email: ${doctorEmail}`, { 
-        x: 50, 
-        y: doctorY, 
-        size: 10, 
-        font,
-        color: darkGray
-      });
-      doctorY -= 15;
-      
-      // Only show Department if it's not "N/A"
-      if (doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '') {
-        page.drawText(`Department: ${doctorDepartment}`, { 
+        // Draw RADIOLOGIST REPORT after FINDINGS
+        yPosition -= 20;
+        const signatureHeight = 120;
+        drawSectionBox(30, yPosition + 10, width - 60, signatureHeight);
+        
+        page.drawText('RADIOLOGIST REPORT', {
+          x: 40,
+          y: yPosition - 5,
+          size: 12,
+          font: boldFont,
+          color: primaryBlue
+        });
+        
+        const radiologistName = study.radiologist || "Dr. Sarah Johnson, MD";
+        page.drawText(`Reported by: ${radiologistName}`, { 
           x: 50, 
-          y: doctorY, 
+          y: yPosition - 30, 
+          size: 11, 
+          font: boldFont,
+          color: blackColor
+        });
+        
+        page.drawText('Medical License: MD-RAD-2024', { 
+          x: 50, 
+          y: yPosition - 45, 
           size: 10, 
           font,
           color: darkGray
         });
-        doctorY -= 15;
+        
+        const reportDate = new Date().toLocaleDateString('en-GB', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        page.drawText(`Report Date: ${reportDate}`, { 
+          x: width - 250, 
+          y: yPosition - 30, 
+          size: 10, 
+          font,
+          color: darkGray
+        });
+        
+        page.drawText(`Report ID: ${reportId}`, { 
+          x: width - 250, 
+          y: yPosition - 45, 
+          size: 9, 
+          font,
+          color: rgb(0.6, 0.6, 0.6)
+        });
+        
+        yPosition -= 60;
       }
-      
-      // Ensure proper spacing between doctor details and signature sections
-      // Adjust spacing based on whether Department was shown
-      const doctorDetailsHeight = doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '' ? 75 : 60;
-      yPosition -= doctorDetailsHeight; // Space for doctor details section
       
       // E-Signature Section (if signature data provided)
       const { signatureData, signatureDate } = req.body;
