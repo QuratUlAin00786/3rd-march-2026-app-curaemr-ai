@@ -2765,22 +2765,22 @@ ${
         yPos = Math.max(headerTextY, yPos + 30);
       } else {
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(14);
+        doc.setFontSize(11);
         doc.text("Generated Treatment Plan", margin, yPos);
         yPos += 6;
       }
 
       yPos += 5;
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
+      doc.setFontSize(11);
       doc.text("Professional Anatomical Treatment Plan", pageWidth / 2, yPos, {
         align: "center",
       });
-      yPos += 8;
-      doc.setFontSize(12);
+      yPos += 6;
+      doc.setFontSize(11);
       const detailsTitleY = yPos;
       doc.text("Analysis Details:", margin, detailsTitleY);
-      yPos += 5;
+      yPos += 4;
 
       const imageUrl = imagePathToUse;
       const imageWidth = 75;
@@ -2881,27 +2881,21 @@ ${
         .replace(/\n{3,}/g, '\n\n'); // Replace 3+ newlines with 2
 
       const planLines = doc.splitTextToSize(cleanedTreatmentPlanText, pageWidth - margin * 2);
-      const planBlockTop = yPos - 3;
-      const planBlockHeight = planLines.length * 3.5 + 8;
       const marginBottom = margin;
-      if (planBlockTop + planBlockHeight > pageHeight - marginBottom) {
-        doc.addPage();
-        yPos = 20;
-      }
-      doc.setDrawColor(200, 200, 200);
-      doc.setFillColor(245, 245, 245);
-      doc.rect(margin - 3, yPos - 6, pageWidth - margin * 2 + 6, planBlockHeight, "F");
-      doc.setDrawColor(205, 205, 205);
-      doc.rect(margin - 3, yPos - 6, pageWidth - margin * 2 + 6, planBlockHeight, "S");
-      doc.setFillColor(255, 255, 255);
+      
+      // Ensure proper spacing to prevent overlap
+      yPos += 3;
+      
       planLines.forEach((line) => {
-        if (yPos > pageHeight - marginBottom) {
+        // Check if we need a new page before adding text
+        if (yPos > pageHeight - marginBottom - 5) {
           doc.addPage();
           yPos = 20;
         }
+        
         if (line.trim().length > 0) {
           doc.text(line, margin, yPos);
-          yPos += 3.5;
+          yPos += 4; // Increased spacing to prevent overlap
         } else {
           yPos += 2;
         }
