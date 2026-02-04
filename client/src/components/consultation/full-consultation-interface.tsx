@@ -2741,14 +2741,14 @@ ${
         const headerTextX = margin + 40;
         let headerTextY = yPos + 5;
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
+        doc.setFontSize(9);
         if (clinicHeader.clinicName) {
           doc.text(clinicHeader.clinicName, headerTextX, headerTextY);
           headerTextY += 5;
         }
 
         doc.setFont("helvetica", "normal");
-        doc.setFontSize(11);
+        doc.setFontSize(9);
         if (clinicHeader.address) {
           doc.text(clinicHeader.address, headerTextX, headerTextY);
           headerTextY += 4;
