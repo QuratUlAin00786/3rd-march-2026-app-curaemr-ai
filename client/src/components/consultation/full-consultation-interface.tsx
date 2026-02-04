@@ -2765,7 +2765,7 @@ ${
         yPos = Math.max(headerTextY, yPos + 30);
       } else {
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
+        doc.setFontSize(9);
         doc.text("Generated Treatment Plan", margin, yPos);
         yPos += 6;
       }
@@ -2942,7 +2942,7 @@ ${
         for (let page = 1; page <= pageCount; page += 1) {
           doc.setPage(page);
           doc.setFont("helvetica", "italic");
-          doc.setFontSize(11);
+          doc.setFontSize(9);
           doc.text(clinicFooter.footerText, 105, 292, { align: "center" });
         }
       }
