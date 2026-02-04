@@ -2741,14 +2741,14 @@ ${
         const headerTextX = margin + 40;
         let headerTextY = yPos + 5;
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(12);
+        doc.setFontSize(11);
         if (clinicHeader.clinicName) {
           doc.text(clinicHeader.clinicName, headerTextX, headerTextY);
           headerTextY += 5;
         }
 
         doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
+        doc.setFontSize(11);
         if (clinicHeader.address) {
           doc.text(clinicHeader.address, headerTextX, headerTextY);
           headerTextY += 4;
@@ -2857,12 +2857,13 @@ ${
         doc.setFontSize(11);
         const fieldLines = doc.splitTextToSize(text, infoColumnWidth);
         fieldLines.forEach((fieldLine) => {
-          if (yPos > 265) {
+          // Check if we need a new page before adding text to prevent overlap
+          if (yPos > pageHeight - margin - 10) {
             doc.addPage();
-            yPos = 30;
+            yPos = 20;
           }
           doc.text(fieldLine, margin, yPos);
-          yPos += 3.5;
+          yPos += 4; // Increased spacing to prevent overlap
         });
         yPos += 1;
       };
@@ -2906,7 +2907,7 @@ ${
         for (let page = 1; page <= pageCount; page += 1) {
           doc.setPage(page);
           doc.setFont("helvetica", "italic");
-          doc.setFontSize(10);
+          doc.setFontSize(11);
           doc.text(clinicFooter.footerText, 105, 292, { align: "center" });
         }
       }
