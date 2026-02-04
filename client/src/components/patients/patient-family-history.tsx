@@ -2636,20 +2636,20 @@ export default function PatientFamilyHistory({
                             {(file.size / 1024).toFixed(1)} KB
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <a
-                                target="_blank"
-                                rel="noreferrer"
-                                href={file.url}
-                                className="text-sm text-[hsl(var(--cura-bluewave))] hover:underline flex items-center gap-1"
-                              >
-                                <Eye className="h-4 w-4" />
-                                View full-size
-                              </a>
+                            <div className="flex items-center gap-2">
                               <Button
                                 size="sm"
-                                variant="destructive"
-                                className="flex items-center gap-1 px-3 py-1.5"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                onClick={() => window.open(file.url, "_blank")}
+                                title="View full-size"
+                              >
+                                <Eye className="h-4 w-4 text-[hsl(var(--cura-bluewave))]" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 hover:bg-red-100 dark:hover:bg-red-900/20"
                                 onClick={async () => {
                                   if (!onDeleteAnatomicalFile) return;
                                   setDeletingFile(file.filename);
@@ -2674,9 +2674,9 @@ export default function PatientFamilyHistory({
                                   }
                                 }}
                                 disabled={deletingFile === file.filename}
+                                title="Delete"
                               >
-                                <Trash2 className="h-4 w-4" />
-                                Delete
+                                <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
                               </Button>
                             </div>
                           </td>

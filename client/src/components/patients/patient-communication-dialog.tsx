@@ -681,6 +681,181 @@ export function PatientCommunicationDialog({ open, onOpenChange, patient, mode }
                   )}
                 </div>
 
+                {/* Message Preview */}
+                {selectedType && selectedMethod && message && (
+                  <div className="space-y-2">
+                    <div className="p-3 border rounded-md space-y-2 border-l-4 border-l-purple-500">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-4 w-4 text-purple-500" />
+                          <Badge variant="default" className="bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">
+                            Email
+                          </Badge>
+                          <span className="font-medium">
+                            {COMMUNICATION_TYPES[selectedType as keyof typeof COMMUNICATION_TYPES] || selectedType}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <span className="text-sm text-gray-500">
+                            {scheduledFor ? (() => {
+                              const tz = TIMEZONES.find(t => t.value === selectedTimezone);
+                              if (!tz) return '';
+                              try {
+                                const date = new Date(scheduledFor);
+                                const formatter = new Intl.DateTimeFormat('en-GB', {
+                                  timeZone: tz.value,
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour12: false
+                                });
+                                return formatter.format(date);
+                              } catch {
+                                const [datePart, timePart] = scheduledFor.split('T');
+                                const [year, month, day] = datePart.split('-');
+                                const [hours, minutes] = timePart.split(':');
+                                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                return `${monthNames[parseInt(month) - 1]} ${parseInt(day)}, ${hours}:${minutes}`;
+                              }
+                            })() : (() => {
+                              const tz = TIMEZONES.find(t => t.value === selectedTimezone);
+                              if (!tz) return '';
+                              const now = new Date();
+                              try {
+                                const formatter = new Intl.DateTimeFormat('en-GB', {
+                                  timeZone: tz.value,
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour12: false
+                                });
+                                return formatter.format(now);
+                              } catch {
+                                return format(now, 'MMM dd, HH:mm');
+                              }
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <p className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">
+                        {(() => {
+                          let formattedMessage = message;
+                          const tz = TIMEZONES.find(t => t.value === selectedTimezone);
+                          const countryName = tz ? tz.label.split(' ')[0] : '';
+                          
+                          // Replace [Date] and [Time] with actual scheduled date/time or current time
+                          if (scheduledFor) {
+                            try {
+                              const date = new Date(scheduledFor);
+                              const formatter = new Intl.DateTimeFormat('en-GB', {
+                                timeZone: tz?.value || 'UTC',
+                                day: '2-digit',
+                                month: 'long',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false
+                              });
+                              const formatted = formatter.format(date);
+                              const [datePart, timePart] = formatted.split(', ');
+                              formattedMessage = formattedMessage.replace(/\[Date\]/g, datePart || '[Date]');
+                              formattedMessage = formattedMessage.replace(/\[Time\]/g, timePart ? `${timePart} (${countryName})` : '[Time]');
+                            } catch {
+                              const [datePart, timePart] = scheduledFor.split('T');
+                              const [year, month, day] = datePart.split('-');
+                              const [hours, minutes] = timePart.split(':');
+                              const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                              formattedMessage = formattedMessage.replace(/\[Date\]/g, `${day} ${monthNames[parseInt(month) - 1]} ${year}`);
+                              formattedMessage = formattedMessage.replace(/\[Time\]/g, `${hours}:${minutes} (${countryName})`);
+                            }
+                          } else {
+                            const now = new Date();
+                            try {
+                              const formatter = new Intl.DateTimeFormat('en-GB', {
+                                timeZone: tz?.value || 'UTC',
+                                day: '2-digit',
+                                month: 'long',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false
+                              });
+                              const formatted = formatter.format(now);
+                              const [datePart, timePart] = formatted.split(', ');
+                              formattedMessage = formattedMessage.replace(/\[Date\]/g, datePart || '[Date]');
+                              formattedMessage = formattedMessage.replace(/\[Time\]/g, timePart ? `${timePart} (${countryName})` : '[Time]');
+                            } catch {
+                              formattedMessage = formattedMessage.replace(/\[Date\]/g, format(now, 'dd MMMM yyyy'));
+                              formattedMessage = formattedMessage.replace(/\[Time\]/g, `${format(now, 'HH:mm')} (${countryName})`);
+                            }
+                          }
+                          
+                          // Replace [Patient Name] with actual patient name
+                          formattedMessage = formattedMessage.replace(/\[Patient Name\]/g, patient ? `${patient.firstName} ${patient.lastName}` : '[Patient Name]');
+                          
+                          // Replace [Contact Number] with patient phone or default
+                          formattedMessage = formattedMessage.replace(/\[Contact Number\]/g, patient?.phone || '[Contact Number]');
+                          
+                          return formattedMessage;
+                        })()}
+                      </p>
+                      
+                      <div className="flex items-center gap-2 text-xs flex-wrap">
+                        <Badge className="bg-green-100 text-green-700 border-green-300 dark:bg-green-900 dark:text-green-300 dark:border-green-700">
+                          Sent
+                        </Badge>
+                        <span className="text-gray-500">
+                          Sent: {scheduledFor ? (() => {
+                            const tz = TIMEZONES.find(t => t.value === selectedTimezone);
+                            if (!tz) return '';
+                            try {
+                              const date = new Date(scheduledFor);
+                              const formatter = new Intl.DateTimeFormat('en-GB', {
+                                timeZone: tz.value,
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false
+                              });
+                              return `${formatter.format(date)} (${tz.label.split(' ')[0]})`;
+                            } catch {
+                              const [datePart, timePart] = scheduledFor.split('T');
+                              const [year, month, day] = datePart.split('-');
+                              const [hours, minutes] = timePart.split(':');
+                              const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                              return `${monthNames[parseInt(month) - 1]} ${day}, ${year} ${hours}:${minutes} (${tz.label.split(' ')[0]})`;
+                            }
+                          })() : (() => {
+                            const tz = TIMEZONES.find(t => t.value === selectedTimezone);
+                            if (!tz) return '';
+                            const now = new Date();
+                            try {
+                              const formatter = new Intl.DateTimeFormat('en-GB', {
+                                timeZone: tz.value,
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false
+                              });
+                              return `${formatter.format(now)} (${tz.label.split(' ')[0]})`;
+                            } catch {
+                              return `${format(now, 'MMM dd, yyyy HH:mm')} (${tz.label.split(' ')[0]})`;
+                            }
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Rate limiting alert removed - will be re-enabled when backend endpoint is implemented */}
 
                 <Button 

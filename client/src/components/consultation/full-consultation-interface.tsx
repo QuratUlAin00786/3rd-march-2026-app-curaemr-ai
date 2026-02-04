@@ -2770,26 +2770,33 @@ ${
         yPos += 6;
       }
 
-      yPos += 5;
+      yPos += 8;
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9);
       doc.text("Professional Anatomical Treatment Plan", pageWidth / 2, yPos, {
         align: "center",
       });
-      yPos += 6;
-      doc.setFontSize(9);
-      const detailsTitleY = yPos;
+      yPos += 8;
+
+      // Two-column layout: Analysis Details (left) and Image (right)
+      const imageWidth = 55; // Reduced from 75
+      const imageHeight = 70; // Reduced from 95
+      const leftColumnX = margin;
+      const rightColumnX = pageWidth - margin - imageWidth;
+      const startYPos = yPos;
+      
+      // Left column: Analysis Details
       doc.setFont("helvetica", "bold");
-      doc.text("Analysis Details:", margin, detailsTitleY);
-      yPos += 4;
+      doc.setFontSize(9);
+      doc.text("Analysis Details:", leftColumnX, startYPos);
+      let currentYPos = startYPos + 5;
 
       const imageUrl = imagePathToUse;
-      const imageWidth = 75;
-      const imageHeight = 95;
-      const imageX = pageWidth - margin - imageWidth;
-      const imageY = detailsTitleY - 5;
+      const imageX = rightColumnX;
+      const imageY = startYPos - 2;
       const imageBottom = imageY + imageHeight;
       
+      // Add image on the right side
       if (imageUrl) {
         try {
           const imageResponse = await fetch(imageUrl);
@@ -2853,87 +2860,124 @@ ${
         },
       ];
 
-      const infoColumnWidth = pageWidth - margin * 2 - imageWidth - 15; // Increased gap to prevent overlap
-      const addField = (label: string, value: string) => {
-        const labelText = `${label}:`;
-        const valueText = value;
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(9);
-        const labelLines = doc.splitTextToSize(labelText, infoColumnWidth);
-        labelLines.forEach((labelLine) => {
-          // Check if text would overlap with image
-          if (imageUrl && yPos >= imageY && yPos <= imageBottom) {
-            // Skip to below image if we're in image area
-            yPos = imageBottom + 3;
-          }
-          // Check if we need a new page before adding text to prevent overlap
-          if (yPos > pageHeight - margin - 10) {
-            doc.addPage();
-            yPos = 20;
-          }
-          doc.text(labelLine, margin, yPos);
-          yPos += 3;
-        });
+      // Left column width - ensure it doesn't overlap with image
+      const leftColumnWidth = rightColumnX - leftColumnX - 10;
+      
+      labelValuePairs.forEach((field) => {
+        // Check if we need a new page
+        if (currentYPos > pageHeight - margin - 10) {
+          doc.addPage();
+          currentYPos = 20;
+        }
         
+        // Format as "Label: Value" - keep label and value together, prevent breaking
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9);
-        const valueLines = doc.splitTextToSize(valueText, infoColumnWidth);
-        valueLines.forEach((valueLine) => {
-          // Check if text would overlap with image
-          if (imageUrl && yPos >= imageY && yPos <= imageBottom) {
-            // Skip to below image if we're in image area
-            yPos = imageBottom + 3;
-          }
-          // Check if we need a new page before adding text to prevent overlap
-          if (yPos > pageHeight - margin - 10) {
-            doc.addPage();
-            yPos = 20;
-          }
-          doc.text(valueLine, margin + 5, yPos);
-          yPos += 3;
-        });
-        yPos += 1;
-      };
+        
+        // First, try to fit label and value on one line
+        const fullText = `${field.label}: ${field.value}`;
+        const singleLineWidth = doc.getTextWidth(fullText);
+        
+        if (singleLineWidth <= leftColumnWidth) {
+          // Fits on one line - no breaking needed
+          doc.text(fullText, leftColumnX, currentYPos);
+          currentYPos += 4;
+        } else {
+          // Need to break - put label on first line, value on second line
+          doc.text(`${field.label}:`, leftColumnX, currentYPos);
+          currentYPos += 3.5;
+          
+          // Break value if needed, but try to keep words together
+          const valueLines = doc.splitTextToSize(field.value, leftColumnWidth - 5);
+          valueLines.forEach((line) => {
+            if (currentYPos > pageHeight - margin - 10) {
+              doc.addPage();
+              currentYPos = 20;
+            }
+            doc.text(line, leftColumnX + 5, currentYPos); // Indent value
+            currentYPos += 3.5;
+          });
+        }
+        
+        currentYPos += 0.5; // Small space between fields
+      });
 
-      labelValuePairs.forEach((field) => addField(field.label, field.value));
-
-      // Ensure we're below the image before adding treatment plan
-      if (imageUrl && yPos < imageBottom) {
-        yPos = imageBottom + 5;
-      }
+      // Set yPos to the maximum of text end or image bottom
+      yPos = Math.max(currentYPos, imageBottom) + 5;
       
-      yPos += 3;
+      // Treatment Plan section
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9);
-      doc.text("Treatment Plan:", margin, yPos);
-      yPos += 4;
+      doc.text("Generated Treatment Plan:", margin, yPos);
+      yPos += 5;
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-
-      // Clean up treatment plan text - remove extra whitespace
+      // Parse and format treatment plan with proper headings
       const cleanedTreatmentPlanText = treatmentPlanText
         .split('\n')
         .map(line => line.trim())
         .filter(line => line.length > 0)
         .join('\n')
-        .replace(/\n{3,}/g, '\n\n'); // Replace 3+ newlines with 2
+        .replace(/\n{3,}/g, '\n\n');
 
-      const planLines = doc.splitTextToSize(cleanedTreatmentPlanText, pageWidth - margin * 2);
+      // Process treatment plan lines and format headings
+      const planLines = cleanedTreatmentPlanText.split('\n');
       const marginBottom = margin;
+      const fullWidth = pageWidth - margin * 2;
+      let previousLineWasText = false;
       
-      planLines.forEach((line) => {
+      planLines.forEach((line, index) => {
         // Check if we need a new page before adding text
         if (yPos > pageHeight - marginBottom - 5) {
           doc.addPage();
           yPos = 20;
         }
         
-        if (line.trim().length > 0) {
-          doc.text(line, margin, yPos);
-          yPos += 3.5; // Spacing to prevent overlap
-        } else {
+        const trimmedLine = line.trim();
+        if (trimmedLine.length === 0) {
           yPos += 2;
+          previousLineWasText = false;
+          return;
+        }
+        
+        // Check if line is a heading (all caps or starts with **)
+        const isHeading = trimmedLine.match(/^\*\*.*\*\*$/) || 
+                         (trimmedLine === trimmedLine.toUpperCase() && trimmedLine.length < 50 && trimmedLine.length > 3) ||
+                         (trimmedLine.startsWith('**') && trimmedLine.endsWith('**'));
+        
+        if (isHeading) {
+          // Add extra space before heading (line break) if previous line was text
+          if (index > 0 && previousLineWasText) {
+            yPos += 5; // Line break space before heading
+          }
+          
+          // Format as bold heading
+          const headingText = trimmedLine.replace(/\*\*/g, '').trim();
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(9);
+          const headingLines = doc.splitTextToSize(headingText, fullWidth);
+          headingLines.forEach((headingLine) => {
+            if (yPos > pageHeight - marginBottom - 5) {
+              doc.addPage();
+              yPos = 20;
+            }
+            doc.text(headingLine, margin, yPos);
+            yPos += 4;
+          });
+          previousLineWasText = false;
+        } else {
+          // Regular text
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(9);
+          const textLines = doc.splitTextToSize(trimmedLine, fullWidth);
+          textLines.forEach((textLine) => {
+            if (yPos > pageHeight - marginBottom - 5) {
+              doc.addPage();
+              yPos = 20;
+            }
+            doc.text(textLine, margin, yPos);
+            yPos += 3.5;
+          });
+          previousLineWasText = true;
         }
       });
 

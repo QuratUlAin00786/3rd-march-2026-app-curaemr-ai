@@ -12408,20 +12408,126 @@ This treatment plan should be reviewed and adjusted based on individual patient 
 
       console.log(`📷 UPLOAD: Uploading ${files.length} images for study ${studyId} in organization ${req.tenant.id}`);
 
-      const uploadedImages = files.map(file => ({
+      // Get medical image to verify it exists and get patientId
+      const medicalImageIdNum = parseInt(studyId);
+      if (isNaN(medicalImageIdNum)) {
+        return res.status(400).json({ error: "Invalid study ID" });
+      }
+
+      const medicalImage = await storage.getMedicalImage(medicalImageIdNum, req.tenant!.id);
+      if (!medicalImage) {
+        // Clean up uploaded files
+        await Promise.all(files.map(file => fse.remove(file.path)));
+        return res.status(404).json({ error: "Medical image not found" });
+      }
+
+      const orgId = req.tenant!.id;
+      const patId = patientId || medicalImage.patientId;
+      const imagesDir = path.resolve(process.cwd(), 'uploads', 'Imaging_Images', String(orgId), 'patients', String(patId));
+
+      // Ensure directory exists
+      await fse.ensureDir(imagesDir);
+
+      const uploadedImages = [];
+      const savedRadiologyImages = [];
+
+      // Process each uploaded file
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        
+        // Move file to the correct directory structure if needed
+        const targetPath = path.join(imagesDir, file.filename);
+        let finalPath = file.path;
+        
+        // If file is not already in the target directory, move it
+        if (file.path !== targetPath) {
+          try {
+            await fse.move(file.path, targetPath, { overwrite: true });
+            finalPath = targetPath;
+            console.log(`📷 UPLOAD: Moved file to target directory: ${targetPath}`);
+          } catch (moveError) {
+            console.warn(`📷 UPLOAD: Could not move file, using original path:`, moveError);
+            // File might already be in the correct location
+            finalPath = file.path;
+          }
+        }
+
+        uploadedImages.push({
         fileName: file.filename,
         originalName: file.originalname,
         fileSize: file.size,
         mimeType: file.mimetype,
-        path: file.path,
-      }));
+          path: finalPath,
+        });
+
+        // Save to radiology_images table
+        try {
+          const fileStats = await fs.promises.stat(finalPath);
+          
+          // Determine MIME type from extension
+          const ext = path.extname(file.filename).toLowerCase();
+          let mimeType = 'image/jpeg';
+          if (ext === '.png') mimeType = 'image/png';
+          else if (ext === '.gif') mimeType = 'image/gif';
+          else if (ext === '.bmp') mimeType = 'image/bmp';
+          else if (ext === '.tiff' || ext === '.tif') mimeType = 'image/tiff';
+          else if (ext === '.webp') mimeType = 'image/webp';
+          else if (ext === '.svg') mimeType = 'image/svg+xml';
+          else if (ext === '.dcm' || ext === '.dicom') mimeType = 'application/dicom';
+          else mimeType = file.mimetype || 'image/jpeg';
+
+          // Read file and convert to base64 for storage
+          const fileBuffer = await fse.readFile(finalPath);
+          const base64ImageData = `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+
+          // Calculate relative path from project root
+          const absoluteFilePath = path.resolve(finalPath);
+          const projectRoot = process.cwd();
+          let relativeFilePath: string;
+          
+          try {
+            relativeFilePath = path.relative(projectRoot, absoluteFilePath);
+            relativeFilePath = relativeFilePath.replace(/\\/g, '/');
+            if (!relativeFilePath.startsWith('uploads')) {
+              relativeFilePath = absoluteFilePath;
+            }
+          } catch (relError) {
+            relativeFilePath = absoluteFilePath;
+          }
+
+          // Insert into radiology_images table
+          const [radiologyImage] = await db
+            .insert(schema.radiologyImages)
+            .values({
+              medicalImageId: medicalImageIdNum,
+              organizationId: orgId,
+              patientId: patId,
+              fileName: file.filename,
+              filePath: relativeFilePath,
+              fileSize: fileStats.size,
+              mimeType: mimeType,
+              uploadedBy: req.user.id,
+              displayOrder: i,
+              imageData: base64ImageData,
+            })
+            .returning();
+
+          savedRadiologyImages.push(radiologyImage);
+          console.log(`✅ UPLOAD: Saved image ${i + 1}/${files.length} to radiology_images table: ${file.filename} (ID: ${radiologyImage.id})`);
+        } catch (saveError) {
+          console.error(`❌ UPLOAD: Failed to save image ${file.filename} to radiology_images table:`, saveError);
+          // Continue with other images even if one fails
+        }
+      }
 
       console.log(`✅ UPLOAD: Successfully uploaded ${uploadedImages.length} images`);
+      console.log(`✅ UPLOAD: Successfully saved ${savedRadiologyImages.length} images to radiology_images table`);
 
       res.json({
         success: true,
         uploadedImages,
-        message: `${uploadedImages.length} image(s) uploaded successfully`,
+        savedRadiologyImages,
+        message: `${uploadedImages.length} image(s) uploaded successfully and saved to database`,
       });
     } catch (error) {
       console.error("Error uploading report images:", error);
@@ -25792,61 +25898,141 @@ Cura EMR Team
       const sectionsStartY = yPosition;
       
       // Patient Information Section (Left side)
-      drawSectionBox(30, sectionsStartY + 5, (width - 80) / 2, 120);
+      drawSectionBox(30, sectionsStartY + 5, (width - 80) / 2, 100);
       page.drawText('PATIENT INFORMATION', {
         x: 40,
         y: sectionsStartY - 10,
-        size: 12,
+        size: 9,
         font: boldFont,
         color: primaryBlue
       });
       
-      let leftColumnY = sectionsStartY - 30;
-      page.drawText(`Name: ${study.patientName}`, { x: 50, y: leftColumnY, size: 10, font });
-      leftColumnY -= 15;
-      page.drawText(`DOB: ${study.patientDOB || 'N/A'}`, { x: 50, y: leftColumnY, size: 10, font });
-      leftColumnY -= 15;
-      page.drawText(`Study Date: ${new Date().toLocaleDateString()}`, { x: 50, y: leftColumnY, size: 10, font });
+      let leftColumnY = sectionsStartY - 25;
+      page.drawText(`Name: ${study.patientName}`, { x: 50, y: leftColumnY, size: 9, font });
+      leftColumnY -= 12;
+      page.drawText(`DOB: ${study.patientDOB || 'N/A'}`, { x: 50, y: leftColumnY, size: 9, font });
+      leftColumnY -= 12;
+      page.drawText(`Study Date: ${new Date().toLocaleDateString()}`, { x: 50, y: leftColumnY, size: 9, font });
       
       // Study Information Section (Right side) - SAME Y POSITION for equal alignment
       const rightColumnX = width / 2 + 10;
-      drawSectionBox(rightColumnX, sectionsStartY + 5, (width - 80) / 2, 120);
+      drawSectionBox(rightColumnX, sectionsStartY + 5, (width - 80) / 2, 100);
       page.drawText('STUDY INFORMATION', {
         x: rightColumnX + 10,
         y: sectionsStartY - 10,
-        size: 12,
+        size: 9,
         font: boldFont,
         color: primaryBlue
       });
       
-      let rightColumnY = sectionsStartY - 30;
-      page.drawText(`Study Type: ${study.studyType}`, { x: rightColumnX + 20, y: rightColumnY, size: 10, font });
-      rightColumnY -= 15;
-      page.drawText(`Body Part: ${study.bodyPart}`, { x: rightColumnX + 20, y: rightColumnY, size: 10, font });
-      rightColumnY -= 15;
-      page.drawText(`Modality: ${study.modality}`, { x: rightColumnX + 20, y: rightColumnY, size: 10, font });
-      rightColumnY -= 15;
-      page.drawText(`Status: ${study.status || 'Complete'}`, { x: rightColumnX + 20, y: rightColumnY, size: 10, font });
-      rightColumnY -= 15;
+      let rightColumnY = sectionsStartY - 25;
+      page.drawText(`Study Type: ${study.studyType}`, { x: rightColumnX + 20, y: rightColumnY, size: 9, font });
+      rightColumnY -= 12;
+      page.drawText(`Body Part: ${study.bodyPart}`, { x: rightColumnX + 20, y: rightColumnY, size: 9, font });
+      rightColumnY -= 12;
+      page.drawText(`Modality: ${study.modality}`, { x: rightColumnX + 20, y: rightColumnY, size: 9, font });
+      rightColumnY -= 12;
+      page.drawText(`Status: ${study.status || 'Complete'}`, { x: rightColumnX + 20, y: rightColumnY, size: 9, font });
+      rightColumnY -= 12;
       
       // Add Ordered, Scheduled, and Performed dates
       const orderedDate = study.orderedAt ? new Date(study.orderedAt).toLocaleDateString() : 'N/A';
-      page.drawText(`Ordered: ${orderedDate}`, { x: rightColumnX + 20, y: rightColumnY, size: 10, font });
-      rightColumnY -= 15;
+      page.drawText(`Ordered: ${orderedDate}`, { x: rightColumnX + 20, y: rightColumnY, size: 9, font });
+      rightColumnY -= 12;
       
       if (reportFormData?.scheduledAt) {
         const scheduledDate = new Date(reportFormData.scheduledAt).toLocaleDateString();
-        page.drawText(`Scheduled: ${scheduledDate}`, { x: rightColumnX + 20, y: rightColumnY, size: 10, font });
-        rightColumnY -= 15;
+        page.drawText(`Scheduled: ${scheduledDate}`, { x: rightColumnX + 20, y: rightColumnY, size: 9, font });
+        rightColumnY -= 12;
       }
       
       if (reportFormData?.performedAt) {
         const performedDate = new Date(reportFormData.performedAt).toLocaleDateString();
-        page.drawText(`Performed: ${performedDate}`, { x: rightColumnX + 20, y: rightColumnY, size: 10, font });
-        rightColumnY -= 15;
+        page.drawText(`Performed: ${performedDate}`, { x: rightColumnX + 20, y: rightColumnY, size: 9, font });
+        rightColumnY -= 12;
       }
       
-      yPosition = sectionsStartY - 130;
+      // Move yPosition down after both sections
+      yPosition = sectionsStartY - 110;
+      
+      // DOCTOR DETAILS section - placed right after PATIENT INFORMATION
+      yPosition -= 15; // Spacing before DOCTOR DETAILS
+      
+      // Fetch doctor details from database using selectedUserId
+      let doctorName = 'N/A';
+      let doctorSpecialization = 'N/A';
+      let doctorEmail = 'N/A';
+      let doctorDepartment = 'N/A';
+      
+      try {
+        const doctorUserId = medicalImage.selectedUserId;
+        if (doctorUserId) {
+          const doctorUser = await storage.getUser(doctorUserId, organizationId);
+          if (doctorUser) {
+            doctorName = `${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() || 'N/A';
+            doctorSpecialization = doctorUser.medicalSpecialtyCategory || doctorUser.subSpecialty || 'N/A';
+            doctorEmail = doctorUser.email || 'N/A';
+            doctorDepartment = doctorUser.department || 'N/A';
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching doctor details:', error);
+      }
+      
+      // Calculate DOCTOR DETAILS section height
+      const doctorDetailsHeight = 60;
+      drawSectionBox(30, yPosition + 5, width - 60, doctorDetailsHeight);
+      
+      page.drawText('DOCTOR DETAILS', {
+        x: 40,
+        y: yPosition - 3,
+        size: 9,
+        font: boldFont,
+        color: primaryBlue
+      });
+      
+      let doctorY = yPosition - 16;
+      page.drawText(`Name: ${doctorName}`, { 
+        x: 50, 
+        y: doctorY, 
+        size: 9,
+        font,
+        color: darkGray
+      });
+      doctorY -= 11;
+      
+      page.drawText(`Specialization: ${doctorSpecialization}`, { 
+        x: 50, 
+        y: doctorY, 
+        size: 9,
+        font,
+        color: darkGray
+      });
+      doctorY -= 11;
+      
+      page.drawText(`Email: ${doctorEmail}`, { 
+        x: 50, 
+        y: doctorY, 
+        size: 9,
+        font,
+        color: darkGray
+      });
+      doctorY -= 11;
+      
+      // Only show Department if it's not "N/A"
+      if (doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '') {
+        page.drawText(`Department: ${doctorDepartment}`, { 
+          x: 50, 
+          y: doctorY, 
+          size: 9,
+          font,
+          color: darkGray
+        });
+        doctorY -= 11;
+      }
+      
+      // Adjust yPosition after DOCTOR DETAILS
+      yPosition -= doctorDetailsHeight;
       
       if (reportFormData) {
         yPosition -= 20;
@@ -25856,32 +26042,32 @@ Cura EMR Team
           if (!content) return;
           
           // Calculate section height for text wrapping with reduced spacing
-          const maxLineLength = 70;
+            const maxLineLength = 70;
           const lines = content.match(new RegExp(`.{1,${maxLineLength}}(\\s|$)`, 'g')) || [content];
           const lineSpacing = 9; // Reduced from 11 to 9
           const sectionHeight = Math.max(40, lines.length * lineSpacing + 25); // Reduced from 45 and 30
-          
-          // Draw section background
+            
+            // Draw section background
           drawSectionBox(30, yPosition + 5, width - 60, sectionHeight);
-          
+            
           page.drawText(title, {
-            x: 40,
+              x: 40,
             y: yPosition - 3,
             size: 9, // Reduced from 10 to 9
-            font: boldFont,
-            color: primaryBlue
-          });
-          
-          // Draw content with text wrapping
-          let textY = yPosition - 16; // Reduced from 18 to 16
-          lines.forEach((line: string) => {
-            page.drawText(line.trim(), { 
-              x: 50, 
-              y: textY, 
-              size: 8, // Reduced from 9 to 8
-              font,
-              maxWidth: width - 100
+              font: boldFont,
+              color: primaryBlue
             });
+            
+            // Draw content with text wrapping
+          let textY = yPosition - 16; // Reduced from 18 to 16
+            lines.forEach((line: string) => {
+              page.drawText(line.trim(), { 
+                x: 50, 
+                y: textY, 
+              size: 8, // Reduced from 9 to 8
+                font,
+                maxWidth: width - 100
+              });
             textY -= lineSpacing; // Use reduced line spacing
           });
           
@@ -25898,90 +26084,7 @@ Cura EMR Team
           drawClinicalSection('TECHNIQUE', reportFormData.technique);
         }
         
-        // Draw DOCTOR DETAILS before FINDINGS
-        yPosition -= 10; // Reduced from 20 to 10
-        const doctorDetailsHeight = 90; // Reduced from 100 to 90
-        drawSectionBox(30, yPosition + 10, width - 60, doctorDetailsHeight);
-        
-        page.drawText('DOCTOR DETAILS', {
-          x: 40,
-          y: yPosition - 5,
-          size: 10, // Reduced from 12 to 10
-          font: boldFont,
-          color: primaryBlue
-        });
-        
-        // Fetch doctor details from database using selectedUserId
-        let doctorName = 'N/A';
-        let doctorSpecialization = 'N/A';
-        let doctorRole = 'N/A';
-        let doctorEmail = 'N/A';
-        let doctorDepartment = 'N/A';
-        
-        try {
-          // Get doctor info from selectedUserId
-          const doctorUserId = medicalImage.selectedUserId;
-          
-          if (doctorUserId) {
-            const doctorUser = await storage.getUser(doctorUserId, organizationId);
-            if (doctorUser) {
-              doctorName = `${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() || 'N/A';
-              doctorSpecialization = doctorUser.medicalSpecialtyCategory || doctorUser.subSpecialty || 'N/A';
-              doctorRole = doctorUser.role || 'N/A';
-              doctorEmail = doctorUser.email || 'N/A';
-              doctorDepartment = doctorUser.department || 'N/A';
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching doctor details:', error);
-          // Continue with N/A values if fetch fails
-        }
-        
-        let doctorY = yPosition - 18; // Reduced from 20 to 18
-        page.drawText(`Name: ${doctorName}`, { 
-          x: 50, 
-          y: doctorY, 
-          size: 8, // Reduced from 9 to 8
-          font,
-          color: darkGray
-        });
-        doctorY -= 10; // Reduced from 12 to 10
-        
-        page.drawText(`Specialization: ${doctorSpecialization}`, { 
-          x: 50, 
-          y: doctorY, 
-          size: 8, // Reduced from 9 to 8
-          font,
-          color: darkGray
-        });
-        doctorY -= 10; // Reduced from 12 to 10
-        
-        page.drawText(`Email: ${doctorEmail}`, { 
-          x: 50, 
-          y: doctorY, 
-          size: 8, // Reduced from 9 to 8
-          font,
-          color: darkGray
-        });
-        doctorY -= 10; // Reduced from 12 to 10
-        
-        // Only show Department if it's not "N/A"
-        if (doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '') {
-          page.drawText(`Department: ${doctorDepartment}`, { 
-            x: 50, 
-            y: doctorY, 
-            size: 8, // Reduced from 9 to 8
-            font,
-            color: darkGray
-          });
-          doctorY -= 10; // Reduced from 12 to 10
-        }
-        
-        // Adjust yPosition for doctor details section with reduced spacing
-        const actualDoctorDetailsHeight = doctorDepartment && doctorDepartment !== 'N/A' && doctorDepartment.trim() !== '' ? 50 : 42; // Reduced from 60/48 to 50/42
-        yPosition -= actualDoctorDetailsHeight;
-        
-        // Draw FINDINGS
+        // Draw FINDINGS (DOCTOR DETAILS already placed after PATIENT INFORMATION above)
         if (reportFormData.findings) {
           drawClinicalSection('FINDINGS', reportFormData.findings);
         }
@@ -25994,59 +26097,59 @@ Cura EMR Team
         // Draw RADIOLOGIST REPORT after IMPRESSION
         yPosition -= 10; // Reduced from 20 to 10
         const signatureHeight = 100; // Reduced from 120 to 100
-        drawSectionBox(30, yPosition + 10, width - 60, signatureHeight);
-        
-        page.drawText('RADIOLOGIST REPORT', {
-          x: 40,
-          y: yPosition - 5,
+      drawSectionBox(30, yPosition + 10, width - 60, signatureHeight);
+      
+      page.drawText('RADIOLOGIST REPORT', {
+        x: 40,
+        y: yPosition - 5,
           size: 10, // Reduced from 12 to 10
-          font: boldFont,
-          color: primaryBlue
-        });
-        
-        // Radiologist information
-        const radiologistName = reportFormData?.radiologist || study.radiologist || "Dr. Sarah Johnson, MD";
-        
-        page.drawText(`Reported by: ${radiologistName}`, { 
-          x: 50, 
+        font: boldFont,
+        color: primaryBlue
+      });
+      
+      // Radiologist information
+      const radiologistName = reportFormData?.radiologist || study.radiologist || "Dr. Sarah Johnson, MD";
+      
+      page.drawText(`Reported by: ${radiologistName}`, { 
+        x: 50, 
           y: yPosition - 25, // Reduced from 30 to 25
           size: 9, // Reduced from 11 to 9
-          font: boldFont,
-          color: blackColor
-        });
-        
-        page.drawText('Medical License: MD-RAD-2024', { 
-          x: 50, 
+        font: boldFont,
+        color: blackColor
+      });
+      
+      page.drawText('Medical License: MD-RAD-2024', { 
+        x: 50, 
           y: yPosition - 38, // Reduced from 45 to 38
           size: 8, // Reduced from 10 to 8
-          font,
-          color: darkGray
-        });
-        
-        // Report completion info
-        const reportDate = new Date().toLocaleDateString('en-GB', { 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-        page.drawText(`Report Date: ${reportDate}`, { 
-          x: width - 250, 
+        font,
+        color: darkGray
+      });
+      
+      // Report completion info
+      const reportDate = new Date().toLocaleDateString('en-GB', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      page.drawText(`Report Date: ${reportDate}`, { 
+        x: width - 250, 
           y: yPosition - 25, // Reduced from 30 to 25
           size: 8, // Reduced from 10 to 8
-          font,
-          color: darkGray
-        });
-        
-        page.drawText(`Report ID: ${reportId}`, { 
-          x: width - 250, 
+        font,
+        color: darkGray
+      });
+      
+      page.drawText(`Report ID: ${reportId}`, { 
+        x: width - 250, 
           y: yPosition - 38, // Reduced from 45 to 38
           size: 7, // Reduced from 9 to 7
-          font,
-          color: rgb(0.6, 0.6, 0.6)
-        });
-        
+        font,
+        color: rgb(0.6, 0.6, 0.6)
+      });
+      
         // Adjust yPosition for RADIOLOGIST REPORT section
         yPosition -= 50; // Reduced from 60 to 50
       } else {
@@ -26070,34 +26173,34 @@ Cura EMR Team
         yPosition -= 10; // Reduced from 20 to 10
         const doctorDetailsHeight = 90; // Reduced from 100 to 90
         drawSectionBox(30, yPosition + 10, width - 60, doctorDetailsHeight);
-        
-        page.drawText('DOCTOR DETAILS', {
-          x: 40,
-          y: yPosition - 5,
+      
+      page.drawText('DOCTOR DETAILS', {
+        x: 40,
+        y: yPosition - 5,
           size: 10, // Reduced from 12 to 10
-          font: boldFont,
-          color: primaryBlue
-        });
-        
-        // Fetch doctor details from database using selectedUserId
-        let doctorName = 'N/A';
-        let doctorSpecialization = 'N/A';
-        let doctorEmail = 'N/A';
-        let doctorDepartment = 'N/A';
-        
-        try {
-          const doctorUserId = medicalImage.selectedUserId;
-          if (doctorUserId) {
-            const doctorUser = await storage.getUser(doctorUserId, organizationId);
-            if (doctorUser) {
-              doctorName = `${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() || 'N/A';
-              doctorSpecialization = doctorUser.medicalSpecialtyCategory || doctorUser.subSpecialty || 'N/A';
-              doctorEmail = doctorUser.email || 'N/A';
-              doctorDepartment = doctorUser.department || 'N/A';
-            }
+        font: boldFont,
+        color: primaryBlue
+      });
+      
+      // Fetch doctor details from database using selectedUserId
+      let doctorName = 'N/A';
+      let doctorSpecialization = 'N/A';
+      let doctorEmail = 'N/A';
+      let doctorDepartment = 'N/A';
+      
+      try {
+        const doctorUserId = medicalImage.selectedUserId;
+        if (doctorUserId) {
+          const doctorUser = await storage.getUser(doctorUserId, organizationId);
+          if (doctorUser) {
+            doctorName = `${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() || 'N/A';
+            doctorSpecialization = doctorUser.medicalSpecialtyCategory || doctorUser.subSpecialty || 'N/A';
+            doctorEmail = doctorUser.email || 'N/A';
+            doctorDepartment = doctorUser.department || 'N/A';
           }
-        } catch (error) {
-          console.error('Error fetching doctor details:', error);
+        }
+      } catch (error) {
+        console.error('Error fetching doctor details:', error);
         }
         
         let doctorY = yPosition - 18; // Reduced from 30 to 18
@@ -26159,7 +26262,7 @@ Cura EMR Team
         
         const radiologistName = study.radiologist || "Dr. Sarah Johnson, MD";
         page.drawText(`Reported by: ${radiologistName}`, { 
-          x: 50, 
+        x: 50, 
           y: yPosition - 25, // Reduced from 30 to 25
           size: 9, // Reduced from 11 to 9
           font: boldFont,
@@ -26167,12 +26270,12 @@ Cura EMR Team
         });
         
         page.drawText('Medical License: MD-RAD-2024', { 
-          x: 50, 
+        x: 50, 
           y: yPosition - 38, // Reduced from 45 to 38
           size: 8, // Reduced from 10 to 8
-          font,
-          color: darkGray
-        });
+        font,
+        color: darkGray
+      });
         
         const reportDate = new Date().toLocaleDateString('en-GB', { 
           year: 'numeric', 
@@ -26185,9 +26288,9 @@ Cura EMR Team
           x: width - 250, 
           y: yPosition - 25, // Reduced from 30 to 25
           size: 8, // Reduced from 10 to 8
-          font,
-          color: darkGray
-        });
+        font,
+        color: darkGray
+      });
         
         page.drawText(`Report ID: ${reportId}`, { 
           x: width - 250, 
@@ -26390,7 +26493,7 @@ Cura EMR Team
                   console.warn(`📷 [${idx + 1}] ⚠️ PRIORITY 1 FAILED: Error decoding base64 imageData:`, base64Error);
                   if (base64Error instanceof Error) {
                     console.warn(`📷 [${idx + 1}]    Error message: ${base64Error.message}`);
-                  }
+                }
                   // Clear buffer to try next priority
                   imageBuffer = null;
                 }
@@ -26486,41 +26589,41 @@ Cura EMR Team
                       console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS (fallback): Read ${imageBuffer.length} bytes`);
                     } else {
                       console.warn(`📷 [${idx + 1}] ⚠️ PRIORITY 2: File not found at fallback path either`);
-                      
-                      // List directory contents to help debug
-                      try {
+                    
+                    // List directory contents to help debug
+                    try {
                         if (await fse.pathExists(imagesDir)) {
                           const dirContents = await fse.readdir(imagesDir);
                           console.log(`📷 [${idx + 1}]    Directory exists: "${imagesDir}"`);
-                          console.log(`📷 [${idx + 1}]    Directory contents (${dirContents.length} files):`, dirContents.slice(0, 10).join(', '));
-                          if (dirContents.length > 10) {
-                            console.log(`📷 [${idx + 1}]    ... and ${dirContents.length - 10} more files`);
-                          }
-                          
-                          // Try to find file by partial name match (in case of filename mismatch)
-                          const fileNameWithoutExt = path.parse(radiologyImage.fileName).name;
+                        console.log(`📷 [${idx + 1}]    Directory contents (${dirContents.length} files):`, dirContents.slice(0, 10).join(', '));
+                        if (dirContents.length > 10) {
+                          console.log(`📷 [${idx + 1}]    ... and ${dirContents.length - 10} more files`);
+                        }
+                        
+                        // Try to find file by partial name match (in case of filename mismatch)
+                        const fileNameWithoutExt = path.parse(radiologyImage.fileName).name;
                           const matchingFile = dirContents.find(f => {
                             const fName = path.parse(f).name;
                             return fName.includes(fileNameWithoutExt) || fileNameWithoutExt.includes(fName) || f.includes(fileNameWithoutExt);
                           });
-                          if (matchingFile) {
+                        if (matchingFile) {
                             const matchedPath = path.join(imagesDir, matchingFile);
-                            console.log(`📷 [${idx + 1}]    Found potential match: "${matchingFile}"`);
-                            console.log(`📷 [${idx + 1}]    Trying matched path: "${matchedPath}"`);
-                            if (await fse.pathExists(matchedPath)) {
-                              imagePath = matchedPath;
-                              imageBuffer = await fse.readFile(imagePath);
-                              if (imageBuffer && imageBuffer.length > 0) {
-                                console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS (matched file): Read ${imageBuffer.length} bytes`);
-                              }
+                          console.log(`📷 [${idx + 1}]    Found potential match: "${matchingFile}"`);
+                          console.log(`📷 [${idx + 1}]    Trying matched path: "${matchedPath}"`);
+                          if (await fse.pathExists(matchedPath)) {
+                            imagePath = matchedPath;
+                            imageBuffer = await fse.readFile(imagePath);
+                            if (imageBuffer && imageBuffer.length > 0) {
+                              console.log(`📷 [${idx + 1}] ✅ PRIORITY 2 SUCCESS (matched file): Read ${imageBuffer.length} bytes`);
                             }
                           }
-                        } else {
-                          console.warn(`📷 [${idx + 1}]    Directory does not exist: "${imagesDir}"`);
                         }
-                      } catch (dirError) {
-                        console.error(`📷 [${idx + 1}]    Error listing directory:`, dirError);
+                      } else {
+                          console.warn(`📷 [${idx + 1}]    Directory does not exist: "${imagesDir}"`);
                       }
+                    } catch (dirError) {
+                      console.error(`📷 [${idx + 1}]    Error listing directory:`, dirError);
+                    }
                     }
                   }
                 } catch (fileError) {

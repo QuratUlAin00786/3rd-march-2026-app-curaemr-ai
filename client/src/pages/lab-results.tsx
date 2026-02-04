@@ -1071,16 +1071,18 @@ export default function LabResultsPage() {
       setInvoiceData({
         ...invoiceData,
         items: invoiceItems,
-        totalAmount: totalAmount
+        totalAmount: totalAmount,
+        paymentMethod: 'cash', // Set default payment method
+        invoiceType: 'self_pay' // Set default invoice type
       });
       
-      // Close order dialog and open invoice dialog
+      // Close order dialog and open order summary dialog (skip invoice dialog)
       setShowOrderDialog(false);
-      setShowInvoiceDialog(true);
+      setShowSummaryDialog(true);
       
       queryClient.invalidateQueries({ queryKey: ["/api/lab-results"] });
       
-      // Don't reset form data yet - we'll need it for the invoice
+      // Don't reset form data yet - we'll need it for the summary
     },
     onError: (error: any) => {
       toast({
@@ -1211,7 +1213,8 @@ export default function LabResultsPage() {
         invoiceId: data.invoice.invoiceNumber,
         patientName: pendingOrderData?.patientName,
         amount: invoiceData.totalAmount,
-        paymentMethod: 'cash'
+        paymentMethod: 'cash',
+        testId: pendingOrderData?.testId
       });
       setShowSummaryDialog(false);
       setShowPaymentConfirmation(true);
@@ -4646,9 +4649,9 @@ Report generated from Cura EMR System`;
               </div>
             </div>
 
-            {/* Invoice Summary */}
+            {/* Lab Results Summary */}
             <div className="border rounded-lg p-4 space-y-3">
-              <h3 className="font-semibold text-lg border-b pb-2">Invoice Summary</h3>
+              <h3 className="font-semibold text-lg border-b pb-2">Lab Results Summary</h3>
               <div className="space-y-2">
                 {invoiceData.items.map((item: any, index: number) => (
                   <div key={index} className="flex justify-between items-center py-2 border-b last:border-0">
@@ -4666,35 +4669,8 @@ Report generated from Cura EMR System`;
               </div>
             </div>
 
-            {/* Payment Details */}
-            <div className="border rounded-lg p-4 space-y-3 bg-blue-50 dark:bg-blue-950">
-              <h3 className="font-semibold text-lg">Payment Information</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-sm text-gray-600 dark:text-gray-400">Payment Method</Label>
-                  <p className="font-medium capitalize">{invoiceData.paymentMethod.replace('_', ' ')}</p>
-                </div>
-                {invoiceData.insuranceProvider && (
-                  <div>
-                    <Label className="text-sm text-gray-600 dark:text-gray-400">Insurance Provider</Label>
-                    <p className="font-medium">{invoiceData.insuranceProvider}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
             {/* Action Buttons */}
             <div className="flex gap-3 pt-4">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowSummaryDialog(false);
-                  setShowInvoiceDialog(true);
-                }}
-                className="flex-1"
-              >
-                Back to Invoice
-              </Button>
               <Button
                 onClick={async () => {
                   // Get patient name from pendingOrderData or find from patients list
@@ -4899,7 +4875,8 @@ Report generated from Cura EMR System`;
                         invoiceId: data.invoice.invoiceNumber,
                         patientName: pendingOrderData?.patientName,
                         amount: invoiceData.totalAmount,
-                        paymentMethod: 'debit_card'
+                        paymentMethod: 'debit_card',
+                        testId: pendingOrderData?.testId
                       });
                       setStripeClientSecret("");
                       setShowSummaryDialog(false);
@@ -4930,26 +4907,22 @@ Report generated from Cura EMR System`;
             </div>
             
             <div className="space-y-2">
-              <h3 className="text-2xl font-bold text-green-600 dark:text-green-400">Payment Successful!</h3>
-              <p className="text-gray-600 dark:text-gray-400">Your payment has been processed successfully</p>
+              <h3 className="text-2xl font-bold text-green-600 dark:text-green-400">Lab Result Successfully created!</h3>
+              <p className="text-gray-600 dark:text-gray-400">Your lab result has been processed successfully</p>
             </div>
 
             <div className="w-full space-y-3 border-t pt-4">
               <div className="flex justify-between">
-                <span className="text-gray-600 dark:text-gray-400">Invoice ID:</span>
-                <span className="font-semibold">{paymentResult?.invoiceId}</span>
+                <span className="text-gray-600 dark:text-gray-400">Lab Result ID:</span>
+                <span className="font-semibold">{pendingOrderData?.testId || paymentResult?.testId}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">Patient Name:</span>
                 <span className="font-semibold">{paymentResult?.patientName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600 dark:text-gray-400">Amount Paid:</span>
+                <span className="text-gray-600 dark:text-gray-400">Amount due:</span>
                 <span className="font-semibold text-medical-blue">£{paymentResult?.amount?.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600 dark:text-gray-400">Payment Method:</span>
-                <span className="font-semibold capitalize">{paymentResult?.paymentMethod?.replace('_', ' ')}</span>
               </div>
             </div>
 
