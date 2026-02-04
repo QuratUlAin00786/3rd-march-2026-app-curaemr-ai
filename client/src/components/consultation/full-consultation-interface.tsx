@@ -2772,13 +2772,14 @@ ${
 
       yPos += 5;
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
+      doc.setFontSize(9);
       doc.text("Professional Anatomical Treatment Plan", pageWidth / 2, yPos, {
         align: "center",
       });
       yPos += 6;
-      doc.setFontSize(11);
+      doc.setFontSize(9);
       const detailsTitleY = yPos;
+      doc.setFont("helvetica", "bold");
       doc.text("Analysis Details:", margin, detailsTitleY);
       yPos += 4;
 
@@ -2787,6 +2788,8 @@ ${
       const imageHeight = 95;
       const imageX = pageWidth - margin - imageWidth;
       const imageY = detailsTitleY - 5;
+      const imageBottom = imageY + imageHeight;
+      
       if (imageUrl) {
         try {
           const imageResponse = await fetch(imageUrl);
@@ -2850,28 +2853,63 @@ ${
         },
       ];
 
-      const infoColumnWidth = pageWidth - margin * 2 - imageWidth - 10;
+      const infoColumnWidth = pageWidth - margin * 2 - imageWidth - 15; // Increased gap to prevent overlap
       const addField = (label: string, value: string) => {
-        const text = `${label}: ${value}`;
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(11);
-        const fieldLines = doc.splitTextToSize(text, infoColumnWidth);
-        fieldLines.forEach((fieldLine) => {
+        const labelText = `${label}:`;
+        const valueText = value;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        const labelLines = doc.splitTextToSize(labelText, infoColumnWidth);
+        labelLines.forEach((labelLine) => {
+          // Check if text would overlap with image
+          if (imageUrl && yPos >= imageY && yPos <= imageBottom) {
+            // Skip to below image if we're in image area
+            yPos = imageBottom + 3;
+          }
           // Check if we need a new page before adding text to prevent overlap
           if (yPos > pageHeight - margin - 10) {
             doc.addPage();
             yPos = 20;
           }
-          doc.text(fieldLine, margin, yPos);
-          yPos += 4; // Increased spacing to prevent overlap
+          doc.text(labelLine, margin, yPos);
+          yPos += 3;
+        });
+        
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        const valueLines = doc.splitTextToSize(valueText, infoColumnWidth);
+        valueLines.forEach((valueLine) => {
+          // Check if text would overlap with image
+          if (imageUrl && yPos >= imageY && yPos <= imageBottom) {
+            // Skip to below image if we're in image area
+            yPos = imageBottom + 3;
+          }
+          // Check if we need a new page before adding text to prevent overlap
+          if (yPos > pageHeight - margin - 10) {
+            doc.addPage();
+            yPos = 20;
+          }
+          doc.text(valueLine, margin + 5, yPos);
+          yPos += 3;
         });
         yPos += 1;
       };
 
       labelValuePairs.forEach((field) => addField(field.label, field.value));
 
+      // Ensure we're below the image before adding treatment plan
+      if (imageUrl && yPos < imageBottom) {
+        yPos = imageBottom + 5;
+      }
+      
+      yPos += 3;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text("Treatment Plan:", margin, yPos);
+      yPos += 4;
+
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
+      doc.setFontSize(9);
 
       // Clean up treatment plan text - remove extra whitespace
       const cleanedTreatmentPlanText = treatmentPlanText
@@ -2884,9 +2922,6 @@ ${
       const planLines = doc.splitTextToSize(cleanedTreatmentPlanText, pageWidth - margin * 2);
       const marginBottom = margin;
       
-      // Ensure proper spacing to prevent overlap
-      yPos += 3;
-      
       planLines.forEach((line) => {
         // Check if we need a new page before adding text
         if (yPos > pageHeight - marginBottom - 5) {
@@ -2896,7 +2931,7 @@ ${
         
         if (line.trim().length > 0) {
           doc.text(line, margin, yPos);
-          yPos += 4; // Increased spacing to prevent overlap
+          yPos += 3.5; // Spacing to prevent overlap
         } else {
           yPos += 2;
         }
