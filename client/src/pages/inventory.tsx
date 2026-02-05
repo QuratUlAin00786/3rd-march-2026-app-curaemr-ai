@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -31,6 +31,8 @@ import {
   Users,
   Building2,
   Trash2,
+  Loader2,
+  Printer,
 } from "lucide-react";
 import {
   Card,
@@ -211,6 +213,31 @@ interface GoodsReceiptDetail {
     quantity: number;
     unitPrice: string;
   }>;
+  purchaseOrder?: {
+    id: number;
+    poNumber: string;
+    orderDate: string;
+    expectedDeliveryDate?: string | null;
+    status: string;
+    totalAmount: number;
+    taxAmount: number;
+    discountAmount: number;
+    notes?: string | null;
+    supplierId: number;
+    supplierName?: string | null;
+    supplierEmail?: string | null;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
+  purchaseOrderItems?: Array<{
+    id: number;
+    itemId: number;
+    itemName: string | null;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+    receivedQuantity: number;
+  }>;
 }
 
 // 5. Alerts Interface
@@ -260,6 +287,7 @@ export default function Inventory() {
   const [showStockDialog, setShowStockDialog] = useState(false);
   const [showPODialog, setShowPODialog] = useState(false);
   const [showReceiptDialog, setShowReceiptDialog] = useState(false);
+  const [selectedPurchaseOrderIdForReceipt, setSelectedPurchaseOrderIdForReceipt] = useState<number | undefined>(undefined);
   const [showGoodsReceiptDetails, setShowGoodsReceiptDetails] = useState(false);
   const [selectedGoodsReceiptId, setSelectedGoodsReceiptId] = useState<number | null>(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
@@ -275,6 +303,16 @@ export default function Inventory() {
   const [successMessage, setSuccessMessage] = useState("");
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<InventoryItem | null>(null);
+  const [showDeleteGoodsReceiptModal, setShowDeleteGoodsReceiptModal] = useState(false);
+  const [goodsReceiptToDelete, setGoodsReceiptToDelete] = useState<number | null>(null);
+  const [showDeleteGoodsReceiptSuccess, setShowDeleteGoodsReceiptSuccess] = useState(false);
+  
+  // PDF Viewer state
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [selectedReceiptForPdf, setSelectedReceiptForPdf] = useState<GoodsReceipt | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -320,8 +358,8 @@ export default function Inventory() {
   });
 
   // 4. Goods Receipt Data
-  const { data: goodsReceipts = [], isLoading: receiptLoading } = useQuery<
-    GoodsReceipt[]
+  const { data: goodsReceiptsRaw = [], isLoading: receiptLoading } = useQuery<
+    any[]
   >({
     queryKey: ["/api/inventory/goods-receipts"],
     queryFn: async () => {
@@ -331,21 +369,138 @@ export default function Inventory() {
     retry: 3,
   });
 
+  // Group receipts by ID and calculate totals
+  const goodsReceipts = useMemo(() => {
+    const grouped = new Map<number, GoodsReceipt>();
+    
+    goodsReceiptsRaw.forEach((item: any) => {
+      const receiptId = item.id;
+      if (!grouped.has(receiptId)) {
+        grouped.set(receiptId, {
+          id: receiptId,
+          receiptNumber: item.receiptNumber,
+          purchaseOrderId: item.purchaseOrderId,
+          poNumber: item.poNumber,
+          supplierName: item.supplierName,
+          receivedDate: item.receivedDate,
+          itemsReceived: [],
+          totalAmount: "0",
+          receivedBy: item.receivedBy,
+          notes: item.notes,
+        });
+      }
+      
+      const receipt = grouped.get(receiptId)!;
+      if (item.itemId && item.itemName) {
+        receipt.itemsReceived.push({
+          itemId: item.itemId,
+          itemName: item.itemName,
+          quantityReceived: item.quantityReceived || 0,
+          batchNumber: item.batchNumber,
+          expiryDate: item.expiryDate,
+        });
+      }
+      
+      // Store purchase order total amount if available (use first item's poTotalAmount)
+      if (item.poTotalAmount != null && receipt.totalAmount === "0") {
+        const poTotal = typeof item.poTotalAmount === 'number' ? item.poTotalAmount : parseFloat(String(item.poTotalAmount || "0"));
+        if (!isNaN(poTotal) && poTotal > 0) {
+          receipt.totalAmount = poTotal.toFixed(2);
+        }
+      }
+      
+      // Calculate total amount - use unitCost if totalAmount is NaN or invalid
+      // Only calculate if we don't have a PO total amount
+      if (receipt.totalAmount === "0" || parseFloat(receipt.totalAmount) === 0) {
+        let itemTotal = 0;
+        // Handle totalAmount as number or string
+        if (item.totalAmount != null && item.totalAmount !== undefined) {
+          const parsedTotal = typeof item.totalAmount === 'number' ? item.totalAmount : parseFloat(String(item.totalAmount));
+          if (!isNaN(parsedTotal) && parsedTotal > 0) {
+            itemTotal = parsedTotal;
+          }
+        }
+        // Fallback: calculate from unitCost * quantity if totalAmount is 0 or invalid
+        if (itemTotal === 0 && item.unitCost != null && item.quantityReceived) {
+          const unitCost = typeof item.unitCost === 'number' ? item.unitCost : parseFloat(String(item.unitCost || "0"));
+          const quantity = typeof item.quantityReceived === 'number' ? item.quantityReceived : parseFloat(String(item.quantityReceived || "0"));
+          if (!isNaN(unitCost) && !isNaN(quantity) && unitCost > 0 && quantity > 0) {
+            itemTotal = unitCost * quantity;
+          }
+        }
+        const currentTotal = parseFloat(receipt.totalAmount || "0");
+        receipt.totalAmount = (currentTotal + itemTotal).toFixed(2);
+      }
+    });
+    
+    return Array.from(grouped.values());
+  }, [goodsReceiptsRaw]);
+
   const {
     data: selectedGoodsReceiptDetails,
     isFetching: goodsReceiptDetailsLoading,
+    error: goodsReceiptDetailsError,
   } = useQuery<GoodsReceiptDetail | null>({
     queryKey: ["/api/inventory/goods-receipts", selectedGoodsReceiptId],
     enabled: Boolean(selectedGoodsReceiptId) && showGoodsReceiptDetails,
     queryFn: async ({ queryKey }) => {
-      const [, receiptId] = queryKey;
-      const response = await apiRequest(
-        "GET",
-        `/api/inventory/goods-receipts/${receiptId}`,
-      );
-      return response.json();
+      try {
+        const [, receiptId] = queryKey;
+        if (!receiptId) {
+          throw new Error("Receipt ID is required");
+        }
+        const response = await apiRequest(
+          "GET",
+          `/api/inventory/goods-receipts/${receiptId}`,
+        );
+        if (!response.ok) {
+          let errorMessage = `Failed to fetch goods receipt: ${response.status}`;
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorData.message || errorMessage;
+          } catch {
+            // If JSON parsing fails, use default message
+          }
+          throw new Error(errorMessage);
+        }
+        const data = await response.json();
+        
+        // Transform the data to match the expected interface
+        const transformedData: GoodsReceiptDetail = {
+          id: data.id,
+          receiptNumber: data.receiptNumber || `GR-${data.id}`,
+          purchaseOrderId: data.purchaseOrderId || undefined,
+          poNumber: data.poNumber || null,
+          supplierName: data.supplierName || null,
+          receivedDate: data.receivedDate || data.createdAt || new Date().toISOString(),
+          totalAmount: typeof data.totalAmount === 'number' ? data.totalAmount : parseFloat(data.totalAmount || '0'),
+          notes: data.notes || null,
+          items: Array.isArray(data.items) ? data.items.map((item: any) => ({
+            itemId: item.itemId,
+            itemName: item.itemName || 'Unknown Item',
+            quantity: typeof item.quantity === 'number' ? item.quantity : parseFloat(item.quantity || '0'),
+            unitPrice: typeof item.unitPrice === 'string' ? item.unitPrice : String(item.unitPrice || '0'),
+          })) : [],
+          purchaseOrder: data.purchaseOrder || null,
+          purchaseOrderItems: Array.isArray(data.purchaseOrderItems) ? data.purchaseOrderItems.map((item: any) => ({
+            id: item.id || 0,
+            itemId: item.itemId || 0,
+            itemName: item.itemName || null,
+            quantity: typeof item.quantity === 'number' ? item.quantity : parseFloat(item.quantity || '0'),
+            unitPrice: typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(item.unitPrice || '0'),
+            totalPrice: typeof item.totalPrice === 'number' ? item.totalPrice : parseFloat(item.totalPrice || '0'),
+            receivedQuantity: typeof item.receivedQuantity === 'number' ? item.receivedQuantity : parseFloat(item.receivedQuantity || '0'),
+          })) : [],
+        };
+        
+        return transformedData;
+      } catch (error) {
+        console.error("Error fetching goods receipt details:", error);
+        throw error;
+      }
     },
     retry: 3,
+    retryDelay: 1000,
   });
 
   // 5. Alerts Data (Low Stock & Expiry)
@@ -373,6 +528,100 @@ export default function Inventory() {
   const closeGoodsReceiptDetails = () => {
     setShowGoodsReceiptDetails(false);
     setSelectedGoodsReceiptId(null);
+  };
+
+  // Delete goods receipt mutation
+  const deleteGoodsReceiptMutation = useMutation({
+    mutationFn: async (receiptId: number) => {
+      const response = await apiRequest(
+        "DELETE",
+        `/api/inventory/goods-receipts/${receiptId}`,
+      );
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Failed to delete goods receipt" }));
+        throw new Error(errorData.error || "Failed to delete goods receipt");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      setShowDeleteGoodsReceiptSuccess(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/goods-receipts"] });
+    },
+    onError: (error: any) => {
+      console.error("Error deleting goods receipt:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete goods receipt",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDeleteGoodsReceipt = (receiptId: number) => {
+    setGoodsReceiptToDelete(receiptId);
+    setShowDeleteGoodsReceiptModal(true);
+  };
+
+  const handleViewGoodsReceiptPdfById = async (receiptId: number) => {
+    try {
+      setPdfLoading(true);
+      setShowPdfViewer(true);
+      
+      // First, check if PDF exists
+      const checkResponse = await apiRequest('GET', `/api/inventory/goods-receipts/${receiptId}/pdf/check`);
+      if (!checkResponse.ok) {
+        throw new Error(`Failed to check PDF: ${checkResponse.status}`);
+      }
+      
+      const checkData = await checkResponse.json();
+      
+      // If PDF doesn't exist, generate it
+      if (!checkData.exists) {
+        toast({
+          title: "Generating PDF",
+          description: "PDF not found. Generating now...",
+        });
+        
+        const generateResponse = await apiRequest('POST', `/api/inventory/goods-receipts/${receiptId}/pdf/generate`);
+        if (!generateResponse.ok) {
+          throw new Error(`Failed to generate PDF: ${generateResponse.status}`);
+        }
+      }
+      
+      // Fetch PDF with authentication
+      const response = await apiRequest('GET', `/api/inventory/goods-receipts/${receiptId}/pdf`);
+      if (!response.ok) {
+        throw new Error(`Failed to load PDF: ${response.status}`);
+      }
+      
+      // Create blob URL from response
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      setPdfUrl(blobUrl);
+      setPdfLoading(false);
+    } catch (error: any) {
+      console.error("Error loading PDF:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load PDF",
+        variant: "destructive",
+      });
+      setPdfLoading(false);
+      setShowPdfViewer(false);
+    }
+  };
+
+  const handleViewGoodsReceiptPdf = async (receipt: GoodsReceipt) => {
+    setSelectedReceiptForPdf(receipt);
+    await handleViewGoodsReceiptPdfById(receipt.id);
+  };
+
+  const confirmDeleteGoodsReceipt = () => {
+    if (goodsReceiptToDelete !== null) {
+      deleteGoodsReceiptMutation.mutate(goodsReceiptToDelete);
+      setShowDeleteGoodsReceiptModal(false);
+      setGoodsReceiptToDelete(null);
+    }
   };
 
   // Delete item mutation
@@ -1416,13 +1665,13 @@ export default function Inventory() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Receipt Number</TableHead>
-                        <TableHead>PO Number</TableHead>
-                        <TableHead>Supplier Name</TableHead>
-                        <TableHead>Received Date</TableHead>
-                        <TableHead>Items Received</TableHead>
-                        <TableHead>Total Amount</TableHead>
-                        <TableHead>Actions</TableHead>
+                        <TableHead className="py-2 px-3 text-xs font-semibold">Receipt Number</TableHead>
+                        <TableHead className="py-2 px-3 text-xs font-semibold">PO Number</TableHead>
+                        <TableHead className="py-2 px-3 text-xs font-semibold">Supplier Name</TableHead>
+                        <TableHead className="py-2 px-3 text-xs font-semibold">Received Date</TableHead>
+                        <TableHead className="py-2 px-3 text-xs font-semibold">Items Received</TableHead>
+                        <TableHead className="py-2 px-3 text-xs font-semibold">Total Amount</TableHead>
+                        <TableHead className="py-2 px-3 text-xs font-semibold">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1474,14 +1723,35 @@ export default function Inventory() {
                               £{parseFloat(receipt.totalAmount).toFixed(2)}
                             </TableCell>
                             <TableCell>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openGoodsReceiptDetails(receipt.id)}
-                              >
-                                <Eye className="h-3 w-3 mr-1" />
-                                View Details
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openGoodsReceiptDetails(receipt.id)}
+                                  title="View Details"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleViewGoodsReceiptPdf(receipt)}
+                                  title="View PDF"
+                                  className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                >
+                                  <FileText className="h-3 w-3" />
+                                </Button>
+                                {canDelete('inventory') && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleDeleteGoodsReceipt(receipt.id)}
+                                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))
@@ -1541,11 +1811,17 @@ export default function Inventory() {
                         Purchase Order
                       </p>
                       <p className="font-medium">
-                        {selectedGoodsReceiptDetails.poNumber ||
+                        {selectedGoodsReceiptDetails.purchaseOrder?.poNumber ||
+                          selectedGoodsReceiptDetails.poNumber ||
                           (selectedGoodsReceiptDetails.purchaseOrderId
                             ? `PO-${selectedGoodsReceiptDetails.purchaseOrderId}`
                             : "N/A")}
                       </p>
+                      {selectedGoodsReceiptDetails.purchaseOrder?.status && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          Status: <span className="capitalize">{selectedGoodsReceiptDetails.purchaseOrder.status}</span>
+                        </p>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs uppercase tracking-wide text-gray-500">
@@ -1556,6 +1832,109 @@ export default function Inventory() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Purchase Order Details Section */}
+                  {selectedGoodsReceiptDetails.purchaseOrder && (
+                    <div className="border rounded-lg p-4 bg-gray-50">
+                      <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                        Purchase Order Details
+                      </h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            PO Number
+                          </p>
+                          <p className="font-medium">
+                            {selectedGoodsReceiptDetails.purchaseOrder.poNumber}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            Order Date
+                          </p>
+                          <p className="font-medium">
+                            {selectedGoodsReceiptDetails.purchaseOrder.orderDate
+                              ? format(
+                                  new Date(selectedGoodsReceiptDetails.purchaseOrder.orderDate),
+                                  "PPP"
+                                )
+                              : "N/A"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            Expected Delivery
+                          </p>
+                          <p className="font-medium">
+                            {selectedGoodsReceiptDetails.purchaseOrder.expectedDeliveryDate
+                              ? format(
+                                  new Date(selectedGoodsReceiptDetails.purchaseOrder.expectedDeliveryDate),
+                                  "PPP"
+                                )
+                              : "N/A"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            Status
+                          </p>
+                          <p className="font-medium capitalize">
+                            {selectedGoodsReceiptDetails.purchaseOrder.status || "N/A"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            Total Amount
+                          </p>
+                          <p className="font-semibold text-emerald-600">
+                            £{typeof selectedGoodsReceiptDetails.purchaseOrder.totalAmount === 'number'
+                              ? selectedGoodsReceiptDetails.purchaseOrder.totalAmount.toFixed(2)
+                              : parseFloat(String(selectedGoodsReceiptDetails.purchaseOrder.totalAmount || '0')).toFixed(2)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            Tax Amount
+                          </p>
+                          <p className="font-medium">
+                            £{typeof selectedGoodsReceiptDetails.purchaseOrder.taxAmount === 'number'
+                              ? selectedGoodsReceiptDetails.purchaseOrder.taxAmount.toFixed(2)
+                              : parseFloat(String(selectedGoodsReceiptDetails.purchaseOrder.taxAmount || '0')).toFixed(2)}
+                          </p>
+                        </div>
+                        {selectedGoodsReceiptDetails.purchaseOrder.supplierName && (
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-gray-500">
+                              Supplier
+                            </p>
+                            <p className="font-medium">
+                              {selectedGoodsReceiptDetails.purchaseOrder.supplierName}
+                            </p>
+                          </div>
+                        )}
+                        {selectedGoodsReceiptDetails.purchaseOrder.supplierEmail && (
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-gray-500">
+                              Supplier Email
+                            </p>
+                            <p className="font-medium text-sm">
+                              {selectedGoodsReceiptDetails.purchaseOrder.supplierEmail}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      {selectedGoodsReceiptDetails.purchaseOrder.notes && (
+                        <div className="mt-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            Notes
+                          </p>
+                          <p className="text-sm text-gray-600 mt-1">
+                            {selectedGoodsReceiptDetails.purchaseOrder.notes}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -1595,37 +1974,57 @@ export default function Inventory() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {selectedGoodsReceiptDetails.items.length === 0 ? (
-                            <TableRow>
-                              <TableCell
-                                colSpan={4}
-                                className="text-center py-4 text-sm text-gray-500"
-                              >
-                                No ordered items found for this receipt.
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            selectedGoodsReceiptDetails.items.map((item) => (
-                              <TableRow key={`${item.itemId}-${item.quantity}`}>
-                                <TableCell>{item.itemName}</TableCell>
+                          {(() => {
+                            // Use purchaseOrderItems if available, otherwise fall back to items
+                            const displayItems = selectedGoodsReceiptDetails.purchaseOrderItems && selectedGoodsReceiptDetails.purchaseOrderItems.length > 0
+                              ? selectedGoodsReceiptDetails.purchaseOrderItems
+                              : selectedGoodsReceiptDetails.items;
+
+                            if (!displayItems || displayItems.length === 0) {
+                              return (
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={4}
+                                    className="text-center py-4 text-sm text-gray-500"
+                                  >
+                                    No ordered items found for this receipt.
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            }
+
+                            return displayItems.map((item: any, index: number) => (
+                              <TableRow key={`${item.itemId || item.id || index}-${item.quantity}`}>
+                                <TableCell>{item.itemName || 'Unknown Item'}</TableCell>
                                 <TableCell>{item.quantity}</TableCell>
                                 <TableCell className="text-right">
-                                  £{parseFloat(item.unitPrice || "0").toFixed(2)}
+                                  £{typeof item.unitPrice === 'number' 
+                                    ? item.unitPrice.toFixed(2) 
+                                    : parseFloat(item.unitPrice || "0").toFixed(2)}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  £
-                                  {(
-                                    item.quantity *
-                                    parseFloat(item.unitPrice || "0")
-                                  ).toFixed(2)}
+                                  £{typeof item.totalPrice === 'number'
+                                    ? item.totalPrice.toFixed(2)
+                                    : (item.quantity * (typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(item.unitPrice || "0"))).toFixed(2)}
                                 </TableCell>
                               </TableRow>
-                            ))
-                          )}
+                            ));
+                          })()}
                         </TableBody>
                       </Table>
                     </div>
                   </div>
+                </div>
+              ) : goodsReceiptDetailsError ? (
+                <div className="text-center py-6 space-y-2">
+                  <p className="text-sm text-red-600 font-medium">
+                    Error loading goods receipt details
+                  </p>
+                  <p className="text-xs text-gray-500 break-words">
+                    {goodsReceiptDetailsError instanceof Error 
+                      ? goodsReceiptDetailsError.message 
+                      : String(goodsReceiptDetailsError) || "An unexpected error occurred"}
+                  </p>
                 </div>
               ) : (
                 <p className="text-center py-6 text-sm text-gray-500">
@@ -1763,16 +2162,38 @@ export default function Inventory() {
         {showPODialog && (
           <PurchaseOrderDialog
             open={showPODialog}
-            onOpenChange={setShowPODialog}
+            onOpenChange={(open) => {
+              setShowPODialog(open);
+              if (!open) {
+                // Clear selected PO when PO dialog closes
+                setSelectedPurchaseOrderIdForReceipt(undefined);
+              }
+            }}
             items={items}
+            onPurchaseOrderCreated={(purchaseOrderId) => {
+              // Set the selected PO ID and open Goods Receipt dialog
+              setSelectedPurchaseOrderIdForReceipt(purchaseOrderId);
+              setShowReceiptDialog(true);
+            }}
           />
         )}
 
         {showReceiptDialog && (
           <GoodsReceiptDialog
             open={showReceiptDialog}
-            onOpenChange={setShowReceiptDialog}
+            onOpenChange={(open) => {
+              setShowReceiptDialog(open);
+              if (!open) {
+                // Clear selected PO when Goods Receipt dialog closes
+                setSelectedPurchaseOrderIdForReceipt(undefined);
+              }
+            }}
             items={items}
+            defaultPurchaseOrderId={selectedPurchaseOrderIdForReceipt}
+            onReceiptCreated={async (receiptId) => {
+              // Show PDF popup after receipt creation
+              await handleViewGoodsReceiptPdfById(receiptId);
+            }}
           />
         )}
 
@@ -2420,6 +2841,207 @@ export default function Inventory() {
               >
                 Close
               </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Goods Receipt Confirmation Modal */}
+        <Dialog open={showDeleteGoodsReceiptModal} onOpenChange={setShowDeleteGoodsReceiptModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-orange-500" />
+                Confirm Deletion
+              </DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete this goods receipt? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDeleteGoodsReceiptModal(false);
+                  setGoodsReceiptToDelete(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={confirmDeleteGoodsReceipt}
+                disabled={deleteGoodsReceiptMutation.isPending}
+              >
+                {deleteGoodsReceiptMutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Goods Receipt Success Modal */}
+        <Dialog open={showDeleteGoodsReceiptSuccess} onOpenChange={setShowDeleteGoodsReceiptSuccess}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="sr-only">Goods Receipt Deleted Successfully</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col items-center justify-center py-6">
+              <div className="rounded-full bg-green-100 dark:bg-green-900 p-4 mb-4">
+                <CheckCircle className="h-12 w-12 text-green-600 dark:text-green-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                Success
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
+                Goods receipt deleted successfully.
+              </p>
+              <Button
+                onClick={() => {
+                  setShowDeleteGoodsReceiptSuccess(false);
+                }}
+                className="mt-6 w-full"
+              >
+                Close
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* PDF Viewer Dialog */}
+        <Dialog open={showPdfViewer} onOpenChange={(open) => {
+          if (!open) {
+            // Clean up blob URL when closing
+            if (pdfUrl && pdfUrl.startsWith('blob:')) {
+              URL.revokeObjectURL(pdfUrl);
+            }
+            setPdfUrl(null);
+            setSelectedReceiptForPdf(null);
+          }
+          setShowPdfViewer(open);
+        }}>
+          <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col p-0" onInteractOutside={(e) => e.preventDefault()}>
+            <DialogHeader className="px-6 pt-6 pb-4">
+              <DialogTitle>
+                Goods Receipt PDF: {selectedReceiptForPdf?.receiptNumber || 'Receipt'}.pdf
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-hidden px-6 pb-4" style={{ minHeight: '600px', height: 'calc(90vh - 120px)' }}>
+              {pdfLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                  <span className="ml-2 text-sm text-gray-600">Loading PDF...</span>
+                </div>
+              ) : pdfUrl ? (
+                <iframe 
+                  src={pdfUrl} 
+                  className="w-full h-full border rounded" 
+                  title="Goods Receipt PDF" 
+                  style={{ minHeight: '600px' }}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-sm text-gray-500">No PDF available</p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 px-6 pb-6 pt-4 border-t">
+              <Button onClick={() => {
+                if (pdfUrl && pdfUrl.startsWith('blob:')) {
+                  URL.revokeObjectURL(pdfUrl);
+                }
+                setShowPdfViewer(false);
+                setPdfUrl(null);
+                setSelectedReceiptForPdf(null);
+              }}>Close</Button>
+              {pdfUrl && (
+                <>
+                  <Button 
+                    variant="outline" 
+                    onClick={async () => {
+                      try {
+                        // Download PDF file
+                        const response = await apiRequest('GET', `/api/inventory/goods-receipts/${selectedReceiptForPdf?.id}/pdf`);
+                        if (!response.ok) {
+                          throw new Error('Failed to download PDF');
+                        }
+                        const blob = await response.blob();
+                        const blobUrl = URL.createObjectURL(blob);
+                        
+                        // Create download link
+                        const purchaseOrderId = selectedReceiptForPdf?.purchaseOrderId || selectedReceiptForPdf?.id;
+                        const fileName = `${purchaseOrderId}.pdf`;
+                        const link = document.createElement('a');
+                        link.href = blobUrl;
+                        link.download = fileName;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        
+                        // Clean up blob URL after a delay
+                        setTimeout(() => {
+                          URL.revokeObjectURL(blobUrl);
+                        }, 100);
+                      } catch (error) {
+                        toast({
+                          title: "Error",
+                          description: "Failed to download PDF",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-2" /> Download
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    onClick={async () => {
+                      if (pdfUrl.startsWith('blob:')) {
+                        window.open(pdfUrl, '_blank');
+                      } else {
+                        // If it's not a blob URL, fetch it again with auth
+                        try {
+                          const response = await apiRequest('GET', `/api/inventory/goods-receipts/${selectedReceiptForPdf?.id}/pdf`);
+                          const blob = await response.blob();
+                          const blobUrl = URL.createObjectURL(blob);
+                          window.open(blobUrl, '_blank');
+                        } catch (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to open PDF",
+                            variant: "destructive",
+                          });
+                        }
+                      }
+                    }}
+                  >
+                    <FileText className="h-4 w-4 mr-2" /> Open in New Tab
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    onClick={async () => {
+                      try {
+                        let urlToPrint = pdfUrl;
+                        if (!pdfUrl.startsWith('blob:')) {
+                          const response = await apiRequest('GET', `/api/inventory/goods-receipts/${selectedReceiptForPdf?.id}/pdf`);
+                          const blob = await response.blob();
+                          urlToPrint = URL.createObjectURL(blob);
+                        }
+                        const printWindow = window.open(urlToPrint, '_blank');
+                        printWindow?.addEventListener('load', () => {
+                          printWindow.print();
+                        });
+                      } catch (error) {
+                        toast({
+                          title: "Error",
+                          description: "Failed to print PDF",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
+                    <Printer className="h-4 w-4 mr-2" /> Print
+                  </Button>
+                </>
+              )}
             </div>
           </DialogContent>
         </Dialog>

@@ -243,6 +243,8 @@ import {
   PenTool,
   PoundSterling,
   BarChart,
+  Save,
+  Loader2,
 } from "lucide-react";
 
 interface DatabaseLabResult {
@@ -271,6 +273,8 @@ interface DatabaseLabResult {
   criticalValues: boolean;
   notes?: string;
   createdAt: string;
+  readyToGenerateLab?: boolean; // Workflow: when prescription is saved, set to true
+  labResultGeneratedReport?: boolean; // Workflow: when report is generated, set to true
   signature?: {
     doctorSignature?: string; // base64 encoded signature image
     signedBy?: string; // doctor name
@@ -675,6 +679,7 @@ export default function LabResultsPage() {
   const [showFillResultDialog, setShowFillResultDialog] = useState(false);
   const [showPdfViewerDialog, setShowPdfViewerDialog] = useState(false);
   const [pdfViewerUrl, setPdfViewerUrl] = useState<string>("");
+  const [showDeleteConfirmDialog, setShowDeleteConfirmDialog] = useState(false);
   const [selectedLabOrder, setSelectedLabOrder] = useState<any>(null);
   const [selectedResult, setSelectedResult] =
     useState<DatabaseLabResult | null>(null);
@@ -714,6 +719,8 @@ export default function LabResultsPage() {
   const [signature, setSignature] = useState<string>("");
   const [signatureSaved, setSignatureSaved] = useState(false);
   const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
+  const [showRequiredSignatureDialog, setShowRequiredSignatureDialog] = useState(false);
+  const [pendingPdfSave, setPendingPdfSave] = useState<{ resultId: number } | null>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   
   // Signature details dialog states
@@ -898,7 +905,79 @@ export default function LabResultsPage() {
       } else {
         // For other roles (admin, etc.), show all lab results
         const response = await apiRequest("GET", "/api/lab-results");
-        return await response.json();
+        const allResults = await response.json();
+        
+        // Log summary for organization 20
+        if (user?.organizationId === 20) {
+          console.log(`\n[LAB RESULTS SUMMARY] Organization ID: 20`);
+          console.log(`Total records: ${allResults.length}\n`);
+          
+          // Use the same normalization logic as the actual filtering
+          const normalizeBool = (val: any): boolean => {
+            if (val === null || val === undefined) return false;
+            if (typeof val === 'boolean') return val;
+            if (typeof val === 'string') {
+              const lower = val.toLowerCase().trim();
+              if (lower === 'true' || lower === '1') return true;
+              if (lower === 'false' || lower === '0' || lower === '') return false;
+            }
+            if (typeof val === 'number') return val === 1;
+            return false;
+          };
+          
+          const tabDistribution = {
+            requestReport: allResults.filter((r: any) => {
+              const ready = normalizeBool(r.ready_to_generate_lab);
+              const generated = normalizeBool(r.lab_result_generated_report);
+              return ready === false && generated === false;
+            }),
+            generateReports: allResults.filter((r: any) => {
+              const ready = normalizeBool(r.ready_to_generate_lab);
+              const generated = normalizeBool(r.lab_result_generated_report);
+              return ready === true && generated === false;
+            }),
+            labResults: allResults.filter((r: any) => {
+              const ready = normalizeBool(r.ready_to_generate_lab);
+              const generated = normalizeBool(r.lab_result_generated_report);
+              return ready === true && generated === true;
+            }),
+          };
+          
+          console.log(`📋 Request Report Tab: ${tabDistribution.requestReport.length} records`);
+          tabDistribution.requestReport.forEach((r: any) => {
+            console.log(`   ✓ TestID: ${r.testId}`);
+            console.log(`     ready_to_generate_lab: ${r.ready_to_generate_lab} (${typeof r.ready_to_generate_lab})`);
+            console.log(`     lab_result_generated_report: ${r.lab_result_generated_report} (${typeof r.lab_result_generated_report})\n`);
+          });
+          
+          console.log(`📊 Generate Reports Tab: ${tabDistribution.generateReports.length} records`);
+          tabDistribution.generateReports.forEach((r: any) => {
+            console.log(`   ✓ TestID: ${r.testId}`);
+            console.log(`     ready_to_generate_lab: ${r.ready_to_generate_lab} (${typeof r.ready_to_generate_lab})`);
+            console.log(`     lab_result_generated_report: ${r.lab_result_generated_report} (${typeof r.lab_result_generated_report})\n`);
+          });
+          
+          console.log(`✅ Lab Results Tab: ${tabDistribution.labResults.length} records`);
+          tabDistribution.labResults.forEach((r: any) => {
+            console.log(`   ✓ TestID: ${r.testId}`);
+            console.log(`     ready_to_generate_lab: ${r.ready_to_generate_lab} (${typeof r.ready_to_generate_lab})`);
+            console.log(`     lab_result_generated_report: ${r.lab_result_generated_report} (${typeof r.lab_result_generated_report})\n`);
+          });
+          
+          // Verification message
+          console.log(`\n[VERIFICATION]`);
+          console.log(`Expected: Request Report = 1 row, Generate Reports = 1 row`);
+          console.log(`Actual: Request Report = ${tabDistribution.requestReport.length} row(s), Generate Reports = ${tabDistribution.generateReports.length} row(s)`);
+          if (tabDistribution.requestReport.length === 1 && tabDistribution.generateReports.length === 1) {
+            console.log(`✅ CORRECT: Your expectation matches the actual data!`);
+          } else {
+            console.log(`❌ MISMATCH: Expected 1 row in each tab, but found different counts.`);
+            console.log(`   Please check the database values for ready_to_generate_lab and lab_result_generated_report.`);
+          }
+          console.log(`\n[END SUMMARY]\n`);
+        }
+        
+        return allResults;
       }
     },
     enabled: !!user && patients.length > 0, // Wait for user and patients data to be loaded
@@ -1543,7 +1622,19 @@ Report generated from Cura EMR System`;
   };
 
   const handleDeleteResult = (resultId: number) => {
-    deleteLabResultMutation.mutate(resultId);
+    const result = filteredResults.find(r => r.id === resultId);
+    if (result) {
+      setSelectedResult(result);
+      setShowDeleteConfirmDialog(true);
+    }
+  };
+
+  const handleConfirmDelete = () => {
+    if (selectedResult) {
+      deleteLabResultMutation.mutate(selectedResult.id);
+      setShowDeleteConfirmDialog(false);
+      setSelectedResult(null);
+    }
   };
 
   const handleDirectDownload = async (result: any) => {
@@ -1651,8 +1742,9 @@ Report generated from Cura EMR System`;
     }
   };
 
-  const handleGeneratePDF = async () => {
-    if (!selectedResult) return;
+  const handleGeneratePDF = async (resultOverride?: DatabaseLabResult) => {
+    const resultToUse = resultOverride || selectedResult;
+    if (!resultToUse) return;
 
     try {
       toast({
@@ -1665,7 +1757,7 @@ Report generated from Cura EMR System`;
         <!DOCTYPE html>
         <html>
           <head>
-            <title>Lab Result Prescription - ${selectedResult.testId}</title>
+            <title>Lab Result Prescription - ${resultToUse.testId}</title>
             <style>
               * {
                 box-sizing: border-box;
@@ -1866,7 +1958,7 @@ Report generated from Cura EMR System`;
                   <h5 style="font-size: 16px; font-weight: bold; margin-bottom: 0.5rem;">PATIENT INFORMATION</h5>
                   <div style="margin-bottom: 0.4rem;">
                     <strong>Name:</strong>
-                    <span style="margin-left: 0.5rem;">${getPatientName(selectedResult.patientId)}</span>
+                    <span style="margin-left: 0.5rem;">${getPatientName(resultToUse.patientId)}</span>
                   </div>
                   <div style="margin-bottom: 0.4rem;">
                     <strong>DOB:</strong>
@@ -1874,7 +1966,7 @@ Report generated from Cura EMR System`;
                   </div>
                   <div style="margin-bottom: 0.4rem;">
                     <strong>Study Date:</strong>
-                    <span style="margin-left: 0.5rem;">${format(new Date(selectedResult.orderedAt || new Date()), "dd/MM/yyyy")}</span>
+                    <span style="margin-left: 0.5rem;">${format(new Date(resultToUse.orderedAt || new Date()), "dd/MM/yyyy")}</span>
                   </div>
                 </div>
 
@@ -1882,24 +1974,24 @@ Report generated from Cura EMR System`;
                   <h5 style="font-size: 9px; font-weight: bold; margin-bottom: 0.5rem;">DOCTOR DETAILS</h5>
                   <div style="font-size: 9px; margin-bottom: 0.3rem; line-height: 1.4;">
                     <strong>Name:</strong>
-                    <span style="margin-left: 0.5rem;">${selectedResult.doctorName || "Doctor"}</span>
+                    <span style="margin-left: 0.5rem;">${resultToUse.doctorName || "Doctor"}</span>
                   </div>
-                  ${selectedResult.mainSpecialty ? `
+                  ${resultToUse.mainSpecialty ? `
                   <div style="font-size: 9px; margin-bottom: 0.3rem; line-height: 1.4;">
                     <strong>Specialization:</strong>
-                    <span style="margin-left: 0.5rem;">${selectedResult.mainSpecialty}</span>
+                    <span style="margin-left: 0.5rem;">${resultToUse.mainSpecialty}</span>
                   </div>
                   ` : ""}
-                  ${(selectedResult as any).doctorEmail ? `
+                  ${(resultToUse as any).doctorEmail ? `
                   <div style="font-size: 9px; margin-bottom: 0.3rem; line-height: 1.4;">
                     <strong>Email:</strong>
-                    <span style="margin-left: 0.5rem;">${(selectedResult as any).doctorEmail}</span>
+                    <span style="margin-left: 0.5rem;">${(resultToUse as any).doctorEmail}</span>
                   </div>
                   ` : ""}
-                  ${(selectedResult as any).doctorDepartment ? `
+                  ${(resultToUse as any).doctorDepartment ? `
                   <div style="font-size: 9px; margin-bottom: 0.3rem; line-height: 1.4;">
                     <strong>Department:</strong>
-                    <span style="margin-left: 0.5rem;">${(selectedResult as any).doctorDepartment}</span>
+                    <span style="margin-left: 0.5rem;">${(resultToUse as any).doctorDepartment}</span>
                   </div>
                   ` : ""}
                 </div>
@@ -1911,26 +2003,26 @@ Report generated from Cura EMR System`;
                 <div class="test-details">
                   <div class="test-item">
                     <div class="test-label">TEST ID</div>
-                    <div class="test-value">${selectedResult.testId}</div>
+                    <div class="test-value">${resultToUse.testId}</div>
                   </div>
                   <div class="test-item">
                     <div class="test-label">TEST TYPE</div>
-                    <div class="test-value">${selectedResult.testType}</div>
+                    <div class="test-value">${resultToUse.testType}</div>
                   </div>
                   <div class="test-item">
                     <div class="test-label">ORDERED DATE</div>
-                    <div class="test-value">${format(new Date(selectedResult.orderedAt), "MMM dd, yyyy HH:mm")}</div>
+                    <div class="test-value">${format(new Date(resultToUse.orderedAt), "MMM dd, yyyy HH:mm")}</div>
                   </div>
                   <div class="test-item">
                     <div class="test-label">STATUS</div>
-                    <div class="test-value">${selectedResult.status.toUpperCase()}</div>
+                    <div class="test-value">${resultToUse.status.toUpperCase()}</div>
                   </div>
                 </div>
               </div>
-              ${selectedResult.results && selectedResult.results.length > 0 ? `
+              ${resultToUse.results && resultToUse.results.length > 0 ? `
                 <div class="test-results">
                   <div class="results-title">Test Results:</div>
-                  ${selectedResult.results.map((testResult: any) => `
+                  ${resultToUse.results.map((testResult: any) => `
                     <div class="result-item">
                       <strong>${testResult.name}:</strong> ${testResult.value} ${testResult.unit} 
                       (Reference: ${testResult.referenceRange}) - Status: ${testResult.status.replace("_", " ").toUpperCase()}
@@ -1939,14 +2031,14 @@ Report generated from Cura EMR System`;
                 </div>
               ` : ""}
 
-              ${selectedResult.notes ? `
+              ${resultToUse.notes ? `
                 <div class="notes-section">
                   <strong>Clinical Notes:</strong><br>
-                  ${selectedResult.notes}
+                  ${resultToUse.notes}
                 </div>
               ` : ""}
 
-              ${selectedResult.criticalValues ? `
+              ${resultToUse.criticalValues ? `
                 <div style="margin-top: 20px; padding: 15px; background: #fef2f2; border: 2px solid #dc2626; border-radius: 8px;">
                   <strong style="color: #dc2626;">⚠️ CRITICAL VALUES DETECTED</strong><br>
                   <span style="color: #991b1b;">This lab result contains critical values that require immediate attention.</span>
@@ -1955,14 +2047,14 @@ Report generated from Cura EMR System`;
 
               <div style="margin-top: 50px; text-align: center; border-top: 1px solid #ddd; padding-top: 20px;">
                 <div style="margin-bottom: 30px;">
-                  ${(selectedResult.signature?.doctorSignature && String(selectedResult.signature.doctorSignature).trim() !== "") ? `
+                  ${(resultToUse.signature?.doctorSignature && String(resultToUse.signature.doctorSignature).trim() !== "") ? `
                     <div style="margin-bottom: 15px;">
-                      <img src="${selectedResult.signature.doctorSignature}" alt="E-Signature" style="height: 80px; max-width: 250px; margin: 0 auto; display: block;" />
+                      <img src="${resultToUse.signature.doctorSignature}" alt="E-Signature" style="height: 80px; max-width: 250px; margin: 0 auto; display: block;" />
                     </div>
                   ` : ""}
                   <div style="border-top: 2px solid #333; width: 300px; margin: 0 auto 10px;"></div>
-                  <div style="font-weight: bold;">${selectedResult.doctorName || "Doctor"}</div>
-                  ${selectedResult.mainSpecialty ? `<div style="font-size: 12px; color: #666;">${selectedResult.mainSpecialty}</div>` : ""}
+                  <div style="font-weight: bold;">${resultToUse.doctorName || "Doctor"}</div>
+                  ${resultToUse.mainSpecialty ? `<div style="font-size: 12px; color: #666;">${resultToUse.mainSpecialty}</div>` : ""}
                 </div>
                 ${clinicFooter?.footerText ? `
                 <div style="font-size: 12px; color: #666; margin-top: 1rem;">
@@ -2027,7 +2119,7 @@ Report generated from Cura EMR System`;
       }
 
       // Create filename from testId
-      const filename = `${selectedResult.testId}.pdf`;
+      const filename = `${resultToUse.testId}.pdf`;
 
       console.log("PDF Generation: Saving as", filename);
       pdf.save(filename);
@@ -2754,6 +2846,12 @@ Report generated from Cura EMR System`;
           clearSignature();
           setShowESignDialog(false);
           setSignatureSaved(false);
+          
+          // If there's a pending PDF save, proceed with it
+          if (pendingPdfSave) {
+            handleSavePrescriptionPdf(pendingPdfSave.resultId);
+            setPendingPdfSave(null);
+          }
         }, 2000);
       } else {
         const errorData = await response
@@ -2797,6 +2895,58 @@ Report generated from Cura EMR System`;
     return `${firstName} ${lastName}`;
   };
 
+  // Function to handle saving prescription PDF
+  const handleSavePrescriptionPdf = async (resultId: number) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const headers: Record<string, string> = {
+        "X-Tenant-Subdomain": getActiveSubdomain(),
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      toast({
+        title: "Saving PDF",
+        description: "Please wait while we save the prescription PDF...",
+      });
+
+      // Call the server endpoint with type=prescription
+      const response = await fetch(`/api/lab-results/${resultId}/generate-pdf?type=prescription`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to save PDF");
+      }
+
+      const data = await response.json();
+      
+      // Invalidate queries to refresh the lab results list
+      // This ensures the record moves from "Request Report" to "Generate Reports" tab
+      queryClient.invalidateQueries({ queryKey: ["/api/lab-results"] });
+      
+      toast({
+        title: "Success",
+        description: "Prescription PDF saved successfully. Record moved to Generate Reports tab.",
+      });
+
+      // Redirect to Generate Reports tab
+      setActiveTab("generate");
+    } catch (error: any) {
+      console.error("Error saving prescription PDF:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save PDF. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // For summary statistics - only apply search filter, not status filter
   const searchFilteredResults = Array.isArray(labResults)
     ? labResults.filter((result: DatabaseLabResult) => {
@@ -2825,12 +2975,104 @@ Report generated from Cura EMR System`;
         const matchesTestId =
           !filterTestId || result.testId === filterTestId;
 
+        // Workflow-based tab filtering with explicit boolean checks:
+        // Request Report: ready_to_generate_lab = false AND lab_result_generated_report = false (treat null/undefined as false)
+        // Generate Reports: ready_to_generate_lab = true AND lab_result_generated_report = false (treat null/undefined as false)
+        // Lab Results: ready_to_generate_lab = true AND lab_result_generated_report = true
+        // Handle undefined/null as false for backward compatibility with existing records
+        // Also handle string "true"/"false" values that might come from the database
+        // Support both camelCase (readyToGenerateLab) and snake_case (ready_to_generate_lab) field names
+        
+        // Normalize boolean values (handle string "true"/"false" and actual booleans)
+        const normalizeBoolean = (value: any): boolean => {
+          // Handle null/undefined
+          if (value === null || value === undefined) return false;
+          
+          // Handle actual boolean
+          if (typeof value === 'boolean') return value;
+          
+          // Handle string values (case-insensitive)
+          if (typeof value === 'string') {
+            const lowerValue = value.toLowerCase().trim();
+            if (lowerValue === 'true' || lowerValue === '1') return true;
+            if (lowerValue === 'false' || lowerValue === '0' || lowerValue === '') return false;
+          }
+          
+          // Handle numbers
+          if (typeof value === 'number') {
+            return value === 1;
+          }
+          
+          // Default to false for any other type
+          return false;
+        };
+        
+        // Get values directly from database - Drizzle ORM returns camelCase, but we check both
+        const resultAny = result as any;
+        
+        // Drizzle ORM returns camelCase (readyToGenerateLab, labResultGeneratedReport)
+        // But we also check snake_case (ready_to_generate_lab, lab_result_generated_report) for compatibility
+        // Priority: camelCase first (Drizzle default), then snake_case (database column names)
+        const readyToGenerateLabValue = resultAny.readyToGenerateLab !== undefined && resultAny.readyToGenerateLab !== null
+          ? resultAny.readyToGenerateLab
+          : (resultAny.ready_to_generate_lab !== undefined && resultAny.ready_to_generate_lab !== null
+            ? resultAny.ready_to_generate_lab
+            : undefined);
+        const labResultGeneratedReportValue = resultAny.labResultGeneratedReport !== undefined && resultAny.labResultGeneratedReport !== null
+          ? resultAny.labResultGeneratedReport
+          : (resultAny.lab_result_generated_report !== undefined && resultAny.lab_result_generated_report !== null
+            ? resultAny.lab_result_generated_report
+            : undefined);
+        
+        // Normalize to strict booleans (handles true, false, null, undefined, "true", "false", etc.)
+        const readyToGenerateLab = normalizeBoolean(readyToGenerateLabValue);
+        const labResultGeneratedReport = normalizeBoolean(labResultGeneratedReportValue);
+        
+        // Determine which tab this record belongs to
+        let belongsToTab = "";
+        if (readyToGenerateLab === false && labResultGeneratedReport === false) {
+          belongsToTab = "Request Report";
+        } else if (readyToGenerateLab === true && labResultGeneratedReport === false) {
+          belongsToTab = "Generate Reports";
+        } else if (readyToGenerateLab === true && labResultGeneratedReport === true) {
+          belongsToTab = "Lab Results";
+        } else {
+          belongsToTab = "NONE (Invalid State)";
+        }
+        
+        // Debug logging - log all records to see what's coming from database
+        console.log(`[LAB FILTER] TestID: ${result.testId}`, {
+          databaseValues: {
+            ready_to_generate_lab: readyToGenerateLabValue,
+            ready_to_generate_lab_type: typeof readyToGenerateLabValue,
+            lab_result_generated_report: labResultGeneratedReportValue,
+            lab_result_generated_report_type: typeof labResultGeneratedReportValue,
+          },
+          normalizedBooleans: {
+            readyToGenerateLab,
+            labResultGeneratedReport,
+          },
+          belongsToTab: belongsToTab,
+          currentTab: activeTab,
+          willShowInCurrentTab: activeTab === "request" 
+            ? (readyToGenerateLab === false && labResultGeneratedReport === false)
+            : activeTab === "generate"
+            ? (readyToGenerateLab === true && labResultGeneratedReport === false)
+            : (readyToGenerateLab === true && labResultGeneratedReport === true),
+        });
+        
+        // Strict boolean matching for each tab based on database values
+        // Request Report: ready_to_generate_lab = false AND lab_result_generated_report = false
+        // Generate Reports: ready_to_generate_lab = true AND lab_result_generated_report = false
+        // Lab Results: ready_to_generate_lab = true AND lab_result_generated_report = true
         const matchesTab =
           activeTab === "request"
-            ? result.status === "pending"
+            ? readyToGenerateLab === false && labResultGeneratedReport === false
             : activeTab === "generate"
-            ? result.labReportGenerated === false && result.labRequestGenerated === true
-            : result.status === "completed";
+            ? readyToGenerateLab === true && labResultGeneratedReport === false
+            : activeTab === "generated"
+            ? readyToGenerateLab === true && labResultGeneratedReport === true
+            : false; // Default to false for any other tab value
 
         return matchesSearch && matchesStatus && matchesTestId && matchesTab;
       })
@@ -3159,6 +3401,11 @@ Report generated from Cura EMR System`;
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
                             Priority
                           </th>
+                          {activeTab !== "request" && (
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                              Prescription
+                            </th>
+                          )}
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
                             Sample
                           </th>
@@ -3177,9 +3424,11 @@ Report generated from Cura EMR System`;
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
                             signed?
                           </th>
+                          {activeTab !== "generated" && (
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Invoice/Sign
+                              Create/Invoice/Sign
                           </th>
+                          )}
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
                             Actions
                           </th>
@@ -3254,6 +3503,178 @@ Report generated from Cura EMR System`;
                                 {result.priority || "routine"}
                               </Badge>
                             </td>
+                            {activeTab !== "request" && (
+                              <td className="px-2 py-2 text-xs">
+                                <div className="flex items-center justify-center gap-1">
+                                  {/* Save/View Prescription PDF Button */}
+                                  {activeTab === "generated" && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={async () => {
+                                        try {
+                                          const token = localStorage.getItem("auth_token");
+                                          const headers: Record<string, string> = {
+                                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          };
+                                          if (token) {
+                                            headers["Authorization"] = `Bearer ${token}`;
+                                          }
+
+                                          // Get signed URL for the prescription PDF
+                                          const signedUrlResponse = await fetch(`/api/files/${result.id}/signed-url?type=prescription`, {
+                                            headers,
+                                            credentials: "include",
+                                          });
+
+                                          if (!signedUrlResponse.ok) {
+                                            const errorData = await signedUrlResponse.json();
+                                            throw new Error(errorData.error || "Failed to get PDF URL");
+                                          }
+
+                                          const { signedUrl } = await signedUrlResponse.json();
+                                          
+                                          // Set PDF URL and open viewer
+                                          setPdfViewerUrl(signedUrl);
+                                          setSelectedResult(result);
+                                          setShowPdfViewerDialog(true);
+                                        } catch (error: any) {
+                                          console.error("Error opening PDF:", error);
+                                          toast({
+                                            title: "Error",
+                                            description: error.message || "Failed to open PDF. Please try again.",
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
+                                      className="h-6 w-6 p-0"
+                                      data-testid={`button-prescription-pdf-${result.id}`}
+                                      title="View Prescription PDF"
+                                    >
+                                      <Save className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
+                                    </Button>
+                                  )}
+                                  
+                                  {/* Print Prescription PDF Button */}
+                                  {activeTab === "generated" && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={async () => {
+                                        try {
+                                          const token = localStorage.getItem("auth_token");
+                                          const headers: Record<string, string> = {
+                                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          };
+                                          if (token) {
+                                            headers["Authorization"] = `Bearer ${token}`;
+                                          }
+
+                                          // Get signed URL for the prescription PDF
+                                          const signedUrlResponse = await fetch(`/api/files/${result.id}/signed-url?type=prescription`, {
+                                            headers,
+                                            credentials: "include",
+                                          });
+
+                                          if (!signedUrlResponse.ok) {
+                                            const errorData = await signedUrlResponse.json();
+                                            throw new Error(errorData.error || "Failed to get PDF URL");
+                                          }
+
+                                          const { signedUrl } = await signedUrlResponse.json();
+                                          
+                                          // Open PDF in new window for printing
+                                          const printWindow = window.open(signedUrl, '_blank');
+                                          if (printWindow) {
+                                            printWindow.onload = () => {
+                                              printWindow.print();
+                                            };
+                                          }
+                                        } catch (error: any) {
+                                          console.error("Error printing PDF:", error);
+                                          toast({
+                                            title: "Error",
+                                            description: error.message || "Failed to print PDF. Please try again.",
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
+                                      className="h-6 w-6 p-0"
+                                      data-testid={`button-prescription-print-${result.id}`}
+                                      title="Print Prescription PDF"
+                                    >
+                                      <Printer className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                    </Button>
+                                  )}
+                                  
+                                  {/* Download Prescription PDF Button */}
+                                  {activeTab === "generated" && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={async () => {
+                                        try {
+                                          const token = localStorage.getItem("auth_token");
+                                          const headers: Record<string, string> = {
+                                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          };
+                                          if (token) {
+                                            headers["Authorization"] = `Bearer ${token}`;
+                                          }
+
+                                          // Get signed URL for the prescription PDF (same as save/print)
+                                          const signedUrlResponse = await fetch(`/api/files/${result.id}/signed-url?type=prescription`, {
+                                            headers,
+                                            credentials: "include",
+                                          });
+
+                                          if (!signedUrlResponse.ok) {
+                                            const errorData = await signedUrlResponse.json();
+                                            throw new Error(errorData.error || "Failed to get PDF URL");
+                                          }
+
+                                          const { signedUrl } = await signedUrlResponse.json();
+                                          
+                                          // Download the PDF from the signed URL
+                                          const response = await fetch(signedUrl);
+
+                                          if (!response.ok) {
+                                            throw new Error("Failed to download PDF.");
+                                          }
+
+                                          const blob = await response.blob();
+                                          const url = window.URL.createObjectURL(blob);
+                                          const a = document.createElement('a');
+                                          a.href = url;
+                                          a.download = `${result.testId}_prescription.pdf`;
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          window.URL.revokeObjectURL(url);
+                                          document.body.removeChild(a);
+
+                                          toast({
+                                            title: "Success",
+                                            description: "Prescription PDF downloaded successfully.",
+                                          });
+                                        } catch (error: any) {
+                                          console.error("Error downloading PDF:", error);
+                                          toast({
+                                            title: "Error",
+                                            description: error.message || "Failed to download PDF. Please try again.",
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
+                                      className="h-6 w-6 p-0"
+                                      data-testid={`button-prescription-download-${result.id}`}
+                                      title="Download Prescription PDF"
+                                    >
+                                      <Download className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </td>
+                            )}
                             <td className="px-2 py-2 text-xs">
                               {result.sampleCollected ? (
                                 <div className="flex items-center justify-center" title="Sample Collected">
@@ -3361,10 +3782,37 @@ Report generated from Cura EMR System`;
                                 )}
                               </div>
                             </td>
+                            {activeTab !== "generated" && (
                             <td className="px-2 py-2 text-xs">
                               <div className="flex items-center gap-1 justify-center">
                                 {(activeTab === "request" || activeTab === "generated") && user?.role !== 'patient' && (
                                   <>
+                                      {activeTab === "request" && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={async () => {
+                                            // Check if signature exists
+                                            const hasSignature = result.signature?.doctorSignature && 
+                                              String(result.signature.doctorSignature).trim() !== "";
+                                            
+                                            if (!hasSignature) {
+                                              // No signature - show required signature dialog
+                                              setSelectedResult(result);
+                                              setShowRequiredSignatureDialog(true);
+                                              return;
+                                            }
+                                            
+                                            // Signature exists - proceed with PDF save
+                                            await handleSavePrescriptionPdf(result.id);
+                                          }}
+                                          className="h-6 w-6 p-0"
+                                          data-testid={`button-save-pdf-${result.id}`}
+                                          title="Save Prescription PDF"
+                                        >
+                                          <Save className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                        </Button>
+                                      )}
                                       <Button
                                         variant="ghost"
                                         size="sm"
@@ -3394,6 +3842,7 @@ Report generated from Cura EMR System`;
                                 )}
                               </div>
                             </td>
+                            )}
                             <td className="px-2 py-2 text-xs">
                               <div className="flex items-center gap-0.5 justify-center flex-wrap">
                                 {activeTab === "request" ? (
@@ -3418,7 +3867,7 @@ Report generated from Cura EMR System`;
                                       data-testid={`button-prescription-${result.id}`}
                                       title={user?.role === 'patient' ? 'View Prescription' : 'Generate Prescription'}
                                     >
-                                      <FileText className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                      <Eye className="h-3 w-3 text-gray-600 dark:text-gray-400" />
                                     </Button>
                                     {user?.role !== 'patient' && canDelete('lab_results') && (
                                       <Button
@@ -3452,63 +3901,165 @@ Report generated from Cura EMR System`;
                                   </>
                                 ) : (
                                   <>
+                                    {/* Lab Results tab: Only show Print, Save, and Download */}
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => handleViewResult(result)}
+                                      onClick={async () => {
+                                        try {
+                                          const token = localStorage.getItem("auth_token");
+                                          const headers: Record<string, string> = {
+                                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          };
+                                          if (token) {
+                                            headers["Authorization"] = `Bearer ${token}`;
+                                          }
+
+                                          // Fetch PDF as blob with authentication
+                                          const response = await fetch(`/api/lab-results/${result.id}/download-pdf`, {
+                                            headers: headers,
+                                          });
+
+                                          if (!response.ok) {
+                                            const errorData = await response.json().catch(() => ({ error: "Failed to download PDF" }));
+                                            throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                                          }
+
+                                          // Create blob URL from response
+                                          const blob = await response.blob();
+                                          const blobUrl = URL.createObjectURL(blob);
+                                          
+                                          // Set PDF URL and open viewer
+                                          setPdfViewerUrl(blobUrl);
+                                          setShowPdfViewerDialog(true);
+                                        } catch (error: any) {
+                                          console.error("Error opening PDF:", error);
+                                          toast({
+                                            title: "Error",
+                                            description: error.message || "Failed to open PDF. Please try again.",
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
                                       className="h-6 w-6 p-0"
-                                      data-testid={`button-view-${result.id}`}
+                                      data-testid={`button-save-pdf-viewer-${result.id}`}
+                                      title="View PDF"
                                     >
-                                      <Eye className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                      <Save className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
                                     </Button>
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => handleViewResult(result)}
-                                      className="h-6 w-6 p-0"
-                                      data-testid={`button-edit-${result.id}`}
-                                    >
-                                      <Edit className="h-3 w-3 text-gray-600 dark:text-gray-400" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleCreateInvoiceForTest(result)}
-                                      className="h-6 w-6 p-0"
-                                      data-testid={`button-create-invoice-${result.id}`}
-                                    >
-                                      <Receipt className="h-3 w-3 text-gray-600 dark:text-gray-400" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleGeneratePrescription(result)}
-                                      className="h-6 w-6 p-0"
-                                      data-testid={`button-prescription-${result.id}`}
-                                    >
-                                      <FileText className="h-3 w-3 text-gray-600 dark:text-gray-400" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => {
-                                        setSelectedResult(result);
-                                        setShowPrescriptionDialog(true);
+                                      onClick={async () => {
+                                        try {
+                                          const token = localStorage.getItem("auth_token");
+                                          const headers: Record<string, string> = {
+                                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          };
+                                          if (token) {
+                                            headers["Authorization"] = `Bearer ${token}`;
+                                          }
+
+                                          // Get signed URL for the PDF
+                                          const signedUrlResponse = await fetch(`/api/files/${result.id}/signed-url?type=testresult`, {
+                                            headers,
+                                            credentials: "include",
+                                          });
+
+                                          if (!signedUrlResponse.ok) {
+                                            const errorData = await signedUrlResponse.json();
+                                            throw new Error(errorData.error || "Failed to get PDF URL");
+                                          }
+
+                                          const { signedUrl } = await signedUrlResponse.json();
+                                          
+                                          // Open PDF in new window for printing
+                                          const printWindow = window.open(signedUrl, '_blank');
+                                          if (printWindow) {
+                                            printWindow.onload = () => {
+                                              printWindow.print();
+                                            };
+                                          }
+                                        } catch (error: any) {
+                                          console.error("Error printing PDF:", error);
+                                          toast({
+                                            title: "Error",
+                                            description: error.message || "Failed to print PDF. Please try again.",
+                                            variant: "destructive",
+                                          });
+                                        }
                                       }}
                                       className="h-6 w-6 p-0"
                                       data-testid={`button-print-${result.id}`}
+                                      title="Print PDF"
                                     >
-                                      <Printer className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                      <Printer className="h-3 w-3 text-blue-600 dark:text-blue-400" />
                                     </Button>
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => handleDirectDownload(result)}
+                                      onClick={async () => {
+                                        try {
+                                          const token = localStorage.getItem("auth_token");
+                                          const headers: Record<string, string> = {
+                                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          };
+                                          if (token) {
+                                            headers["Authorization"] = `Bearer ${token}`;
+                                          }
+
+                                          // Download the test result PDF (same as save button)
+                                          const response = await fetch(`/api/lab-results/${result.id}/download-pdf`, {
+                                            headers: headers,
+                                          });
+
+                                          if (!response.ok) {
+                                            const errorData = await response.json().catch(() => ({ error: "Failed to download PDF" }));
+                                            throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                                          }
+
+                                          // Create blob URL from response and download
+                                          const blob = await response.blob();
+                                          const url = window.URL.createObjectURL(blob);
+                                          const a = document.createElement('a');
+                                          a.href = url;
+                                          a.download = `${result.testId}_test_result.pdf`;
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          window.URL.revokeObjectURL(url);
+                                          document.body.removeChild(a);
+
+                                          toast({
+                                            title: "Success",
+                                            description: "Test result PDF downloaded successfully.",
+                                          });
+                                        } catch (error: any) {
+                                          console.error("Error downloading PDF:", error);
+                                          toast({
+                                            title: "Error",
+                                            description: error.message || "Failed to download PDF. Please try again.",
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
                                       className="h-6 w-6 p-0"
                                       data-testid={`button-download-${result.id}`}
+                                      title="Download PDF"
                                     >
-                                      <Download className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                      <Download className="h-3 w-3 text-purple-600 dark:text-purple-400" />
                                     </Button>
+                                    {user?.role !== 'patient' && canDelete('lab_results') && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                        onClick={() => handleDeleteResult(result.id)}
+                                        className="h-6 w-6 p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                                        data-testid={`button-delete-${result.id}`}
+                                        title="Delete Lab Result"
+                                    >
+                                        <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -7588,18 +8139,18 @@ Report generated from Cura EMR System`;
                     // Patient Name
                     const patientName = getPatientName(selectedLabOrder.patientId);
                     if (patientName && patientName !== `Patient #${selectedLabOrder.patientId}`) {
-                      pdf.setFont('helvetica', 'bold');
-                      pdf.text('Patient Name:', 20, yPos);
-                      pdf.setFont('helvetica', 'normal');
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.text('Patient Name:', 20, yPos);
+                    pdf.setFont('helvetica', 'normal');
                       pdf.text(patientName, 70, yPos);
                       yPos += 6;
                     }
 
                     // Test ID
                     if (selectedLabOrder.testId && selectedLabOrder.testId !== 'N/A') {
-                      pdf.setFont('helvetica', 'bold');
-                      pdf.text('Test ID:', 20, yPos);
-                      pdf.setFont('helvetica', 'normal');
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.text('Test ID:', 20, yPos);
+                    pdf.setFont('helvetica', 'normal');
                       pdf.text(selectedLabOrder.testId, 70, yPos);
                       yPos += 6;
                     }
@@ -7609,9 +8160,9 @@ Report generated from Cura EMR System`;
                       ? format(new Date(selectedLabOrder.orderedDate), "dd/MM/yyyy")
                       : null;
                     if (orderedDate && orderedDate !== 'N/A') {
-                      pdf.setFont('helvetica', 'bold');
-                      pdf.text('Ordered Date:', 20, yPos);
-                      pdf.setFont('helvetica', 'normal');
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.text('Ordered Date:', 20, yPos);
+                    pdf.setFont('helvetica', 'normal');
                       pdf.text(orderedDate, 70, yPos);
                       yPos += 6;
                     }
@@ -7619,18 +8170,18 @@ Report generated from Cura EMR System`;
                     // Ordered By - only show if not N/A
                     const orderedByName = getUserName(selectedLabOrder.orderedBy);
                     if (orderedByName && orderedByName !== `User #${selectedLabOrder.orderedBy}`) {
-                      pdf.setFont('helvetica', 'bold');
-                      pdf.text('Ordered By:', 20, yPos);
-                      pdf.setFont('helvetica', 'normal');
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.text('Ordered By:', 20, yPos);
+                    pdf.setFont('helvetica', 'normal');
                       pdf.text(orderedByName, 70, yPos);
                       yPos += 6;
                     }
 
                     // Priority - only show if not N/A
                     if (selectedLabOrder.priority && selectedLabOrder.priority !== 'N/A') {
-                      pdf.setFont('helvetica', 'bold');
-                      pdf.text('Priority:', 20, yPos);
-                      pdf.setFont('helvetica', 'normal');
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.text('Priority:', 20, yPos);
+                    pdf.setFont('helvetica', 'normal');
                       pdf.text(selectedLabOrder.priority, 70, yPos);
                       yPos += 6;
                     }
@@ -7871,14 +8422,24 @@ Report generated from Cura EMR System`;
                     const fileName = `${selectedLabOrder.testId || Date.now()}.pdf`;
                     pdf.save(fileName);
 
-                    // Also save PDF to server
+                    // Also save PDF to server (this will update workflow fields in database)
                     try {
-                      await apiRequest("POST", `/api/lab-results/${selectedLabOrder.id}/generate-pdf`);
+                      const response = await apiRequest("POST", `/api/lab-results/${selectedLabOrder.id}/generate-pdf`);
+                      if (response.ok) {
+                        // Success - workflow fields will be updated by backend
+                        // ready_to_generate_lab = true AND lab_result_generated_report = true
+                        console.log("Lab result PDF generated and workflow fields updated successfully");
+                      }
                     } catch (error) {
                       console.error("Error saving PDF to server:", error);
+                      toast({
+                        title: "Warning",
+                        description: "PDF generated locally but failed to save to server. Workflow fields may not be updated.",
+                        variant: "destructive",
+                      });
                     }
 
-                    // Invalidate cache
+                    // Invalidate cache to refresh the list and move record to Lab Results tab
                     queryClient.invalidateQueries({ queryKey: ["/api/lab-results"] });
 
                     // Show success modal
@@ -7901,22 +8462,51 @@ Report generated from Cura EMR System`;
       </Dialog>
 
       {/* PDF Viewer Dialog */}
-      <Dialog open={showPdfViewerDialog} onOpenChange={setShowPdfViewerDialog}>
-        <DialogContent className="max-w-6xl h-[90vh] p-0" aria-describedby="pdf-viewer-description">
-          <DialogHeader className="p-6 pb-2">
-            <DialogTitle>Lab Test Result</DialogTitle>
+      <Dialog open={showPdfViewerDialog} onOpenChange={(open) => {
+        setShowPdfViewerDialog(open);
+        if (!open) {
+          // Revoke blob URL to free memory when dialog closes
+          if (pdfViewerUrl && pdfViewerUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(pdfViewerUrl);
+          }
+          // Clear PDF URL when dialog closes
+          setPdfViewerUrl("");
+        }
+      }}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col p-0" aria-describedby="pdf-viewer-description">
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <DialogTitle>PDF Report: {selectedResult?.testId || 'Lab Test Result'}.pdf</DialogTitle>
             <DialogDescription id="pdf-viewer-description" className="sr-only">
               PDF viewer displaying the lab test result document
             </DialogDescription>
           </DialogHeader>
-          <div className="flex-1 px-6 pb-6">
-            {pdfViewerUrl && (
+          <div className="flex-1 overflow-hidden px-6 pb-4" style={{ minHeight: '600px', height: 'calc(90vh - 120px)' }}>
+            {pdfViewerUrl ? (
               <iframe
                 src={pdfViewerUrl}
-                className="w-full h-full border-0 rounded"
+                className="w-full h-full border rounded"
                 title="Lab Test Result PDF"
-                style={{ minHeight: '75vh' }}
+                style={{ minHeight: '600px' }}
               />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                <span className="ml-2 text-sm text-gray-600">Loading PDF...</span>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 px-6 pb-6 pt-4 border-t">
+            <Button onClick={() => setShowPdfViewerDialog(false)}>
+              Close
+            </Button>
+            {pdfViewerUrl && (
+              <Button
+                variant="outline"
+                onClick={() => window.open(pdfViewerUrl, '_blank')}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Open in New Tab
+              </Button>
             )}
           </div>
         </DialogContent>
@@ -7972,8 +8562,51 @@ Report generated from Cura EMR System`;
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Required Signature Dialog */}
+      <Dialog open={showRequiredSignatureDialog} onOpenChange={setShowRequiredSignatureDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-yellow-600" />
+              Required Signature
+            </DialogTitle>
+            <DialogDescription>
+              A signature is required before saving the prescription PDF. Please sign the document to proceed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowRequiredSignatureDialog(false);
+                setPendingPdfSave(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setShowRequiredSignatureDialog(false);
+                if (selectedResult) {
+                  setPendingPdfSave({ resultId: selectedResult.id });
+                  setShowESignDialog(true);
+                }
+              }}
+            >
+              Ready to Sign
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Advanced E-Signature Dialog */}
-      <Dialog open={showESignDialog} onOpenChange={setShowESignDialog}>
+      <Dialog open={showESignDialog} onOpenChange={(open) => {
+        setShowESignDialog(open);
+        if (!open && pendingPdfSave) {
+          // If dialog is closed without saving signature, clear pending save
+          setPendingPdfSave(null);
+        }
+      }}>
         <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
@@ -8599,6 +9232,43 @@ Report generated from Cura EMR System`;
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirmDialog} onOpenChange={setShowDeleteConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Lab Result</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this lab result? This action cannot be undone.
+              <br /><br />
+              <strong>The following will be permanently deleted:</strong>
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Lab result record from database (Test ID: <strong>{selectedResult?.testId}</strong>)</li>
+                <li>Prescription PDF file (if exists)</li>
+                <li>Test Result PDF file (if exists)</li>
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowDeleteConfirmDialog(false);
+                setSelectedResult(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleteLabResultMutation.isPending}
+            >
+              {deleteLabResultMutation.isPending ? "Deleting..." : "Yes, Delete"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

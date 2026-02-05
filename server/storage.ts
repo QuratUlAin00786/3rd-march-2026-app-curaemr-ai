@@ -5124,11 +5124,47 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getLabResultsByOrganization(organizationId: number, limit: number = 50): Promise<LabResult[]> {
-    return await db.select()
-      .from(labResults)
-      .where(eq(labResults.organizationId, organizationId))
-      .orderBy(desc(labResults.createdAt))
-      .limit(limit);
+    // Use raw SQL query to bypass Drizzle schema issues
+    // This ensures all fields including workflow fields are returned
+    try {
+      const results = await db.execute(sql`
+        SELECT 
+          id, organization_id as "organizationId", patient_id as "patientId", test_id as "testId",
+          test_type as "testType", ordered_by as "orderedBy", doctor_name as "doctorName",
+          main_specialty as "mainSpecialty", sub_specialty as "subSpecialty", priority,
+          ordered_at as "orderedAt", collected_at as "collectedAt", completed_at as "completedAt",
+          status, report_status as "reportStatus", results, critical_values as "criticalValues",
+          notes, "Lab_Request_Generated" as "labRequestGenerated",
+          "Sample_Collected" as "sampleCollected", "Lab_Report_Generated" as "labReportGenerated",
+          "Reviewed" as "reviewed", ready_to_generate_lab as "readyToGenerateLab",
+          lab_result_generated_report as "labResultGeneratedReport", signature,
+          created_at as "createdAt"
+        FROM lab_results
+        WHERE organization_id = ${organizationId}
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `);
+      
+      const labResultsArray = results.rows as LabResult[];
+      
+      // 🔍 LOG: What we actually return from the database
+      if (labResultsArray.length > 0) {
+        const firstResult = labResultsArray[0] as any;
+        console.log(`[STORAGE - RAW SQL RESULT] Organization ${organizationId}, First result:`, {
+          testId: firstResult.testId,
+          'readyToGenerateLab': firstResult.readyToGenerateLab,
+          'readyToGenerateLab_type': typeof firstResult.readyToGenerateLab,
+          'labResultGeneratedReport': firstResult.labResultGeneratedReport,
+          'labResultGeneratedReport_type': typeof firstResult.labResultGeneratedReport,
+          'All keys': Object.keys(firstResult),
+        });
+      }
+      
+      return labResultsArray;
+    } catch (error: any) {
+      console.error('[STORAGE] Error in getLabResultsByOrganization:', error);
+      throw error;
+    }
   }
 
   // Enhanced method to get lab results with comprehensive doctor details
@@ -5169,10 +5205,46 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getLabResultsByPatient(patientId: number, organizationId: number): Promise<LabResult[]> {
-    return await db.select()
-      .from(labResults)
-      .where(and(eq(labResults.patientId, patientId), eq(labResults.organizationId, organizationId)))
-      .orderBy(desc(labResults.createdAt));
+    // Use raw SQL query to bypass Drizzle schema issues
+    // This ensures all fields including workflow fields are returned
+    try {
+      const results = await db.execute(sql`
+        SELECT 
+          id, organization_id as "organizationId", patient_id as "patientId", test_id as "testId",
+          test_type as "testType", ordered_by as "orderedBy", doctor_name as "doctorName",
+          main_specialty as "mainSpecialty", sub_specialty as "subSpecialty", priority,
+          ordered_at as "orderedAt", collected_at as "collectedAt", completed_at as "completedAt",
+          status, report_status as "reportStatus", results, critical_values as "criticalValues",
+          notes, "Lab_Request_Generated" as "labRequestGenerated",
+          "Sample_Collected" as "sampleCollected", "Lab_Report_Generated" as "labReportGenerated",
+          "Reviewed" as "reviewed", ready_to_generate_lab as "readyToGenerateLab",
+          lab_result_generated_report as "labResultGeneratedReport", signature,
+          created_at as "createdAt"
+        FROM lab_results
+        WHERE patient_id = ${patientId} AND organization_id = ${organizationId}
+        ORDER BY created_at DESC
+      `);
+      
+      const labResultsArray = results.rows as LabResult[];
+      
+      // 🔍 LOG: What we actually return from the database
+      if (labResultsArray.length > 0) {
+        const firstResult = labResultsArray[0] as any;
+        console.log(`[STORAGE - RAW SQL RESULT] Patient ${patientId}, Organization ${organizationId}, First result:`, {
+          testId: firstResult.testId,
+          'readyToGenerateLab': firstResult.readyToGenerateLab,
+          'readyToGenerateLab_type': typeof firstResult.readyToGenerateLab,
+          'labResultGeneratedReport': firstResult.labResultGeneratedReport,
+          'labResultGeneratedReport_type': typeof firstResult.labResultGeneratedReport,
+          'All keys': Object.keys(firstResult),
+        });
+      }
+      
+      return labResultsArray;
+    } catch (error: any) {
+      console.error('[STORAGE] Error in getLabResultsByPatient:', error);
+      throw error;
+    }
   }
 
   async getLabResultsByStatus(patientId: number, organizationId: number, status: string): Promise<LabResult[]> {
@@ -8543,12 +8615,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateClinicHeader(id: number, organizationId: number, updates: Partial<InsertClinicHeader>): Promise<ClinicHeader | undefined> {
-    const updateData = { ...updates, updatedAt: new Date() };
+    // Ensure logoBase64 is explicitly included if provided (even if null)
+    const updateData: any = { ...updates, updatedAt: new Date() };
+    
+    // If logoBase64 is explicitly provided (including null), ensure it's included in the update
+    if ('logoBase64' in updates) {
+      updateData.logoBase64 = updates.logoBase64 === undefined ? undefined : (updates.logoBase64 || null);
+    }
+    
+    console.log(`[STORAGE] updateClinicHeader - updateData keys:`, Object.keys(updateData));
+    console.log(`[STORAGE] updateClinicHeader - logoBase64 in updates:`, 'logoBase64' in updates);
+    console.log(`[STORAGE] updateClinicHeader - logoBase64 value:`, updateData.logoBase64 !== undefined ? (updateData.logoBase64 ? `present (${updateData.logoBase64.length} chars)` : 'null') : 'not provided');
+    
     const [updated] = await db
       .update(clinicHeaders)
-      .set(updateData as any)
+      .set(updateData)
       .where(and(eq(clinicHeaders.id, id), eq(clinicHeaders.organizationId, organizationId)))
       .returning();
+    
+    if (updated) {
+      console.log(`[STORAGE] updateClinicHeader - Updated logoBase64:`, updated.logoBase64 ? `present (${updated.logoBase64.length} chars)` : 'null');
+    }
+    
     return updated || undefined;
   }
 

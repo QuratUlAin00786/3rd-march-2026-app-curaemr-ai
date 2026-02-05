@@ -1176,6 +1176,8 @@ export const labResults = pgTable("lab_results", {
   sampleCollected: boolean("Sample_Collected").notNull().default(false),
   labReportGenerated: boolean("Lab_Report_Generated").notNull().default(false),
   reviewed: boolean("Reviewed").notNull().default(false),
+  readyToGenerateLab: boolean("ready_to_generate_lab").notNull().default(false), // Workflow: when prescription is saved, set to true
+  labResultGeneratedReport: boolean("lab_result_generated_report").notNull().default(false), // Workflow: when report is generated, set to true
   signature: jsonb("signature").$type<{
     doctorSignature?: string; // base64 encoded signature image
     signedBy?: string; // doctor name

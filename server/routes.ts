@@ -6448,11 +6448,142 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const organizationId = req.tenant.id;
       const header = await storage.getActiveClinicHeader(organizationId);
       
+      // Log what we found in the database
+      if (header) {
+        console.log(`[CLINIC-HEADER GET] Found header for organization ${organizationId}:`, {
+          id: header.id,
+          clinicName: header.clinicName,
+          hasLogo: !!header.logoBase64,
+          logoLength: header.logoBase64 ? header.logoBase64.length : 0,
+          logoPosition: header.logoPosition,
+          isActive: header.isActive
+        });
+      } else {
+        console.log(`[CLINIC-HEADER GET] No active header found for organization ${organizationId}`);
+      }
+      
       // Return null if no header exists (not an error)
       res.json(header || null);
     } catch (error) {
       console.error("Error fetching clinic header:", error);
       res.status(500).json({ error: "Failed to fetch clinic header" });
+    }
+  });
+
+  // Create or update clinic header
+  console.log(`[ROUTE-REGISTRATION] Registering POST /api/clinic-headers route`);
+  app.post("/api/clinic-headers", authMiddleware, requireRole(["admin"]), async (req: TenantRequest, res) => {
+    // Set content-type header explicitly FIRST
+    res.setHeader('Content-Type', 'application/json');
+    
+    console.log(`[CLINIC-HEADER POST] ⚡ Route handler reached!`);
+    console.log(`[CLINIC-HEADER POST] Method: ${req.method}, URL: ${req.url}, OriginalUrl: ${req.originalUrl}`);
+    console.log(`[CLINIC-HEADER POST] Body exists:`, !!req.body);
+    console.log(`[CLINIC-HEADER POST] Body keys:`, req.body ? Object.keys(req.body) : 'no body');
+    console.log(`[CLINIC-HEADER POST] Content-Type header:`, req.get('Content-Type'));
+    
+    try {
+      if (!req.tenant) {
+        console.error(`[CLINIC-HEADER POST] ❌ No tenant found`);
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      
+      // Log incoming request data
+      console.log(`[CLINIC-HEADER POST] Organization ID: ${organizationId}`);
+      console.log(`[CLINIC-HEADER POST] Request body keys:`, Object.keys(req.body || {}));
+      console.log(`[CLINIC-HEADER POST] logoBase64 present:`, !!req.body?.logoBase64);
+      console.log(`[CLINIC-HEADER POST] logoBase64 length:`, req.body?.logoBase64 ? req.body.logoBase64.length : 0);
+      console.log(`[CLINIC-HEADER POST] clinicName:`, req.body?.clinicName);
+      
+      // Check if there's an existing active header first
+      const existingHeader = await storage.getActiveClinicHeader(organizationId);
+      console.log(`[CLINIC-HEADER POST] Existing header found:`, !!existingHeader, existingHeader ? `ID: ${existingHeader.id}` : 'none');
+      
+      // Handle logoBase64: if provided and non-empty, use it; if empty string, set to null; if not provided, preserve existing
+      let logoBase64Value: string | null = null;
+      if (req.body?.logoBase64 !== undefined) {
+        // logoBase64 is explicitly provided in request
+        if (req.body.logoBase64 && typeof req.body.logoBase64 === 'string' && req.body.logoBase64.trim() !== '') {
+          logoBase64Value = req.body.logoBase64.trim();
+          console.log(`[CLINIC-HEADER POST] Using provided logoBase64: ${logoBase64Value.length} chars`);
+        } else {
+          // Empty string or null/undefined - set to null
+          logoBase64Value = null;
+          console.log(`[CLINIC-HEADER POST] logoBase64 is empty/null, setting to null`);
+        }
+      } else if (existingHeader) {
+        // Not provided in request, preserve existing value
+        logoBase64Value = existingHeader.logoBase64 || null;
+        console.log(`[CLINIC-HEADER POST] logoBase64 not provided, preserving existing:`, logoBase64Value ? `${logoBase64Value.length} chars` : 'null');
+      } else {
+        // No existing header and not provided - set to null
+        logoBase64Value = null;
+        console.log(`[CLINIC-HEADER POST] No existing header and logoBase64 not provided, setting to null`);
+      }
+      
+      console.log(`[CLINIC-HEADER POST] Final logoBase64Value:`, logoBase64Value ? `present (${logoBase64Value.length} chars)` : 'null');
+
+      // Validate and parse request body
+      const headerData = insertClinicHeaderSchema.parse({
+        organizationId: organizationId,
+        logoBase64: logoBase64Value,
+        logoPosition: req.body?.logoPosition || existingHeader?.logoPosition || "center",
+        clinicName: req.body?.clinicName || existingHeader?.clinicName,
+        address: req.body?.address !== undefined ? req.body.address : (existingHeader?.address || null),
+        phone: req.body?.phone !== undefined ? req.body.phone : (existingHeader?.phone || null),
+        email: req.body?.email !== undefined ? req.body.email : (existingHeader?.email || null),
+        website: req.body?.website !== undefined ? req.body.website : (existingHeader?.website || null),
+        clinicNameFontSize: req.body?.clinicNameFontSize || existingHeader?.clinicNameFontSize || "24pt",
+        fontSize: req.body?.fontSize || existingHeader?.fontSize || "12pt",
+        fontFamily: req.body?.fontFamily || existingHeader?.fontFamily || "verdana",
+        fontWeight: req.body?.fontWeight || existingHeader?.fontWeight || "normal",
+        fontStyle: req.body?.fontStyle || existingHeader?.fontStyle || "normal",
+        textDecoration: req.body?.textDecoration || existingHeader?.textDecoration || "none",
+        isActive: req.body?.isActive !== undefined ? req.body.isActive : true,
+      });
+
+      console.log(`[CLINIC-HEADER POST] Validated headerData - logoBase64:`, headerData.logoBase64 ? `present (${headerData.logoBase64.length} chars)` : 'null');
+      
+      let savedHeader;
+      if (existingHeader) {
+        // Update existing header
+        console.log(`[CLINIC-HEADER POST] Updating existing header ID: ${existingHeader.id}`);
+        savedHeader = await storage.updateClinicHeader(existingHeader.id, organizationId, headerData);
+        console.log(`[CLINIC-HEADER POST] Update result:`, savedHeader ? `Success, ID: ${savedHeader.id}` : 'Failed');
+        if (savedHeader) {
+          console.log(`[CLINIC-HEADER POST] Updated logoBase64:`, savedHeader.logoBase64 ? `present (${savedHeader.logoBase64.length} chars)` : 'null');
+        }
+      } else {
+        // Create new header
+        console.log(`[CLINIC-HEADER POST] Creating new header`);
+        savedHeader = await storage.createClinicHeader(headerData);
+        console.log(`[CLINIC-HEADER POST] Create result:`, savedHeader ? `Success, ID: ${savedHeader.id}` : 'Failed');
+        if (savedHeader) {
+          console.log(`[CLINIC-HEADER POST] Created logoBase64:`, savedHeader.logoBase64 ? `present (${savedHeader.logoBase64.length} chars)` : 'null');
+        }
+      }
+
+      if (!savedHeader) {
+        console.error(`[CLINIC-HEADER POST] Failed to save - savedHeader is null/undefined`);
+        return res.status(500).json({ error: "Failed to save clinic header" });
+      }
+
+      console.log(`[CLINIC-HEADER POST] ✅ Successfully saved header ID: ${savedHeader.id}`);
+      console.log(`[CLINIC-HEADER POST] Saved logoBase64:`, savedHeader.logoBase64 ? `present (${savedHeader.logoBase64.length} chars)` : 'null');
+      console.log(`[CLINIC-HEADER POST] Saved clinicName:`, savedHeader.clinicName);
+      
+      // Explicitly set JSON response
+      res.status(201).json(savedHeader);
+    } catch (error: any) {
+      console.error("[CLINIC-HEADER POST] Error saving clinic header:", error);
+      console.error("[CLINIC-HEADER POST] Error stack:", error?.stack);
+      if (error.name === 'ZodError') {
+        console.error("[CLINIC-HEADER POST] Validation errors:", JSON.stringify(error.errors, null, 2));
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to save clinic header", message: error.message });
     }
   });
 
@@ -6466,11 +6597,105 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const organizationId = req.tenant.id;
       const footer = await storage.getActiveClinicFooter(organizationId);
       
+      // Log what we found in the database
+      if (footer) {
+        console.log(`[CLINIC-FOOTER GET] Found footer for organization ${organizationId}:`, {
+          id: footer.id,
+          footerText: footer.footerText,
+          backgroundColor: footer.backgroundColor,
+          textColor: footer.textColor,
+          showSocial: footer.showSocial,
+          isActive: footer.isActive
+        });
+      } else {
+        console.log(`[CLINIC-FOOTER GET] No active footer found for organization ${organizationId}`);
+      }
+      
       // Return null if no footer exists (not an error)
       res.json(footer || null);
     } catch (error) {
       console.error("Error fetching clinic footer:", error);
       res.status(500).json({ error: "Failed to fetch clinic footer" });
+    }
+  });
+
+  // Create or update clinic footer
+  app.post("/api/clinic-footers", authMiddleware, requireRole(["admin"]), async (req: TenantRequest, res) => {
+    // Set content-type header explicitly
+    res.setHeader('Content-Type', 'application/json');
+    
+    console.log(`[CLINIC-FOOTER POST] ⚡ Route handler reached!`);
+    console.log(`[CLINIC-FOOTER POST] Method: ${req.method}, URL: ${req.url}`);
+    
+    try {
+      if (!req.tenant) {
+        console.error(`[CLINIC-FOOTER POST] ❌ No tenant found`);
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      
+      // Log incoming request data
+      console.log(`[CLINIC-FOOTER POST] Organization ID: ${organizationId}`);
+      console.log(`[CLINIC-FOOTER POST] Request body keys:`, Object.keys(req.body || {}));
+      console.log(`[CLINIC-FOOTER POST] footerText:`, req.body?.footerText);
+      console.log(`[CLINIC-FOOTER POST] backgroundColor:`, req.body?.backgroundColor);
+      
+      // Validate and parse request body
+      const footerData = insertClinicFooterSchema.parse({
+        organizationId: organizationId,
+        footerText: req.body?.footerText,
+        backgroundColor: req.body?.backgroundColor || "#4A7DFF",
+        textColor: req.body?.textColor || "#FFFFFF",
+        showSocial: req.body?.showSocial !== undefined ? req.body.showSocial : false,
+        facebook: req.body?.facebook || null,
+        twitter: req.body?.twitter || null,
+        linkedin: req.body?.linkedin || null,
+        isActive: req.body?.isActive !== undefined ? req.body.isActive : true,
+      });
+
+      console.log(`[CLINIC-FOOTER POST] Validated footerData:`, {
+        footerText: footerData.footerText,
+        backgroundColor: footerData.backgroundColor,
+        textColor: footerData.textColor,
+        showSocial: footerData.showSocial
+      });
+
+      // Check if there's an existing active footer
+      const existingFooter = await storage.getActiveClinicFooter(organizationId);
+      console.log(`[CLINIC-FOOTER POST] Existing footer found:`, !!existingFooter, existingFooter ? `ID: ${existingFooter.id}` : 'none');
+      
+      let savedFooter;
+      if (existingFooter) {
+        // Update existing footer
+        console.log(`[CLINIC-FOOTER POST] Updating existing footer ID: ${existingFooter.id}`);
+        savedFooter = await storage.updateClinicFooter(existingFooter.id, organizationId, footerData);
+        console.log(`[CLINIC-FOOTER POST] Update result:`, savedFooter ? `Success, ID: ${savedFooter.id}` : 'Failed');
+      } else {
+        // Create new footer
+        console.log(`[CLINIC-FOOTER POST] Creating new footer`);
+        savedFooter = await storage.createClinicFooter(footerData);
+        console.log(`[CLINIC-FOOTER POST] Create result:`, savedFooter ? `Success, ID: ${savedFooter.id}` : 'Failed');
+      }
+
+      if (!savedFooter) {
+        console.error(`[CLINIC-FOOTER POST] Failed to save - savedFooter is null/undefined`);
+        return res.status(500).json({ error: "Failed to save clinic footer" });
+      }
+
+      console.log(`[CLINIC-FOOTER POST] ✅ Successfully saved footer ID: ${savedFooter.id}`);
+      console.log(`[CLINIC-FOOTER POST] Saved footerText:`, savedFooter.footerText);
+      
+      // Explicitly set JSON response
+      res.status(201).json(savedFooter);
+    } catch (error: any) {
+      console.error("[CLINIC-FOOTER POST] Error saving clinic footer:", error);
+      console.error("[CLINIC-FOOTER POST] Error stack:", error?.stack);
+      if (error.name === 'ZodError') {
+        console.error("[CLINIC-FOOTER POST] Validation errors:", JSON.stringify(error.errors, null, 2));
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to save clinic footer", message: error.message });
     }
   });
 
@@ -9828,6 +10053,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   });
 
   // Get all lab results for an organization
+  // NOTE: This route is duplicated at line 10348 with workflow fields support
+  // The route at line 10348 should be used instead
+  /*
   app.get("/api/lab-results", authMiddleware, async (req: TenantRequest, res) => {
     try {
       const organizationId = req.tenant!.id;
@@ -9887,6 +10115,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       res.status(500).json({ error: "Failed to fetch lab results" });
     }
   });
+  */
 
   // Get lab results for a specific patient
   app.get("/api/patients/:patientId/lab-results", authMiddleware, async (req: TenantRequest, res) => {
@@ -10322,15 +10551,25 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         signerId: req.user.id
       };
 
-      // Update prescription with signature
+      // Update prescription with signature and status
+      console.log(`[PRESCRIPTION E-SIGN] Updating prescription ${prescriptionId} with signature and status='signed'`);
       const updatedPrescription = await storage.updatePrescription(prescriptionId, req.tenant!.id, {
         signature: signatureData,
         status: 'signed'
       });
       
       if (!updatedPrescription) {
+        console.error(`[PRESCRIPTION E-SIGN] Failed to update prescription ${prescriptionId}`);
         return res.status(404).json({ error: "Failed to update prescription with signature" });
       }
+
+      console.log(`[PRESCRIPTION E-SIGN] ✅ Successfully updated prescription ${prescriptionId}, status: ${updatedPrescription.status}`);
+      console.log(`[PRESCRIPTION E-SIGN] Updated prescription data:`, {
+        id: updatedPrescription.id,
+        status: updatedPrescription.status,
+        hasSignature: !!updatedPrescription.signature,
+        signedBy: (updatedPrescription.signature as any)?.signedBy
+      });
 
       res.json({ 
         success: true,
@@ -10346,10 +10585,99 @@ This treatment plan should be reviewed and adjusted based on individual patient 
 
   // Lab Results Routes
   app.get("/api/lab-results", authMiddleware, async (req: TenantRequest, res) => {
+    console.log('[LAB RESULTS API] Route hit - Starting request');
     try {
+      console.log('[LAB RESULTS API] User check - req.user:', req.user ? 'exists' : 'missing');
       if (!req.user) {
+        console.error('[LAB RESULTS API] No user in request');
         return res.status(401).json({ error: "User not authenticated" });
       }
+      
+      console.log('[LAB RESULTS API] User authenticated:', req.user.id, 'Organization:', req.tenant?.id);
+
+      // Check if workflow columns exist, if not, add them automatically
+      // This runs asynchronously and doesn't block the request
+      (async () => {
+        try {
+          // First, check if columns exist
+          const columnCheck = await pool.query(`
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'lab_results' 
+            AND column_name IN ('ready_to_generate_lab', 'lab_result_generated_report')
+          `);
+          
+          const existingColumns = columnCheck.rows.map((row: any) => row.column_name);
+          const needsReadyToGenerateLab = !existingColumns.includes('ready_to_generate_lab');
+          const needsLabResultGeneratedReport = !existingColumns.includes('lab_result_generated_report');
+          
+          if (needsReadyToGenerateLab) {
+            // First add column as nullable
+            await pool.query(`
+              ALTER TABLE lab_results 
+              ADD COLUMN ready_to_generate_lab BOOLEAN;
+            `);
+            // Update existing rows to FALSE
+            await pool.query(`
+              UPDATE lab_results 
+              SET ready_to_generate_lab = FALSE 
+              WHERE ready_to_generate_lab IS NULL;
+            `);
+            // Now set NOT NULL constraint
+            await pool.query(`
+              ALTER TABLE lab_results 
+              ALTER COLUMN ready_to_generate_lab SET NOT NULL,
+              ALTER COLUMN ready_to_generate_lab SET DEFAULT FALSE;
+            `);
+            console.log('[LAB RESULTS API] Created column: ready_to_generate_lab');
+          }
+          
+          if (needsLabResultGeneratedReport) {
+            // First add column as nullable
+            await pool.query(`
+              ALTER TABLE lab_results 
+              ADD COLUMN lab_result_generated_report BOOLEAN;
+            `);
+            // Update existing rows to FALSE
+            await pool.query(`
+              UPDATE lab_results 
+              SET lab_result_generated_report = FALSE 
+              WHERE lab_result_generated_report IS NULL;
+            `);
+            // Now set NOT NULL constraint
+            await pool.query(`
+              ALTER TABLE lab_results 
+              ALTER COLUMN lab_result_generated_report SET NOT NULL,
+              ALTER COLUMN lab_result_generated_report SET DEFAULT FALSE;
+            `);
+            console.log('[LAB RESULTS API] Created column: lab_result_generated_report');
+          }
+          
+          // Ensure existing rows have FALSE values (in case columns existed but had NULLs)
+          if (!needsReadyToGenerateLab) {
+            await pool.query(`
+              UPDATE lab_results 
+              SET ready_to_generate_lab = FALSE 
+              WHERE ready_to_generate_lab IS NULL;
+            `);
+          }
+          if (!needsLabResultGeneratedReport) {
+            await pool.query(`
+              UPDATE lab_results 
+              SET lab_result_generated_report = FALSE 
+              WHERE lab_result_generated_report IS NULL;
+            `);
+          }
+          
+          if (!needsReadyToGenerateLab && !needsLabResultGeneratedReport) {
+            console.log('[LAB RESULTS API] Workflow columns already exist');
+          }
+        } catch (migrationError: any) {
+          console.error('[LAB RESULTS API] Error verifying workflow columns:', migrationError.message);
+          console.error('[LAB RESULTS API] Migration error stack:', migrationError?.stack);
+          // Continue anyway - columns might exist but check failed
+        }
+      })(); // Run asynchronously, don't await
 
       // Check for role-based filtering via query parameters
       const { patientId } = req.query;
@@ -10366,12 +10694,49 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         labResults = await storage.getLabResultsByPatient(patientIdNum, req.tenant!.id);
       } else {
         // Return all lab results (for Admin, Doctor, Nurse, etc.)
-        console.log(`[LAB RESULTS API] Returning all lab results for organization`);
+        console.log(`[LAB RESULTS API] Returning all lab results for organization ${req.tenant!.id}`);
         labResults = await storage.getLabResultsByOrganization(req.tenant!.id);
+        
+        // Debug: Log the first result to see what fields are returned
+        if (labResults.length > 0 && req.tenant!.id === 20) {
+          const firstResult = labResults[0] as any;
+          console.log(`[LAB RESULTS API DEBUG] Total results: ${labResults.length}`);
+          console.log(`[LAB RESULTS API DEBUG] First result TestID: ${firstResult.testId}`);
+          console.log(`[LAB RESULTS API DEBUG] All fields in first result:`, Object.keys(firstResult));
+          console.log(`[LAB RESULTS API DEBUG] readyToGenerateLab (camelCase):`, firstResult.readyToGenerateLab, typeof firstResult.readyToGenerateLab);
+          console.log(`[LAB RESULTS API DEBUG] ready_to_generate_lab (snake_case):`, firstResult.ready_to_generate_lab, typeof firstResult.ready_to_generate_lab);
+          console.log(`[LAB RESULTS API DEBUG] labResultGeneratedReport (camelCase):`, firstResult.labResultGeneratedReport, typeof firstResult.labResultGeneratedReport);
+          console.log(`[LAB RESULTS API DEBUG] lab_result_generated_report (snake_case):`, firstResult.lab_result_generated_report, typeof firstResult.lab_result_generated_report);
+          
+          // Log all results for organization 20
+          labResults.forEach((lr: any, index: number) => {
+            console.log(`[LAB RESULTS API DEBUG] Result ${index + 1} (${lr.testId}):`, {
+              readyToGenerateLab: lr.readyToGenerateLab,
+              ready_to_generate_lab: lr.ready_to_generate_lab,
+              labResultGeneratedReport: lr.labResultGeneratedReport,
+              lab_result_generated_report: lr.lab_result_generated_report,
+            });
+          });
+        }
       }
 
       // Enrich with invoice information (paymentMethod, insuranceProvider)
       const enrichedLabResults = await Promise.all(labResults.map(async (labResult: any) => {
+        // 🔍 LOG 1: Raw DB result from storage
+        if (req.tenant!.id === 20 && labResult.testId) {
+          console.log(`[LOG 1 - DB ROW] TestID: ${labResult.testId}`, {
+            'labResult.readyToGenerateLab': labResult.readyToGenerateLab,
+            'labResult.readyToGenerateLab_type': typeof labResult.readyToGenerateLab,
+            'labResult.ready_to_generate_lab': labResult.ready_to_generate_lab,
+            'labResult.ready_to_generate_lab_type': typeof labResult.ready_to_generate_lab,
+            'labResult.labResultGeneratedReport': labResult.labResultGeneratedReport,
+            'labResult.labResultGeneratedReport_type': typeof labResult.labResultGeneratedReport,
+            'labResult.lab_result_generated_report': labResult.lab_result_generated_report,
+            'labResult.lab_result_generated_report_type': typeof labResult.lab_result_generated_report,
+            'All keys in labResult': Object.keys(labResult),
+          });
+        }
+        
         // Find related invoice using serviceId matching testId
         const invoices = await db
           .select()
@@ -10380,17 +10745,101 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         
         const invoice = invoices[0]; // Get the first matching invoice
         
-        return {
+        // Extract workflow fields - check both camelCase and snake_case
+        // Use nullish coalescing (??) NOT logical OR (||) to preserve false values
+        let readyToGenerateLabValue: boolean | undefined = labResult.readyToGenerateLab ?? labResult.ready_to_generate_lab;
+        let labResultGeneratedReportValue: boolean | undefined = labResult.labResultGeneratedReport ?? labResult.lab_result_generated_report;
+        
+        // If fields are still undefined, query database directly as fallback
+        if (readyToGenerateLabValue === undefined || labResultGeneratedReportValue === undefined) {
+          try {
+            const workflowFields = await db.execute(sql`
+              SELECT 
+                ready_to_generate_lab,
+                lab_result_generated_report
+              FROM lab_results
+              WHERE test_id = ${labResult.testId}
+              LIMIT 1
+            `);
+            
+            if (workflowFields.rows && workflowFields.rows.length > 0) {
+              const row = workflowFields.rows[0] as any;
+              if (readyToGenerateLabValue === undefined) {
+                readyToGenerateLabValue = row.ready_to_generate_lab ?? false;
+              }
+              if (labResultGeneratedReportValue === undefined) {
+                labResultGeneratedReportValue = row.lab_result_generated_report ?? false;
+              }
+              console.log(`[LAB RESULTS API] Fetched workflow fields directly from DB for ${labResult.testId}:`, {
+                ready_to_generate_lab: readyToGenerateLabValue,
+                lab_result_generated_report: labResultGeneratedReportValue,
+              });
+            }
+          } catch (dbError: any) {
+            // If columns don't exist, use defaults
+            console.warn(`[LAB RESULTS API] Could not fetch workflow fields for ${labResult.testId}:`, dbError.message);
+            readyToGenerateLabValue = readyToGenerateLabValue ?? false;
+            labResultGeneratedReportValue = labResultGeneratedReportValue ?? false;
+          }
+        }
+        
+        // Ensure we have boolean values (not undefined) - use ?? not ||
+        const finalReadyToGenerateLab: boolean = readyToGenerateLabValue ?? false;
+        const finalLabResultGeneratedReport: boolean = labResultGeneratedReportValue ?? false;
+        
+        // 🔍 LOG 2: After mapping/normalization
+        if (req.tenant!.id === 20 && labResult.testId) {
+          console.log(`[LOG 2 - MAPPED] TestID: ${labResult.testId}`, {
+            'finalReadyToGenerateLab': finalReadyToGenerateLab,
+            'finalReadyToGenerateLab_type': typeof finalReadyToGenerateLab,
+            'finalLabResultGeneratedReport': finalLabResultGeneratedReport,
+            'finalLabResultGeneratedReport_type': typeof finalLabResultGeneratedReport,
+          });
+        }
+        
+        // Ensure workflow fields are included (provide both camelCase and snake_case for compatibility)
+        // IMPORTANT: Set workflow fields AFTER spread to ensure they're not overwritten
+        const result = {
           ...labResult,
           paymentMethod: invoice?.paymentMethod || null,
-          insuranceProvider: invoice?.insuranceProvider || null
+          insuranceProvider: invoice?.insuranceProvider || null,
+          // Explicitly set both naming conventions with guaranteed boolean values
+          // These come AFTER the spread to ensure they override any undefined values
+          ready_to_generate_lab: finalReadyToGenerateLab,
+          lab_result_generated_report: finalLabResultGeneratedReport,
+          readyToGenerateLab: finalReadyToGenerateLab,
+          labResultGeneratedReport: finalLabResultGeneratedReport,
         };
+        
+        // 🔍 LOG 3: Final API response
+        if (req.tenant!.id === 20 && labResult.testId) {
+          console.log(`[LOG 3 - API RESPONSE] TestID: ${labResult.testId}`, {
+            'result.ready_to_generate_lab': result.ready_to_generate_lab,
+            'result.ready_to_generate_lab_type': typeof result.ready_to_generate_lab,
+            'result.readyToGenerateLab': result.readyToGenerateLab,
+            'result.readyToGenerateLab_type': typeof result.readyToGenerateLab,
+            'result.lab_result_generated_report': result.lab_result_generated_report,
+            'result.lab_result_generated_report_type': typeof result.lab_result_generated_report,
+            'result.labResultGeneratedReport': result.labResultGeneratedReport,
+            'result.labResultGeneratedReport_type': typeof result.labResultGeneratedReport,
+          });
+        }
+        
+        return result;
       }));
 
       res.json(enrichedLabResults);
-    } catch (error) {
-      console.error("Error fetching lab results:", error);
-      res.status(500).json({ error: "Failed to fetch lab results" });
+    } catch (error: any) {
+      console.error("[LAB RESULTS API] Error fetching lab results:", error);
+      console.error("[LAB RESULTS API] Error stack:", error?.stack);
+      console.error("[LAB RESULTS API] Error message:", error?.message);
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: "Failed to fetch lab results", 
+          details: error?.message || "Unknown error",
+          stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined
+        });
+      }
     }
   });
 
@@ -10531,21 +10980,65 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         return res.status(400).json({ error: "Invalid lab result ID" });
       }
       
+      const organizationId = req.tenant!.id;
+      
       // Verify lab result exists and belongs to organization
-      const labResults = await storage.getLabResults(req.tenant!.id);
+      const labResults = await storage.getLabResults(organizationId);
       const labResult = labResults.find(result => result.id === labResultId);
       
       if (!labResult) {
         return res.status(404).json({ error: "Lab result not found" });
       }
 
-      const deleted = await storage.deleteLabResult(labResultId, req.tenant!.id);
+      // Delete both PDF files (prescription and test result) if they exist
+      const deletedFiles: string[] = [];
+      
+      // Delete prescription PDF
+      const prescriptionDir = path.join(process.cwd(), 'uploads', 'Lab_Prescription', organizationId.toString(), labResult.patientId.toString());
+      const prescriptionFileName = `${labResult.testId}_prescription.pdf`;
+      const prescriptionFilePath = path.join(prescriptionDir, prescriptionFileName);
+      
+      try {
+        if (await fse.pathExists(prescriptionFilePath)) {
+          await fse.remove(prescriptionFilePath);
+          deletedFiles.push('Prescription PDF');
+          console.log(`[LAB-DELETE] Deleted prescription PDF: ${prescriptionFilePath}`);
+        }
+      } catch (fileError: any) {
+        console.error(`[LAB-DELETE] Error deleting prescription PDF:`, fileError);
+        // Continue with deletion even if file deletion fails
+      }
+
+      // Delete test result PDF
+      const testResultDir = path.join(process.cwd(), 'uploads', 'Lab_TestResults', organizationId.toString(), labResult.patientId.toString());
+      const testResultFileName = `${labResult.testId}.pdf`;
+      const testResultFilePath = path.join(testResultDir, testResultFileName);
+      
+      try {
+        if (await fse.pathExists(testResultFilePath)) {
+          await fse.remove(testResultFilePath);
+          deletedFiles.push('Test Result PDF');
+          console.log(`[LAB-DELETE] Deleted test result PDF: ${testResultFilePath}`);
+        }
+      } catch (fileError: any) {
+        console.error(`[LAB-DELETE] Error deleting test result PDF:`, fileError);
+        // Continue with deletion even if file deletion fails
+      }
+
+      // Delete the database record
+      const deleted = await storage.deleteLabResult(labResultId, organizationId);
       
       if (!deleted) {
         return res.status(404).json({ error: "Failed to delete lab result" });
       }
 
-      res.json({ success: true, message: "Lab result deleted successfully" });
+      console.log(`[LAB-DELETE] Successfully deleted lab result ID: ${labResultId}, Deleted files: ${deletedFiles.join(', ')}`);
+
+      res.json({ 
+        success: true, 
+        message: "Lab result and associated files deleted successfully",
+        deletedFiles: deletedFiles
+      });
     } catch (error) {
       console.error("Lab result deletion error:", error);
       res.status(500).json({ error: "Failed to delete lab result" });
@@ -11230,8 +11723,12 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const clinicHeader = await storage.getActiveClinicHeader(organizationId);
       const clinicFooter = await storage.getActiveClinicFooter(organizationId);
 
-      // Construct directory path: uploads/Lab_TestResults/{organization_id}/{patient_id}/
-      const dirPath = path.join(process.cwd(), 'uploads', 'Lab_TestResults', organizationId.toString(), labResult.patientId.toString());
+      // Check if this is a prescription PDF request (from Request Report tab)
+      const isPrescription = req.query.type === 'prescription' || req.body.type === 'prescription';
+      
+      // Construct directory path based on type
+      const pdfDirectoryName = isPrescription ? 'Lab_Prescription' : 'Lab_TestResults';
+      const dirPath = path.join(process.cwd(), 'uploads', pdfDirectoryName, organizationId.toString(), labResult.patientId.toString());
       
       // Ensure directory exists
       await fse.ensureDir(dirPath);
@@ -11245,7 +11742,342 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const doc = new jsPDF();
 
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       let yPos = 20;
+
+      // If this is a prescription PDF, generate a different layout
+      if (isPrescription) {
+        // ========== PRESCRIPTION PDF LAYOUT ==========
+        
+        // Fetch doctor/user who ordered the test
+        let orderedByUser = null;
+        if (labResult.orderedBy) {
+          try {
+            orderedByUser = await storage.getUser(labResult.orderedBy, organizationId);
+          } catch (error) {
+            console.error('Error fetching ordered by user:', error);
+          }
+        }
+
+        // Header Section - Company Name (from clinic header, centered, blue, bold)
+        if (clinicHeader?.clinicName) {
+          doc.setFontSize(20);
+          doc.setTextColor(66, 133, 244); // Blue color
+          doc.setFont('helvetica', 'bold');
+          doc.text(clinicHeader.clinicName, pageWidth / 2, yPos, { align: 'center' });
+          yPos += 10;
+        } else {
+          // Fallback to organization name or default
+          doc.setFontSize(20);
+          doc.setTextColor(66, 133, 244);
+          doc.setFont('helvetica', 'bold');
+          doc.text('CURA EMR SYSTEM', pageWidth / 2, yPos, { align: 'center' });
+          yPos += 10;
+        }
+
+        // Document Title (centered, black, normal)
+        doc.setFontSize(14);
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('helvetica', 'normal');
+        doc.text('Laboratory Test Prescription', pageWidth / 2, yPos, { align: 'center' });
+        yPos += 8;
+
+        // Contact Information (centered, small font)
+        if (clinicHeader) {
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0);
+          
+          if (clinicHeader.address) {
+            doc.text(clinicHeader.address, pageWidth / 2, yPos, { align: 'center' });
+            yPos += 5;
+          }
+          if (clinicHeader.phone) {
+            doc.text(clinicHeader.phone, pageWidth / 2, yPos, { align: 'center' });
+            yPos += 5;
+          }
+          if (clinicHeader.email) {
+            doc.text(clinicHeader.email, pageWidth / 2, yPos, { align: 'center' });
+            yPos += 5;
+          }
+          if (clinicHeader.website) {
+            doc.text(clinicHeader.website, pageWidth / 2, yPos, { align: 'center' });
+            yPos += 5;
+          }
+        }
+        
+        // Separator line
+        yPos += 3;
+        doc.setDrawColor(200, 200, 200);
+        doc.line(20, yPos, pageWidth - 20, yPos);
+        yPos += 10;
+
+        // PHYSICIAN INFORMATION Section
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text('Physician Information', 20, yPos);
+        yPos += 8;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        const doctorName = labResult.doctorName || (orderedByUser ? `${orderedByUser.firstName || ''} ${orderedByUser.lastName || ''}`.trim() : 'N/A');
+        doc.text(`Name: ${doctorName}`, 20, yPos);
+        yPos += 6;
+        
+        // Priority
+        const priority = labResult.priority || 'routine';
+        doc.text(`Priority: ${priority}`, 20, yPos);
+        yPos += 12;
+
+        // PATIENT INFORMATION Section
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Patient Information', 20, yPos);
+        yPos += 8;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Name: ${patient.firstName} ${patient.lastName}`, 20, yPos);
+        yPos += 6;
+        
+        // Date
+        const orderedDate = labResult.orderedAt 
+          ? new Date(labResult.orderedAt).toLocaleDateString('en-GB', { 
+              day: '2-digit', 
+              month: 'short', 
+              year: 'numeric'
+            })
+          : new Date().toLocaleDateString('en-GB', { 
+              day: '2-digit', 
+              month: 'short', 
+              year: 'numeric'
+            });
+        doc.text(`Date: ${orderedDate}`, 20, yPos);
+        yPos += 6;
+        
+        // Time
+        const orderedTime = labResult.orderedAt 
+          ? new Date(labResult.orderedAt).toLocaleTimeString('en-GB', { 
+              hour: '2-digit', 
+              minute: '2-digit',
+              hour12: false
+            })
+          : new Date().toLocaleTimeString('en-GB', { 
+              hour: '2-digit', 
+              minute: '2-digit',
+              hour12: false
+            });
+        doc.text(`Time: ${orderedTime}`, 20, yPos);
+        yPos += 12;
+
+        // Main Content Box - Laboratory Test Prescription
+        const boxX = 20;
+        const boxY = yPos;
+        const boxWidth = pageWidth - 40;
+        let boxHeight = 80; // Will be adjusted based on content
+
+        // Draw light grey background box
+        doc.setFillColor(240, 240, 240);
+        doc.rect(boxX, boxY, boxWidth, boxHeight, 'F');
+        
+        // Draw border
+        doc.setDrawColor(200, 200, 200);
+        doc.rect(boxX, boxY, boxWidth, boxHeight);
+
+        // Box content
+        let boxContentY = boxY + 10;
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text('℞ Laboratory Test Prescription', boxX + boxWidth / 2, boxContentY, { align: 'center' });
+        boxContentY += 12;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        
+        // Two-column layout for TEST ID and TEST TYPE
+        const leftColX = boxX + 10;
+        const rightColX = boxX + boxWidth / 2 + 10;
+        const labelY = boxContentY;
+        
+        // Left Column: TEST ID
+        doc.setFont('helvetica', 'bold');
+        doc.text('TEST ID', leftColX, labelY);
+        doc.setFont('helvetica', 'normal');
+        doc.text(labResult.testId, leftColX, labelY + 6);
+        
+        // Right Column: TEST TYPE
+        doc.setFont('helvetica', 'bold');
+        doc.text('TEST TYPE', rightColX, labelY);
+        doc.setFont('helvetica', 'normal');
+        
+        // Format TEST TYPE as a list (split by | or newlines)
+        let testTypeText = labResult.testType || 'N/A';
+        // Split by | or newline and format as bullet list
+        const testTypeItems = testTypeText.split(/[|\n]/).map(item => item.trim()).filter(item => item.length > 0);
+        let testTypeY = labelY + 6;
+        const maxTestTypeWidth = boxWidth / 2 - 20;
+        testTypeItems.forEach((item, index) => {
+          const testTypeLines = doc.splitTextToSize(`• ${item}`, maxTestTypeWidth);
+          doc.text(testTypeLines, rightColX, testTypeY);
+          testTypeY += testTypeLines.length * 5;
+        });
+        
+        boxContentY = Math.max(labelY + 6 + testTypeItems.length * 5, testTypeY) + 8;
+
+        // Two-column layout for ORDERED DATE and STATUS
+        // Left Column: ORDERED DATE
+        doc.setFont('helvetica', 'bold');
+        doc.text('ORDERED DATE', leftColX, boxContentY);
+        doc.setFont('helvetica', 'normal');
+        const orderedDateTime = labResult.orderedAt 
+          ? new Date(labResult.orderedAt).toLocaleString('en-GB', { 
+              day: '2-digit', 
+              month: 'short', 
+              year: 'numeric', 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            })
+          : 'N/A';
+        doc.text(orderedDateTime, leftColX, boxContentY + 6);
+        
+        // Right Column: STATUS
+        doc.setFont('helvetica', 'bold');
+        doc.text('STATUS', rightColX, boxContentY);
+        doc.setFont('helvetica', 'normal');
+        const status = (labResult.status || 'PENDING').toUpperCase();
+        doc.text(status, rightColX, boxContentY + 6);
+        boxContentY += 15;
+
+        // Adjust box height if needed
+        if (boxContentY > boxY + boxHeight - 5) {
+          boxHeight = boxContentY - boxY + 5;
+          // Redraw box with new height
+          doc.setFillColor(240, 240, 240);
+          doc.rect(boxX, boxY, boxWidth, boxHeight, 'F');
+          doc.setDrawColor(200, 200, 200);
+          doc.rect(boxX, boxY, boxWidth, boxHeight);
+        }
+
+        yPos = boxY + boxHeight + 20;
+
+        // Signature Section
+        if (yPos > pageHeight - 80) {
+          doc.addPage();
+          yPos = 20;
+        }
+
+        // Check if signature exists in labResult
+        let hasSignature = false;
+        if (labResult.signature && typeof labResult.signature === 'object' && labResult.signature.doctorSignature) {
+          try {
+            const signatureData = labResult.signature.doctorSignature;
+            // Signature is base64 encoded image
+            const signatureImg = signatureData.startsWith('data:') ? signatureData : `data:image/png;base64,${signatureData}`;
+            const signatureWidth = 60;
+            const signatureHeight = 25;
+            const signatureX = pageWidth / 2 - signatureWidth / 2;
+            const signatureY = yPos;
+            
+            doc.addImage(signatureImg, 'PNG', signatureX, signatureY, signatureWidth, signatureHeight);
+            hasSignature = true;
+            yPos += signatureHeight + 5;
+          } catch (error) {
+            console.error('Error adding signature to PDF:', error);
+          }
+        }
+
+        // Signature line (draw even if signature image exists, for visual consistency)
+        const signatureLineY = hasSignature ? yPos - 5 : yPos;
+        doc.setDrawColor(0, 0, 0);
+        doc.line(20, signatureLineY, pageWidth - 20, signatureLineY);
+        
+        if (!hasSignature) {
+          yPos += 8;
+        }
+
+        // E-Signature label
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text('E-Signature', pageWidth / 2, yPos, { align: 'center' });
+        yPos += 6;
+
+        // Doctor name below signature
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(doctorName, pageWidth / 2, yPos, { align: 'center' });
+        yPos += 15;
+
+        // Footer - Generated by Cura EMR System
+        const currentDate = new Date().toLocaleString('en-GB', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        doc.setFontSize(9);
+        doc.setTextColor(0, 0, 0);
+        doc.text('Generated by Cura EMR System', pageWidth / 2, pageHeight - 20, { align: 'center' });
+        doc.text(`Date: ${currentDate}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+
+        // Add clinic footer if available
+        if (clinicFooter?.footerText) {
+          doc.setFontSize(9);
+          doc.setTextColor(0, 0, 0);
+          const footerY = pageHeight - (yPos < pageHeight - 50 ? 20 : 30);
+          doc.text(clinicFooter.footerText, pageWidth / 2, footerY, { align: 'center' });
+        }
+
+        // Save PDF to file
+        const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
+        await fse.outputFile(filePath, pdfBuffer);
+
+        console.log(`Prescription PDF generated successfully at: ${filePath}`);
+
+        // Update workflow fields
+        try {
+          await storage.updateLabResult(labResultId, organizationId, {
+            readyToGenerateLab: true
+          });
+          console.log(`✅ Successfully updated ready_to_generate_lab to true for lab result ID: ${labResultId}`);
+        } catch (updateError) {
+          console.error(`❌ Error updating workflow fields for lab result ID ${labResultId}:`, updateError);
+        }
+
+        res.json({
+          success: true,
+          message: "Prescription PDF generated successfully",
+          filePath: `uploads/${pdfDirectoryName}/${organizationId}/${labResult.patientId}/${fileName}`,
+          fileName: fileName,
+          testId: labResult.testId
+        });
+
+        return; // Exit early for prescription PDF
+      }
+
+      // ========== LAB TEST RESULT REPORT PDF LAYOUT (existing code) ==========
+      
+      // Fetch doctor/user who ordered the test
+      let orderedByUser = null;
+      if (labResult.orderedBy) {
+        try {
+          orderedByUser = await storage.getUser(labResult.orderedBy, organizationId);
+        } catch (error) {
+          console.error('Error fetching ordered by user:', error);
+        }
+      }
+      
+      // Fetch user who created the report (for REPORT CREATED BY section)
+      let reportCreator = null;
+      if (req.user?.id) {
+        try {
+          reportCreator = await storage.getUser(req.user.id, organizationId);
+        } catch (error) {
+          console.error('Error fetching report creator:', error);
+        }
+      }
 
       // Logo dimensions
       const logoWidth = 35;
@@ -11318,59 +12150,101 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       yPos += 10;
 
       // Title - "Lab Test Result Report"
-      doc.setFontSize(20);
+      doc.setFontSize(16);
       doc.setFont('helvetica', 'bold');
       doc.text('Lab Test Result Report', pageWidth / 2, yPos, { align: 'center' });
-      yPos += 20;
+      yPos += 12;
 
-      // Lab Order Information Section
-      doc.setFontSize(14);
+      // PATIENT INFORMATION Section
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
-      doc.text('Lab Order Information', 20, yPos);
-      yPos += 10;
+      doc.text('PATIENT INFORMATION', 20, yPos);
+      yPos += 6;
 
-      // Simple list format (no table)
-      doc.setFontSize(11);
       doc.setFont('helvetica', 'normal');
       
       // Patient Name
       doc.setFont('helvetica', 'bold');
       doc.text('Patient Name:', 20, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(`${patient.firstName} ${patient.lastName}`, 80, yPos);
-      yPos += 7;
+      doc.text(`${patient.firstName} ${patient.lastName}`, 70, yPos);
+      yPos += 5;
 
       // Test ID
       doc.setFont('helvetica', 'bold');
       doc.text('Test ID:', 20, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(labResult.testId, 80, yPos);
-      yPos += 7;
-
-      // Ordered Date
-      doc.setFont('helvetica', 'bold');
-      doc.text('Ordered Date:', 20, yPos);
-      doc.setFont('helvetica', 'normal');
-      doc.text(
-        labResult.orderedAt ? new Date(labResult.orderedAt).toLocaleDateString() : 'N/A',
-        80,
-        yPos
-      );
-      yPos += 7;
+      doc.text(labResult.testId, 70, yPos);
+      yPos += 5;
 
       // Ordered By
       doc.setFont('helvetica', 'bold');
       doc.text('Ordered By:', 20, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(req.user?.firstName ? `${req.user.firstName} ${req.user.lastName}` : 'N/A', 80, yPos);
-      yPos += 7;
+      const orderedByName = labResult.doctorName || (orderedByUser ? `${orderedByUser.firstName} ${orderedByUser.lastName}` : 'N/A');
+      doc.text(orderedByName, 70, yPos);
+      yPos += 5;
 
       // Priority
       doc.setFont('helvetica', 'bold');
       doc.text('Priority:', 20, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(labResult.priority || 'routine', 80, yPos);
-      yPos += 15;
+      doc.text(labResult.priority || 'routine', 70, yPos);
+      yPos += 10;
+
+      // DOCTOR DETAILS Section
+      doc.setFont('helvetica', 'bold');
+      doc.text('DOCTOR DETAILS', 20, yPos);
+      yPos += 6;
+
+      doc.setFont('helvetica', 'normal');
+      const doctorName = labResult.doctorName || (orderedByUser ? `${orderedByUser.firstName || ''} ${orderedByUser.lastName || ''}`.trim() : 'N/A');
+      doc.setFont('helvetica', 'bold');
+      doc.text('Name:', 20, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(doctorName ? `Dr. ${doctorName}` : 'N/A', 70, yPos);
+      yPos += 5;
+
+      const doctorEmail = orderedByUser?.email || 'N/A';
+      if (doctorEmail !== 'N/A') {
+        doc.setFont('helvetica', 'bold');
+        doc.text('Email:', 20, yPos);
+        doc.setFont('helvetica', 'normal');
+        doc.text(doctorEmail, 70, yPos);
+        yPos += 5;
+      }
+      yPos += 8;
+
+      // REPORT CREATED BY Section
+      doc.setFont('helvetica', 'bold');
+      doc.text('REPORT CREATED BY', 20, yPos);
+      yPos += 6;
+
+      doc.setFont('helvetica', 'normal');
+      const creatorName = reportCreator 
+        ? `${reportCreator.firstName || ''} ${reportCreator.lastName || ''}`.trim() || reportCreator.email || 'N/A'
+        : 'N/A';
+      doc.setFont('helvetica', 'bold');
+      doc.text('Name:', 20, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(creatorName, 70, yPos);
+      yPos += 5;
+      
+      const creatorEmail = reportCreator?.email || req.user?.email || 'N/A';
+      if (creatorEmail !== 'N/A') {
+        doc.setFont('helvetica', 'bold');
+        doc.text('Email:', 20, yPos);
+        doc.setFont('helvetica', 'normal');
+        doc.text(creatorEmail, 70, yPos);
+        yPos += 5;
+      }
+      
+      const creatorRole = reportCreator?.role || req.user?.role || 'N/A';
+      doc.setFont('helvetica', 'bold');
+      doc.text('Role:', 20, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(creatorRole, 70, yPos);
+      yPos += 8;
 
       // Results Table - Group by test type
       if (labResult.results) {
@@ -11418,16 +12292,16 @@ This treatment plan should be reviewed and adjusted based on individual patient 
               }
 
               // Test Type Header (Blue text, no background)
-              doc.setFontSize(14);
+              doc.setFontSize(9);
               doc.setFont('helvetica', 'bold');
               doc.setTextColor(66, 133, 244);
               doc.text(testType, 20, yPos);
               doc.setTextColor(0, 0, 0);
-              yPos += 10;
+              yPos += 6;
 
               // Table Header
               const tableStartY = yPos;
-              const rowHeight = 8;
+              const rowHeight = 6;
               const colWidths = [60, 30, 30, 50]; // Parameter, Value, Unit, Reference Range
               const tableX = 20;
               const tableWidth = colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3];
@@ -11442,11 +12316,11 @@ This treatment plan should be reviewed and adjusted based on individual patient 
               
               // Header text
               doc.setFont('helvetica', 'bold');
-              doc.setFontSize(10);
-              doc.text('Parameter', tableX + 2, tableStartY + 5);
-              doc.text('Value', tableX + colWidths[0] + 2, tableStartY + 5);
-              doc.text('Unit', tableX + colWidths[0] + colWidths[1] + 2, tableStartY + 5);
-              doc.text('Reference Range', tableX + colWidths[0] + colWidths[1] + colWidths[2] + 2, tableStartY + 5);
+              doc.setFontSize(9);
+              doc.text('Parameter', tableX + 2, tableStartY + 4);
+              doc.text('Value', tableX + colWidths[0] + 2, tableStartY + 4);
+              doc.text('Unit', tableX + colWidths[0] + colWidths[1] + 2, tableStartY + 4);
+              doc.text('Reference Range', tableX + colWidths[0] + colWidths[1] + colWidths[2] + 2, tableStartY + 4);
               
               yPos = tableStartY + rowHeight;
 
@@ -11459,6 +12333,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
 
               // Table rows
               doc.setFont('helvetica', 'normal');
+              doc.setFontSize(9);
               sortedResults.forEach((result: any, index: number) => {
                 if (yPos > 270) {
                   doc.addPage();
@@ -11477,15 +12352,15 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                 // Row data - use the displayName (parameter name without test type prefix)
                 const paramName = result.displayName || result.testName || result.name || '';
                 
-                doc.text(paramName, tableX + 2, yPos + 5);
-                doc.text(String(result.value || ''), tableX + colWidths[0] + 2, yPos + 5);
-                doc.text(result.unit || '', tableX + colWidths[0] + colWidths[1] + 2, yPos + 5);
-                doc.text(result.referenceRange || '', tableX + colWidths[0] + colWidths[1] + colWidths[2] + 2, yPos + 5);
+                doc.text(paramName, tableX + 2, yPos + 4);
+                doc.text(String(result.value || ''), tableX + colWidths[0] + 2, yPos + 4);
+                doc.text(result.unit || '', tableX + colWidths[0] + colWidths[1] + 2, yPos + 4);
+                doc.text(result.referenceRange || '', tableX + colWidths[0] + colWidths[1] + colWidths[2] + 2, yPos + 4);
                 
                 yPos += rowHeight;
               });
 
-              yPos += 10;
+              yPos += 6;
             });
           }
         } catch (e) {
@@ -11498,17 +12373,17 @@ This treatment plan should be reviewed and adjusted based on individual patient 
 
       // Clinical Notes
       if (labResult.notes) {
-        yPos += 5;
+        yPos += 4;
         if (yPos > 270) {
           doc.addPage();
           yPos = 20;
         }
-        doc.setFontSize(14);
+        doc.setFontSize(9);
         doc.setFont('helvetica', 'bold');
         doc.text('Clinical Notes', 20, yPos);
-        yPos += 10;
+        yPos += 6;
 
-        doc.setFontSize(11);
+        doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
         const splitNotes = doc.splitTextToSize(labResult.notes, 170);
         doc.text(splitNotes, 20, yPos);
@@ -11531,15 +12406,37 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       await fse.outputFile(filePath, pdfBuffer);
 
       console.log(`PDF generated successfully at: ${filePath}`);
+      console.log(`PDF saved to: uploads/${pdfDirectoryName}/${organizationId}/${labResult.patientId}/${fileName}`);
 
-      // Update labReportGenerated to true
+      // Update workflow fields based on PDF type - ONLY after PDF is successfully saved
+      try {
+        if (isPrescription) {
+          // When prescription PDF is saved (from Request Report tab), 
+          // set ready_to_generate_lab = true in lab_results table
+          // PDF is saved to: uploads/Lab_Prescription/{organization_id}/{patient_id}/{TestID}.pdf
       await storage.updateLabResult(labResultId, organizationId, {
-        labReportGenerated: true
-      });
-      console.log(`Updated labReportGenerated to true for lab result ID: ${labResultId}`);
+            readyToGenerateLab: true
+          });
+          console.log(`✅ Successfully updated ready_to_generate_lab to true for lab result ID: ${labResultId}`);
+        } else {
+          // When lab report PDF is generated (from Generate Reports tab), 
+          // set both ready_to_generate_lab = true AND lab_result_generated_report = true
+          // PDF is saved to: uploads/Lab_TestResults/{organization_id}/{patient_id}/{TestID}.pdf
+          await storage.updateLabResult(labResultId, organizationId, {
+            labReportGenerated: true,
+            readyToGenerateLab: true,
+            labResultGeneratedReport: true
+          });
+          console.log(`✅ Successfully updated ready_to_generate_lab and lab_result_generated_report to true for lab result ID: ${labResultId}`);
+        }
+      } catch (updateError) {
+        console.error(`❌ Error updating workflow fields for lab result ID ${labResultId}:`, updateError);
+        // Don't fail the entire request if update fails, but log the error
+        // The PDF was saved successfully, so we still return success
+      }
 
       // Return relative path for download
-      const relativePath = `uploads/Lab_TestResults/${organizationId}/${labResult.patientId}/${fileName}`;
+      const relativePath = `uploads/${pdfDirectoryName}/${organizationId}/${labResult.patientId}/${fileName}`;
 
       res.json({
         success: true,
@@ -11569,6 +12466,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
 
       const organizationId = req.tenant!.id;
 
+      // Check if this is a prescription PDF request
+      const isPrescription = req.query.type === 'prescription';
+
       // Fetch lab result
       const labResults = await storage.getLabResults(organizationId);
       const labResult = labResults.find(result => result.id === labResultId);
@@ -11577,14 +12477,16 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         return res.status(404).json({ error: "Lab result not found" });
       }
 
-      // Construct file path: uploads/Lab_TestResults/{organization_id}/{patient_id}/{TestID}.pdf
+      // Construct file path based on type
+      const pdfDirectoryName = isPrescription ? 'Lab_Prescription' : 'Lab_TestResults';
       const fileName = `${labResult.testId}.pdf`;
-      const filePath = path.join(process.cwd(), 'uploads', 'Lab_TestResults', organizationId.toString(), labResult.patientId.toString(), fileName);
+      const filePath = path.join(process.cwd(), 'uploads', pdfDirectoryName, organizationId.toString(), labResult.patientId.toString(), fileName);
 
       console.log(`[LAB-DOWNLOAD] Lab result ID: ${labResultId}`);
       console.log(`[LAB-DOWNLOAD] Organization ID: ${organizationId}`);
       console.log(`[LAB-DOWNLOAD] Patient ID: ${labResult.patientId}`);
       console.log(`[LAB-DOWNLOAD] Test ID: ${labResult.testId}`);
+      console.log(`[LAB-DOWNLOAD] Type: ${isPrescription ? 'prescription' : 'test result'}`);
       console.log(`[LAB-DOWNLOAD] File path: ${filePath}`);
 
       // Check if file exists
@@ -11607,6 +12509,77 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("Error downloading lab result PDF:", error);
       res.status(500).json({ error: "Failed to download PDF" });
+    }
+  });
+
+  // Delete lab result PDF (prescription or test result)
+  app.delete("/api/lab-results/:id/delete-pdf", authMiddleware, requireNonPatientRole(), async (req: TenantRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      const labResultId = parseInt(req.params.id);
+      if (isNaN(labResultId)) {
+        return res.status(400).json({ error: "Invalid lab result ID" });
+      }
+
+      const organizationId = req.tenant!.id;
+
+      // Check if this is a prescription PDF request
+      const isPrescription = req.query.type === 'prescription';
+
+      // Fetch lab result
+      const labResults = await storage.getLabResults(organizationId);
+      const labResult = labResults.find(result => result.id === labResultId);
+      
+      if (!labResult) {
+        return res.status(404).json({ error: "Lab result not found" });
+      }
+
+      // Construct file path based on type
+      const pdfDirectoryName = isPrescription ? 'Lab_Prescription' : 'Lab_TestResults';
+      const fileName = `${labResult.testId}.pdf`;
+      const filePath = path.join(process.cwd(), 'uploads', pdfDirectoryName, organizationId.toString(), labResult.patientId.toString(), fileName);
+
+      console.log(`[LAB-DELETE] Lab result ID: ${labResultId}`);
+      console.log(`[LAB-DELETE] Organization ID: ${organizationId}`);
+      console.log(`[LAB-DELETE] Type: ${isPrescription ? 'prescription' : 'test result'}`);
+      console.log(`[LAB-DELETE] File path: ${filePath}`);
+
+      // Check if file exists
+      const fileExists = await fse.pathExists(filePath);
+      console.log(`[LAB-DELETE] File exists: ${fileExists}`);
+      
+      if (!fileExists) {
+        return res.status(404).json({ error: "PDF file not found." });
+      }
+
+      // Delete the file
+      await fse.remove(filePath);
+      console.log(`[LAB-DELETE] File deleted successfully: ${filePath}`);
+
+      // If prescription is deleted, optionally reset readyToGenerateLab flag
+      if (isPrescription) {
+        try {
+          await storage.updateLabResult(labResultId, organizationId, {
+            readyToGenerateLab: false
+          });
+          console.log(`[LAB-DELETE] Reset ready_to_generate_lab to false for lab result ID: ${labResultId}`);
+        } catch (updateError) {
+          console.error(`[LAB-DELETE] Error updating workflow fields:`, updateError);
+          // Don't fail the request if update fails
+        }
+      }
+
+      res.json({
+        success: true,
+        message: "PDF deleted successfully"
+      });
+
+    } catch (error) {
+      console.error("Error deleting lab result PDF:", error);
+      res.status(500).json({ error: "Failed to delete PDF" });
     }
   });
 
@@ -12080,6 +13053,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
 
       const organizationId = req.tenant!.id;
 
+      // Check if this is a prescription PDF request
+      const isPrescription = req.query.type === 'prescription';
+
       // Fetch lab result to verify access
       const labResults = await storage.getLabResults(organizationId);
       const labResult = labResults.find(result => result.id === labResultId);
@@ -12110,7 +13086,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           organizationId: organizationId,
           patientId: labResult.patientId,
           testId: labResult.testId,
-          userId: req.user.id
+          userId: req.user.id,
+          fileType: isPrescription ? 'prescription' : 'testresult'
         }, 
         fileSecret, 
         { expiresIn: "5m" }
@@ -12178,11 +13155,14 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         return res.status(403).json({ error: "Invalid or expired link" });
       }
 
-      const { fileId, organizationId, patientId, testId } = payload;
+      const { fileId, organizationId, patientId, testId, fileType } = payload;
+      
+      // Determine directory based on file type (prescription or test result)
+      const directoryName = fileType === 'prescription' ? 'Lab_Prescription' : 'Lab_TestResults';
       
       // Construct file path
       const fileName = `${testId}.pdf`;
-      const relativePath = `uploads/Lab_TestResults/${organizationId}/${patientId}/${fileName}`;
+      const relativePath = `uploads/${directoryName}/${organizationId}/${patientId}/${fileName}`;
       const fullPath = path.join(process.cwd(), relativePath);
 
       // Check if file exists
@@ -23642,16 +24622,719 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   app.get("/api/inventory/goods-receipts/:id", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
     try {
       const receiptId = parseInt(req.params.id);
+      if (isNaN(receiptId)) {
+        return res.status(400).json({ error: "Invalid receipt ID" });
+      }
+      
+      console.log(`[INVENTORY API] Fetching goods receipt ${receiptId} for organization ${req.tenant!.id}`);
       const receipt = await inventoryService.getGoodsReceiptById(receiptId, req.tenant!.id);
+      
       if (!receipt) {
+        console.log(`[INVENTORY API] Goods receipt ${receiptId} not found`);
         return res.status(404).json({ error: "Goods receipt not found" });
       }
+      
+      console.log(`[INVENTORY API] Successfully fetched goods receipt ${receiptId} with ${receipt.items?.length || 0} items`);
       res.json(receipt);
-    } catch (error) {
-      console.error("Error fetching goods receipt detail:", error);
-      res.status(500).json({ error: "Failed to fetch goods receipt detail" });
+    } catch (error: any) {
+      console.error("[INVENTORY API] Error fetching goods receipt detail:", error);
+      console.error("[INVENTORY API] Error stack:", error?.stack);
+      res.status(500).json({ 
+        error: "Failed to fetch goods receipt detail",
+        message: error?.message || "Unknown error"
+      });
     }
   });
+
+  app.delete("/api/inventory/goods-receipts/:id", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
+    try {
+      const receiptId = parseInt(req.params.id);
+      if (isNaN(receiptId)) {
+        return res.status(400).json({ error: "Invalid goods receipt ID" });
+      }
+
+      const deleted = await inventoryService.deleteGoodsReceipt(receiptId, req.tenant!.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Goods receipt not found" });
+      }
+
+      res.json({ success: true, message: "Goods receipt deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting goods receipt:", error);
+      res.status(500).json({ error: "Failed to delete goods receipt", message: error?.message });
+    }
+  });
+
+  // Helper function to generate Goods Receipt PDF
+  const generateGoodsReceiptPDF = async (receiptId: number, organizationId: number, userId: number) => {
+    const receipt = await inventoryService.getGoodsReceiptById(receiptId, organizationId);
+    if (!receipt) {
+      throw new Error("Goods receipt not found");
+    }
+
+    // Log receipt data for debugging
+    console.log(`[GOODS-RECEIPT-PDF] Receipt ${receiptId} data:`, {
+      purchaseOrderId: receipt.purchaseOrderId,
+      itemsCount: receipt.items?.length || 0,
+      purchaseOrderItemsCount: receipt.purchaseOrderItems?.length || 0,
+      totalAmount: receipt.totalAmount
+    });
+
+    const purchaseOrderId = receipt.purchaseOrderId || receiptId;
+    const pdfFileName = `${purchaseOrderId}.pdf`;
+    const pdfDir = path.join(process.cwd(), `uploads/Goods_Receipt/${organizationId}/${userId}`);
+    const pdfPath = path.join(pdfDir, pdfFileName);
+
+    // Check if PDF already exists
+    let pdfExists = false;
+    try {
+      await access(pdfPath);
+      pdfExists = true;
+    } catch {
+      pdfExists = false;
+    }
+
+    if (!pdfExists) {
+      // Fetch clinic header and footer
+      let clinicHeader, clinicFooter;
+      try {
+        clinicHeader = await storage.getActiveClinicHeader(organizationId);
+        clinicFooter = await storage.getActiveClinicFooter(organizationId);
+    } catch (error) {
+        console.log('[GOODS-RECEIPT-PDF] Could not fetch clinic header/footer:', error);
+      }
+
+      // Import pdf-lib dynamically
+      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
+
+      // Create PDF document
+      const pdfDoc = await PDFDocument.create();
+      let page = pdfDoc.addPage([595, 842]); // A4 size
+      const { width, height } = page.getSize();
+
+      // Load fonts
+      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBoldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      const margin = 50;
+      const lineHeight = 14;
+      const smallFontSize = 8;
+      const normalFontSize = 10;
+      const mediumFontSize = 12;
+      const largeFontSize = 16;
+      const titleFontSize = 20;
+
+      let yPosition = height - 50; // Start lower to give more top margin
+      const logoSize = 60;
+      const logoMargin = 15;
+      let textStartX = margin;
+      let headerBottomY = yPosition; // Track the bottom of header section
+
+      // Add clinic header with logo on left
+      if (clinicHeader?.logoBase64) {
+        try {
+          let imageData = clinicHeader.logoBase64;
+          if (imageData.includes(',')) {
+            imageData = imageData.split(',')[1];
+          }
+          const logoBytes = Uint8Array.from(Buffer.from(imageData, 'base64'));
+          let logoImage;
+          try {
+            logoImage = await pdfDoc.embedPng(logoBytes);
+          } catch (pngErr) {
+            try {
+              logoImage = await pdfDoc.embedJpg(logoBytes);
+            } catch (jpgErr) {
+              console.log('[GOODS-RECEIPT-PDF] Could not embed logo:', jpgErr);
+            }
+          }
+          if (logoImage) {
+            const logoDims = logoImage.scaleToFit(logoSize, logoSize);
+            page.drawImage(logoImage, {
+              x: margin,
+              y: yPosition - logoDims.height,
+              width: logoDims.width,
+              height: logoDims.height,
+            });
+            textStartX = margin + logoDims.width + logoMargin;
+            headerBottomY = Math.min(headerBottomY, yPosition - logoDims.height);
+          }
+        } catch (err) {
+          console.log('[GOODS-RECEIPT-PDF] Could not add logo:', err);
+        }
+      }
+
+      // Clinic header text
+      const clinicName = clinicHeader?.clinicName || "Clinic";
+      const clinicNameFontSize = parseInt(clinicHeader?.clinicNameFontSize?.replace('pt', '') || '16');
+      page.drawText(clinicName, {
+        x: textStartX,
+        y: yPosition,
+        size: Math.min(clinicNameFontSize, 16),
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+
+      yPosition -= 15;
+
+      // Clinic address, phone, email
+      if (clinicHeader?.address) {
+        page.drawText(clinicHeader.address, {
+          x: textStartX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        yPosition -= 10;
+      }
+      if (clinicHeader?.phone) {
+        page.drawText(clinicHeader.phone, {
+          x: textStartX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        yPosition -= 10;
+      }
+      if (clinicHeader?.email) {
+        page.drawText(clinicHeader.email, {
+          x: textStartX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        yPosition -= 10;
+      }
+
+      // Title
+      yPosition -= 30;
+      page.drawText('GOODS RECEIPT', {
+        x: (width - helveticaBoldFont.widthOfTextAtSize('GOODS RECEIPT', titleFontSize)) / 2,
+        y: yPosition,
+        size: titleFontSize,
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+
+      yPosition -= 40;
+
+      // Receipt details - Two columns
+      const leftColumnX = margin;
+      const rightColumnX = width / 2 + 20;
+
+      // Left Column
+      page.drawText('Receipt Number:', {
+        x: leftColumnX,
+        y: yPosition,
+        size: normalFontSize,
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+      page.drawText(receipt.receiptNumber || `GR-${receiptId}`, {
+        x: leftColumnX + 100,
+        y: yPosition,
+        size: normalFontSize,
+        font: helveticaFont,
+        color: rgb(0, 0, 0),
+      });
+
+      page.drawText('PO Number:', {
+        x: leftColumnX,
+        y: yPosition - 20,
+        size: normalFontSize,
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+      // Use PO number from purchaseOrder if available, otherwise fallback to receipt.poNumber or generate from ID
+      const poNumber = receipt.purchaseOrder?.poNumber || receipt.poNumber || (receipt.purchaseOrderId ? `PO-${receipt.purchaseOrderId}` : 'N/A');
+      page.drawText(poNumber, {
+        x: leftColumnX + 100,
+        y: yPosition - 20,
+        size: normalFontSize,
+        font: helveticaFont,
+        color: rgb(0, 0, 0),
+      });
+
+      // Get supplier email early for spacing calculations
+      const supplierEmail = receipt.purchaseOrder?.supplierEmail || receipt.supplierEmail || null;
+      const hasExpectedDelivery = receipt.purchaseOrder?.expectedDeliveryDate ? true : false;
+
+      page.drawText('Supplier:', {
+        x: leftColumnX,
+        y: yPosition - 40,
+        size: normalFontSize,
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+      page.drawText(receipt.supplierName || 'N/A', {
+        x: leftColumnX + 100,
+        y: yPosition - 40,
+        size: normalFontSize,
+        font: helveticaFont,
+        color: rgb(0, 0, 0),
+      });
+
+      // Supplier Email (below supplier name)
+      if (supplierEmail) {
+        page.drawText('Supplier Email:', {
+          x: leftColumnX,
+          y: yPosition - 60,
+          size: normalFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        page.drawText(supplierEmail, {
+          x: leftColumnX + 100,
+          y: yPosition - 60,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+      }
+
+      // Right Column
+      const receivedDate = new Date(receipt.receivedDate);
+      const formattedDate = receivedDate.toLocaleDateString('en-GB', { 
+        day: '2-digit', 
+        month: 'short', 
+        year: 'numeric' 
+      });
+
+      page.drawText('Received Date:', {
+        x: rightColumnX,
+        y: yPosition,
+        size: normalFontSize,
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+      page.drawText(formattedDate, {
+        x: rightColumnX + 100,
+        y: yPosition,
+        size: normalFontSize,
+        font: helveticaFont,
+        color: rgb(0, 0, 0),
+      });
+
+      if (receipt.purchaseOrder) {
+        page.drawText('Order Date:', {
+          x: rightColumnX,
+          y: yPosition - 20,
+          size: normalFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        const orderDate = new Date(receipt.purchaseOrder.createdAt);
+        const formattedOrderDate = orderDate.toLocaleDateString('en-GB', { 
+          day: '2-digit', 
+          month: 'short', 
+          year: 'numeric' 
+        });
+        page.drawText(formattedOrderDate, {
+          x: rightColumnX + 100,
+          y: yPosition - 20,
+          size: normalFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+
+        // Expected Delivery Date
+        if (receipt.purchaseOrder.expectedDeliveryDate) {
+          page.drawText('Expected Delivery:', {
+            x: rightColumnX,
+            y: yPosition - 40,
+            size: normalFontSize,
+            font: helveticaBoldFont,
+            color: rgb(0, 0, 0),
+          });
+          const expectedDeliveryDate = new Date(receipt.purchaseOrder.expectedDeliveryDate);
+          const formattedExpectedDate = expectedDeliveryDate.toLocaleDateString('en-GB', { 
+            day: '2-digit', 
+            month: 'short', 
+            year: 'numeric' 
+          });
+          page.drawText(formattedExpectedDate, {
+            x: rightColumnX + 100,
+            y: yPosition - 40,
+            size: normalFontSize,
+            font: helveticaFont,
+            color: rgb(0, 0, 0),
+          });
+        }
+      }
+
+      // Calculate receipt details bottom position (lowest y value)
+      // Account for supplier email and expected delivery date if they exist
+      const hasSupplierEmail = supplierEmail ? true : false;
+      const receiptDetailsBottom = yPosition - (hasSupplierEmail ? 60 : 40) - (hasExpectedDelivery ? 20 : 0);
+      
+      // Purchase Order Details Section - Place it right after receipt details
+      if (receipt.purchaseOrder) {
+        yPosition = receiptDetailsBottom - 25; // Position right after receipt details
+        
+        page.drawText('Purchase Order Details:', {
+          x: margin,
+          y: yPosition,
+          size: mediumFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        
+        yPosition -= 20;
+        
+        // PO Status
+        page.drawText('PO Status:', {
+          x: leftColumnX,
+          y: yPosition,
+          size: normalFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        const poStatus = receipt.purchaseOrder.status || 'N/A';
+        page.drawText(poStatus.charAt(0).toUpperCase() + poStatus.slice(1), {
+          x: leftColumnX + 100,
+          y: yPosition,
+          size: normalFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+
+        // PO Total Amount
+        const poTotalAmount = typeof receipt.purchaseOrder.totalAmount === 'number' 
+          ? receipt.purchaseOrder.totalAmount 
+          : parseFloat(String(receipt.purchaseOrder.totalAmount || '0')) || 0;
+        page.drawText('PO Total Amount:', {
+          x: rightColumnX,
+          y: yPosition,
+          size: normalFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        page.drawText(`£${poTotalAmount.toFixed(2)}`, {
+          x: rightColumnX + 100,
+          y: yPosition,
+          size: normalFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+
+        yPosition -= 20;
+
+        // Tax / Discount
+        const poTaxAmount = typeof receipt.purchaseOrder.taxAmount === 'number' 
+          ? receipt.purchaseOrder.taxAmount 
+          : parseFloat(String(receipt.purchaseOrder.taxAmount || '0')) || 0;
+        const poDiscountAmount = typeof receipt.purchaseOrder.discountAmount === 'number' 
+          ? receipt.purchaseOrder.discountAmount 
+          : parseFloat(String(receipt.purchaseOrder.discountAmount || '0')) || 0;
+        
+        page.drawText('Tax / Discount:', {
+          x: leftColumnX,
+          y: yPosition,
+          size: normalFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        page.drawText(`Tax: £${poTaxAmount.toFixed(2)} · Discount: £${poDiscountAmount.toFixed(2)}`, {
+          x: leftColumnX + 100,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+
+        // PO Notes
+        yPosition -= 18;
+        page.drawText('PO Notes:', {
+          x: leftColumnX,
+          y: yPosition,
+          size: normalFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        if (receipt.purchaseOrder.notes && receipt.purchaseOrder.notes.trim()) {
+          yPosition -= 15;
+          const poNotesLines = receipt.purchaseOrder.notes.match(/.{1,80}/g) || [receipt.purchaseOrder.notes];
+          for (const line of poNotesLines.slice(0, 3)) {
+            page.drawText(line, {
+              x: leftColumnX + 5,
+              y: yPosition,
+              size: smallFontSize,
+              font: helveticaFont,
+              color: rgb(0, 0, 0),
+            });
+            yPosition -= 12;
+          }
+        } else {
+          page.drawText('No additional notes were added.', {
+            x: leftColumnX + 100,
+            y: yPosition,
+            size: smallFontSize,
+            font: helveticaFont,
+            color: rgb(0.5, 0.5, 0.5),
+          });
+        }
+      } else {
+        yPosition = receiptDetailsBottom - 25;
+      }
+      
+      // Ensure minimum spacing between Purchase Order Details and items table
+      yPosition -= 25; // Add spacing before items table
+      
+      // Ensure table doesn't start too high (minimum top margin check)
+      const minTableTopY = headerBottomY - 260;
+      if (yPosition > minTableTopY) {
+        yPosition = minTableTopY;
+      }
+
+      // Items table header
+      const tableTopY = yPosition;
+      const tableHeaderHeight = 20;
+      page.drawRectangle({
+        x: margin,
+        y: tableTopY - tableHeaderHeight,
+        width: width - 2 * margin,
+        height: tableHeaderHeight,
+        color: rgb(0.9, 0.9, 0.9),
+      });
+
+      const columnWidths = [180, 60, 80, 80, 70, 70];
+      const columnHeaders = ['Item', 'Qty', 'Batch #', 'Expiry', 'Unit Price', 'Total'];
+      let currentX = margin + 5;
+      for (let i = 0; i < columnHeaders.length; i++) {
+        page.drawText(columnHeaders[i], {
+          x: currentX,
+          y: tableTopY - 15,
+          size: smallFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        currentX += columnWidths[i];
+      }
+
+      yPosition = tableTopY - tableHeaderHeight - 5;
+
+      // Use purchaseOrderItems if available, otherwise fall back to receipt.items
+      // Create a map of stock movement items by itemId for batch/expiry info
+      const stockMovementItemsMap = new Map<number, any>();
+      if (receipt.items && Array.isArray(receipt.items)) {
+        for (const stockItem of receipt.items) {
+          if (stockItem.itemId) {
+            stockMovementItemsMap.set(stockItem.itemId, {
+              batchNumber: stockItem.batchNumber || null,
+              expiryDate: stockItem.expiryDate || null,
+            });
+          }
+        }
+      }
+
+      // Prioritize purchaseOrderItems from inventory_purchase_order_items table
+      const displayItems = (receipt.purchaseOrderItems && receipt.purchaseOrderItems.length > 0)
+        ? receipt.purchaseOrderItems
+        : (receipt.items || []);
+
+      console.log(`[GOODS-RECEIPT-PDF] Using ${displayItems.length} items for PDF (${receipt.purchaseOrderItems?.length || 0} from PO items, ${receipt.items?.length || 0} from stock movements)`);
+
+      // Calculate total from items first
+      let calculatedTotal = 0;
+      for (const item of displayItems) {
+        const quantity = item.quantity || item.quantityReceived || item.receivedQuantity || 0;
+        const unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(String(item.unitPrice || '0')) || 0;
+        const itemTotal = typeof item.totalPrice === 'number' && item.totalPrice > 0 
+          ? item.totalPrice 
+          : unitPrice * quantity;
+        calculatedTotal += itemTotal;
+      }
+
+      // Items rows
+      for (const item of displayItems) {
+        // Check if we need a new page
+        if (yPosition < margin + 50) {
+          page = pdfDoc.addPage([595, 842]);
+          yPosition = height - margin;
+          // Redraw table header on new page
+          const newTableTopY = yPosition;
+          page.drawRectangle({
+            x: margin,
+            y: newTableTopY - tableHeaderHeight,
+            width: width - 2 * margin,
+            height: tableHeaderHeight,
+            color: rgb(0.9, 0.9, 0.9),
+          });
+          let headerX = margin + 5;
+          for (let i = 0; i < columnHeaders.length; i++) {
+            page.drawText(columnHeaders[i], {
+              x: headerX,
+              y: newTableTopY - 15,
+              size: smallFontSize,
+              font: helveticaBoldFont,
+              color: rgb(0, 0, 0),
+            });
+            headerX += columnWidths[i];
+          }
+          yPosition = newTableTopY - tableHeaderHeight - 5;
+        }
+
+        // Get batch/expiry from stock movements if available
+        const stockItemInfo = item.itemId ? stockMovementItemsMap.get(item.itemId) : null;
+        const batchNumber = stockItemInfo?.batchNumber || item.batchNumber || 'N/A';
+        const expiryDate = stockItemInfo?.expiryDate || item.expiryDate || null;
+
+        currentX = margin + 5;
+        page.drawText(item.itemName || 'N/A', {
+          x: currentX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        currentX += columnWidths[0];
+
+        // Use quantity from purchase order items, or quantityReceived from stock movements
+        const quantity = item.quantity || item.quantityReceived || item.receivedQuantity || 0;
+        page.drawText(String(quantity), {
+          x: currentX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        currentX += columnWidths[1];
+
+        page.drawText(batchNumber || 'N/A', {
+          x: currentX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        currentX += columnWidths[2];
+
+        const expiryText = expiryDate ? new Date(expiryDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+        page.drawText(expiryText, {
+          x: currentX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        currentX += columnWidths[3];
+
+        const unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(String(item.unitPrice || '0')) || 0;
+        page.drawText(`£${unitPrice.toFixed(2)}`, {
+          x: currentX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+        currentX += columnWidths[4];
+
+        // Calculate total price: unitPrice * quantity
+        const itemTotalPrice = unitPrice * quantity;
+        const totalPrice = typeof item.totalPrice === 'number' && item.totalPrice > 0 
+          ? item.totalPrice 
+          : itemTotalPrice;
+        page.drawText(`£${totalPrice.toFixed(2)}`, {
+          x: currentX,
+          y: yPosition,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: rgb(0, 0, 0),
+        });
+
+        yPosition -= 18; // Increased spacing between rows to prevent overlap
+      }
+
+      // Goods Receipt Total amount - use calculated total from items or receipt totalAmount
+      yPosition -= 25;
+      const receiptTotalAmount = typeof receipt.totalAmount === 'number' ? receipt.totalAmount : parseFloat(String(receipt.totalAmount || '0')) || 0;
+      // Use calculated total if receipt total is 0 or invalid, otherwise use receipt total
+      const finalTotalAmount = (receiptTotalAmount > 0) ? receiptTotalAmount : calculatedTotal;
+      
+      page.drawText('Total Amount:', {
+        x: width - margin - 150,
+        y: yPosition,
+        size: mediumFontSize,
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+      page.drawText(`£${finalTotalAmount.toFixed(2)}`, {
+        x: width - margin - 50,
+        y: yPosition,
+        size: mediumFontSize,
+        font: helveticaBoldFont,
+        color: rgb(0, 0, 0),
+      });
+
+      // Goods Receipt Notes
+      if (receipt.notes && receipt.notes.trim()) {
+        yPosition -= 20; // Reduced spacing
+        page.drawText('Goods Receipt Notes:', {
+          x: margin,
+          y: yPosition,
+          size: normalFontSize,
+          font: helveticaBoldFont,
+          color: rgb(0, 0, 0),
+        });
+        yPosition -= 15;
+        const notesLines = receipt.notes.match(/.{1,80}/g) || [receipt.notes];
+        for (const line of notesLines.slice(0, 5)) {
+          page.drawText(line, {
+            x: margin,
+            y: yPosition,
+            size: smallFontSize,
+            font: helveticaFont,
+            color: rgb(0, 0, 0),
+          });
+          yPosition -= 12;
+        }
+      }
+
+      // Footer
+      if (clinicFooter) {
+        const footerY = 50;
+        const footerHeight = 30;
+        const footerBgColor = clinicFooter.backgroundColor || '#4A7DFF';
+        const bgRgbMatch = footerBgColor.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+        const footerRgb = bgRgbMatch
+          ? rgb(parseInt(bgRgbMatch[1], 16) / 255, parseInt(bgRgbMatch[2], 16) / 255, parseInt(bgRgbMatch[3], 16) / 255)
+          : rgb(0.29, 0.49, 1);
+
+        page.drawRectangle({
+          x: 0,
+          y: footerY,
+          width: width,
+          height: footerHeight,
+          color: footerRgb,
+        });
+
+        const footerTextColor = clinicFooter.textColor || '#FFFFFF';
+        const textRgbMatch = footerTextColor.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+        const footerTextRgb = textRgbMatch
+          ? rgb(parseInt(textRgbMatch[1], 16) / 255, parseInt(textRgbMatch[2], 16) / 255, parseInt(textRgbMatch[3], 16) / 255)
+          : rgb(1, 1, 1);
+
+        page.drawText(clinicFooter.footerText || '', {
+          x: (width - helveticaFont.widthOfTextAtSize(clinicFooter.footerText || '', smallFontSize)) / 2,
+          y: footerY + 10,
+          size: smallFontSize,
+          font: helveticaFont,
+          color: footerTextRgb,
+        });
+      }
+
+      // Save PDF
+      await fse.ensureDir(pdfDir);
+      const pdfBytes = await pdfDoc.save();
+      await fs.promises.writeFile(pdfPath, pdfBytes);
+      console.log(`[GOODS-RECEIPT-PDF] PDF saved to: ${pdfPath}`);
+    }
+
+    return pdfPath;
+  };
 
   app.post("/api/inventory/goods-receipts", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
     try {
@@ -23667,14 +25350,128 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         notes: z.string().optional()
       }).parse(req.body);
 
+      // Check if goods receipt already exists for this purchase order
+      const exists = await inventoryService.checkGoodsReceiptExists(receiptData.purchaseOrderId, req.tenant!.id);
+      if (exists) {
+        return res.status(400).json({ 
+          error: "Purchase Order already exists",
+          message: "This Purchase Order already exists in database. Please select another purchase order."
+        });
+      }
+
       const receipt = await inventoryService.createGoodsReceipt({
         ...receiptData,
         organizationId: req.tenant!.id
       });
+
+      // Generate PDF after creating receipt
+      try {
+        const receiptId = receipt.id || receipt.items?.[0]?.id;
+        if (receiptId) {
+          await generateGoodsReceiptPDF(receiptId, req.tenant!.id, req.user!.id);
+        }
+      } catch (pdfError) {
+        console.error("[GOODS-RECEIPT] Error generating PDF:", pdfError);
+        // Don't fail the request if PDF generation fails
+      }
+
       res.status(201).json(receipt);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating goods receipt:", error);
-      res.status(500).json({ error: "Failed to create goods receipt" });
+      if (error.message && error.message.includes("already exists")) {
+        return res.status(400).json({ 
+          error: "Purchase Order already exists",
+          message: error.message
+        });
+      }
+      res.status(500).json({ error: "Failed to create goods receipt", message: error?.message });
+    }
+  });
+
+  // Check if Goods Receipt PDF exists
+  app.get("/api/inventory/goods-receipts/:id/pdf/check", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
+    try {
+      const receiptId = parseInt(req.params.id);
+      if (isNaN(receiptId)) {
+        return res.status(400).json({ error: "Invalid goods receipt ID" });
+      }
+
+      const organizationId = req.tenant!.id;
+      const userId = req.user!.id;
+
+      // Get receipt to find purchase order ID
+      const receipt = await inventoryService.getGoodsReceiptById(receiptId, organizationId);
+      if (!receipt) {
+        return res.status(404).json({ error: "Goods receipt not found" });
+      }
+
+      const purchaseOrderId = receipt.purchaseOrderId || receiptId;
+      const pdfFileName = `${purchaseOrderId}.pdf`;
+      const pdfDir = path.join(process.cwd(), `uploads/Goods_Receipt/${organizationId}/${userId}`);
+      const pdfPath = path.join(pdfDir, pdfFileName);
+
+      // Check if PDF exists
+      let pdfExists = false;
+      try {
+        await access(pdfPath);
+        pdfExists = true;
+      } catch {
+        pdfExists = false;
+      }
+
+      res.json({ exists: pdfExists, path: pdfExists ? pdfPath : null });
+    } catch (error: any) {
+      console.error("[GOODS-RECEIPT-PDF] Error checking PDF existence:", error);
+      res.status(500).json({ error: "Failed to check PDF existence", message: error?.message || "Unknown error" });
+    }
+  });
+
+  // Generate Goods Receipt PDF (force generation)
+  app.post("/api/inventory/goods-receipts/:id/pdf/generate", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
+    try {
+      const receiptId = parseInt(req.params.id);
+      if (isNaN(receiptId)) {
+        return res.status(400).json({ error: "Invalid goods receipt ID" });
+      }
+
+      const organizationId = req.tenant!.id;
+      const userId = req.user!.id;
+
+      // Generate PDF (will create if doesn't exist, or regenerate if exists)
+      const pdfPath = await generateGoodsReceiptPDF(receiptId, organizationId, userId);
+
+      res.json({ success: true, path: pdfPath });
+    } catch (error: any) {
+      console.error("[GOODS-RECEIPT-PDF] Error generating goods receipt PDF:", error);
+      res.status(500).json({ error: "Failed to generate goods receipt PDF", message: error?.message || "Unknown error" });
+    }
+  });
+
+  // Generate and serve Goods Receipt PDF
+  app.get("/api/inventory/goods-receipts/:id/pdf", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
+    try {
+      const receiptId = parseInt(req.params.id);
+      if (isNaN(receiptId)) {
+        return res.status(400).json({ error: "Invalid goods receipt ID" });
+      }
+
+      const organizationId = req.tenant!.id;
+      const userId = req.user!.id;
+
+      // Generate PDF (will create if doesn't exist, or use existing)
+      const pdfPath = await generateGoodsReceiptPDF(receiptId, organizationId, userId);
+
+      const purchaseOrderId = (await inventoryService.getGoodsReceiptById(receiptId, organizationId))?.purchaseOrderId || receiptId;
+      const pdfFileName = `${purchaseOrderId}.pdf`;
+
+      // Serve the PDF
+      const pdfBuffer = await readFile(pdfPath);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${pdfFileName}"`);
+      res.send(pdfBuffer);
+    } catch (error: any) {
+      console.error("[GOODS-RECEIPT-PDF] Error generating/serving goods receipt PDF:", error);
+      res.status(500).json({ error: "Failed to generate goods receipt PDF", message: error?.message || "Unknown error" });
     }
   });
 
@@ -25707,7 +27504,7 @@ Cura EMR Team
         return res.status(401).json({ error: "User not authenticated" });
       }
 
-      const { study, reportFormData, imageData, uploadedImageFileNames, radiologyImagePaths } = req.body;
+      const { study, reportFormData, imageData, uploadedImageFileNames, radiologyImagePaths, previewImageDataUrls } = req.body;
       
       if (!study || !study.patientName) {
         return res.status(400).json({ error: "Study data is required" });
@@ -25767,34 +27564,13 @@ Cura EMR Team
       const darkGray = rgb(0.3, 0.3, 0.3);
       const blackColor = rgb(0, 0, 0);
       
-      // Helper function to add footer to any page
-      const addFooterToPage = (pageToAddFooter: typeof page) => {
-        if (clinicFooter && clinicFooter.footerText) {
-          const footerText = clinicFooter.footerText;
-          const footerTextWidth = font.widthOfTextAtSize(footerText, 8);
-          pageToAddFooter.drawText(footerText, {
-            x: (width - footerTextWidth) / 2, // Center the footer
-            y: 30, // Position at bottom of page with margin
-            size: 8,
-            font,
-            color: darkGray
-          });
-        }
-      };
-      
-      // Helper function to draw a section box (borders and background removed)
-      const drawSectionBox = (x: number, y: number, width: number, height: number) => {
-        // No borders or background - content only
-      };
-      
-      // Position tracker
-      let yPosition = height - 40;
-      
-      // Professional Formal Header with Logo and Clinic Info in a Row
+      // Helper function to add header to any page
+      const addHeaderToPage = async (pageToAddHeader: typeof page) => {
       const headerHeight = 100;
       const logoX = 40;
       const logoWidth = 80;
       const logoHeight = 80;
+        let headerY = height - 40;
       
       // Embed logo from clinic_headers if available
       if (clinicHeader?.logoBase64) {
@@ -25819,9 +27595,9 @@ Cura EMR Team
           
           if (logoImage) {
             // Draw logo with equal height to header info
-            page.drawImage(logoImage, {
+              pageToAddHeader.drawImage(logoImage, {
               x: logoX,
-              y: yPosition - logoHeight - 10,
+                y: headerY - logoHeight - 10,
               width: logoWidth,
               height: logoHeight
             });
@@ -25831,9 +27607,9 @@ Cura EMR Team
         }
       } else {
         // Fallback: Medical cross symbol if no logo
-        page.drawText('+', {
+          pageToAddHeader.drawText('+', {
           x: logoX + 20,
-          y: yPosition - 55,
+            y: headerY - 55,
           size: 32,
           font: boldFont,
           color: primaryBlue
@@ -25842,52 +27618,78 @@ Cura EMR Team
       
       // Header information (clinic name, address, phone) - to the right of logo
       const headerInfoX = logoX + logoWidth + 20;
-      let headerY = yPosition - 20;
+        let headerTextY = headerY - 20;
       
       // Clinic name
       const clinicName = clinicHeader?.clinicName || 'CURA MEDICAL CENTER';
-      page.drawText(clinicName, {
+        pageToAddHeader.drawText(clinicName, {
         x: headerInfoX,
-        y: headerY,
+          y: headerTextY,
         size: 16,
         font: boldFont,
         color: primaryBlue
       });
-      headerY -= 18;
+        headerTextY -= 18;
       
       // Department
-      page.drawText('DEPARTMENT OF DIAGNOSTIC RADIOLOGY', {
+        pageToAddHeader.drawText('DEPARTMENT OF DIAGNOSTIC RADIOLOGY', {
         x: headerInfoX,
-        y: headerY,
+          y: headerTextY,
         size: 11,
         font,
         color: darkGray
       });
-      headerY -= 14;
+        headerTextY -= 14;
       
       // Address
       const address = clinicHeader?.address || 'Ground Floor Unit 2, Drayton Court, Drayton Road, Solihull, England B90 4NG';
-      page.drawText(address, {
+        pageToAddHeader.drawText(address, {
         x: headerInfoX,
-        y: headerY,
+          y: headerTextY,
         size: 8,
         font,
         color: darkGray
       });
-      headerY -= 13;
+        headerTextY -= 13;
       
       // Phone and email
       const phone = clinicHeader?.phone || '+44-123-456-7890';
       const email = clinicHeader?.email || 'info@curamedical.com';
-      page.drawText(`Tel: ${phone} | Fax: ${phone}`, {
+        pageToAddHeader.drawText(`Tel: ${phone} | Fax: ${phone}`, {
         x: headerInfoX,
-        y: headerY,
+          y: headerTextY,
         size: 8,
         font,
         color: darkGray
       });
+      };
       
-      yPosition -= headerHeight;
+      // Helper function to add footer to any page
+      const addFooterToPage = (pageToAddFooter: typeof page) => {
+        if (clinicFooter && clinicFooter.footerText) {
+          const footerText = clinicFooter.footerText;
+          const footerTextWidth = font.widthOfTextAtSize(footerText, 8);
+          pageToAddFooter.drawText(footerText, {
+            x: (width - footerTextWidth) / 2, // Center the footer
+            y: 30, // Position at bottom of page with margin
+            size: 8,
+            font,
+            color: darkGray
+          });
+        }
+      };
+      
+      // Helper function to draw a section box (borders and background removed)
+      const drawSectionBox = (x: number, y: number, width: number, height: number) => {
+        // No borders or background - content only
+      };
+      
+      // Add header and footer to the first page
+      await addHeaderToPage(page);
+      addFooterToPage(page);
+      
+      // Position tracker (account for header height)
+      let yPosition = height - 140;
       
       // Report title in separate row (centered)
       yPosition -= 10;
@@ -26412,6 +28214,96 @@ Cura EMR Team
       
       // Check for image data from uploaded image filenames or database fileName and filesystem
       let imageBuffers: Array<{ buffer: Buffer; mimeType: string; fileName: string }> = [];
+      
+      // HIGHEST PRIORITY: Process previewImageDataUrls from frontend (direct embedding from uploaded images)
+      // This ensures newly uploaded images are embedded immediately without waiting for database/filesystem
+      if (previewImageDataUrls && Array.isArray(previewImageDataUrls) && previewImageDataUrls.length > 0) {
+        console.log(`📷 HIGHEST PRIORITY: Processing ${previewImageDataUrls.length} preview image data URL(s) from frontend`);
+        
+        for (let idx = 0; idx < previewImageDataUrls.length; idx++) {
+          const dataUrl = previewImageDataUrls[idx];
+          try {
+            if (!dataUrl || typeof dataUrl !== 'string') {
+              console.warn(`📷 [${idx + 1}] Skipping invalid data URL (not a string)`);
+              continue;
+            }
+            
+            console.log(`📷 [${idx + 1}] Processing preview data URL (length: ${dataUrl.length} chars)`);
+            
+            // Extract base64 data from data URL
+            let base64Data: string;
+            let mimeType = 'image/jpeg'; // Default
+            
+            if (dataUrl.includes(',')) {
+              // Data URL format: data:image/png;base64,<base64data>
+              const parts = dataUrl.split(',');
+              const header = parts[0];
+              base64Data = parts.slice(1).join(','); // In case base64 contains commas
+              
+              // Extract MIME type from header
+              const mimeMatch = header.match(/data:([^;]+)/);
+              if (mimeMatch) {
+                mimeType = mimeMatch[1];
+                console.log(`📷 [${idx + 1}] Detected MIME type: ${mimeType}`);
+              }
+            } else if (dataUrl.startsWith('data:')) {
+              // Data URL without comma (unlikely but handle it)
+              const base64Index = dataUrl.indexOf('base64');
+              if (base64Index !== -1) {
+                const header = dataUrl.substring(0, base64Index);
+                base64Data = dataUrl.substring(base64Index + 7); // Skip "base64,"
+                
+                const mimeMatch = header.match(/data:([^;]+)/);
+                if (mimeMatch) {
+                  mimeType = mimeMatch[1];
+                }
+              } else {
+                base64Data = dataUrl;
+              }
+            } else {
+              // Pure base64 string
+              base64Data = dataUrl;
+            }
+            
+            // Validate base64 string
+            if (!base64Data || base64Data.trim().length === 0) {
+              throw new Error('Base64 data is empty after extraction');
+            }
+            
+            // Decode base64 to buffer
+            const imageBuffer = Buffer.from(base64Data, 'base64');
+            
+            // Validate buffer
+            if (!imageBuffer || imageBuffer.length === 0) {
+              throw new Error('Image buffer is empty after base64 decoding');
+            }
+            
+            // Ensure MIME type is supported (PNG or JPEG)
+            if (mimeType !== 'image/png' && mimeType !== 'image/jpeg' && mimeType !== 'image/jpg') {
+              console.warn(`📷 [${idx + 1}] Unsupported MIME type: ${mimeType}, converting to JPEG`);
+              mimeType = 'image/jpeg';
+            }
+            
+            // Add to imageBuffers
+            imageBuffers.push({
+              buffer: imageBuffer,
+              mimeType: mimeType,
+              fileName: `uploaded_image_${idx + 1}.${mimeType === 'image/png' ? 'png' : 'jpg'}`
+            });
+            
+            console.log(`📷 [${idx + 1}] ✅ SUCCESS: Loaded ${imageBuffer.length} bytes from preview data URL`);
+            console.log(`📷 [${idx + 1}]    MIME type: ${mimeType}, Buffer size: ${imageBuffer.length} bytes`);
+          } catch (error) {
+            console.error(`📷 [${idx + 1}] ❌ ERROR processing preview data URL:`, error);
+            if (error instanceof Error) {
+              console.error(`📷 [${idx + 1}]    Error message: ${error.message}`);
+            }
+            // Continue with next image
+          }
+        }
+        
+        console.log(`📷 HIGHEST PRIORITY SUMMARY: Successfully processed ${imageBuffers.length} out of ${previewImageDataUrls.length} preview image(s)`);
+      }
       
       // PRIMARY: Always get images from radiology_images table using medical_image_id matching medical_images.id
       // This is the main source for images - they are saved to radiology_images table when uploaded
@@ -26977,7 +28869,9 @@ Cura EMR Team
         const fixedImageSize = 150; // 200px in points (72 DPI = 0.75 conversion factor)
         const pageMargin = 40;
         const imageSpacing = 10; // Minimal spacing between images
-        const rowSpacing = 10; // Minimal spacing between rows
+        const labelGap = 7.5; // 10px gap = 7.5 points (at 72 DPI)
+        const labelHeight = 8; // Font size for label
+        const rowSpacing = 10 + labelGap + labelHeight; // Spacing between rows (includes label space)
         
         // Calculate how many images fit per row (2 or 3 depending on page width)
         const availableWidth = width - (pageMargin * 2);
@@ -27006,9 +28900,10 @@ Cura EMR Team
               console.log(`📄 PDF EMBEDDING [${i + 1}]: Creating new page for image`);
               // Create new page
               page = pdfDoc.addPage([595, 842]);
-              // Add footer to the new page
+              // Add header and footer to the new page
+              await addHeaderToPage(page);
               addFooterToPage(page);
-              yPosition = height - 40;
+              yPosition = height - 140; // Account for header height
               page.drawText('REPRESENTATIVE IMAGES (continued)', {
                 x: 40,
                 y: yPosition,
@@ -27114,9 +29009,10 @@ Cura EMR Team
               console.warn(`📄 PDF EMBEDDING [${i + 1}]: ⚠️ yPosition (${yPos.toFixed(2)}) is too low, creating new page`);
               // Create new page if position is too low
               page = pdfDoc.addPage([595, 842]);
-              // Add footer to the new page
+              // Add header and footer to the new page
+              await addHeaderToPage(page);
               addFooterToPage(page);
-              yPosition = height - 40;
+              yPosition = height - 140; // Account for header height
               page.drawText('REPRESENTATIVE IMAGES (continued)', {
                 x: 40,
                 y: yPosition,
@@ -27153,6 +29049,27 @@ Cura EMR Team
               console.log(`📄 PDF EMBEDDING [${i + 1}]: ✅ Image drawn successfully on PDF page`);
               console.log(`📄 PDF EMBEDDING [${i + 1}]:    Position: (${xPos.toFixed(2)}, ${yPos.toFixed(2)})`);
               console.log(`📄 PDF EMBEDDING [${i + 1}]:    Size: ${finalWidth.toFixed(2)} x ${finalHeight.toFixed(2)} points`);
+              
+              // Add image label below the image (Image 1, Image 2, etc.) in grey color
+              // 10px gap = 10 * 0.75 = 7.5 points (at 72 DPI)
+              const labelY = yPos - finalHeight - labelGap;
+              const imageNumber = i + 1;
+              const labelText = `Image ${imageNumber}`;
+              
+              // Calculate label position to center it below the image
+              const labelTextWidth = font.widthOfTextAtSize(labelText, labelHeight);
+              const labelX = xPos + (finalWidth - labelTextWidth) / 2;
+              
+              // Draw label in grey color
+              page.drawText(labelText, {
+                x: labelX,
+                y: labelY,
+                size: labelHeight,
+                font,
+                color: darkGray // Grey color
+              });
+              
+              console.log(`📄 PDF EMBEDDING [${i + 1}]: ✅ Image label "${labelText}" added below image`);
             } catch (drawError) {
               console.error(`📄 PDF EMBEDDING [${i + 1}]: ❌ FATAL ERROR drawing image on PDF page:`, drawError);
               if (drawError instanceof Error) {
@@ -27244,13 +29161,14 @@ Cura EMR Team
         });
       }
       
-      // Add footer to all pages if available
-      if (clinicFooter) {
+      // Add header and footer to all pages if available
         const pageCount = pdfDoc.getPageCount();
         for (let i = 0; i < pageCount; i++) {
           const currentPage = pdfDoc.getPage(i);
+        // Add header to each page
+        await addHeaderToPage(currentPage);
+        // Add footer to each page
           addFooterToPage(currentPage);
-        }
       }
       
       // Save PDF to file
@@ -27452,8 +29370,177 @@ Cura EMR Team
       const blackColor = rgb(0, 0, 0);
       const greenColor = rgb(0, 0.6, 0);
       
-      // Position tracker
-      let yPosition = height - 40;
+      // Helper function to add header to any page
+      const addHeaderToPage = async (pageToAddHeader: typeof page) => {
+        const headerHeight = 100;
+        const logoX = 40;
+        const logoWidth = 80;
+        const logoHeight = 80;
+        let headerY = height - 40;
+        
+        // Embed logo from clinic_headers if available
+        if (clinicHeader?.logoBase64) {
+          try {
+            // Remove data URL prefix if present
+            const base64Data = clinicHeader.logoBase64.includes(',') 
+              ? clinicHeader.logoBase64.split(',')[1] 
+              : clinicHeader.logoBase64;
+            const logoBuffer = Buffer.from(base64Data, 'base64');
+            
+            // Try to embed logo as PNG or JPEG
+            let logoImage;
+            try {
+              logoImage = await pdfDoc.embedPng(logoBuffer);
+            } catch {
+              try {
+                logoImage = await pdfDoc.embedJpg(logoBuffer);
+              } catch (error) {
+                console.error('Failed to embed logo:', error);
+              }
+            }
+            
+            if (logoImage) {
+              // Draw logo with equal height to header info
+              pageToAddHeader.drawImage(logoImage, {
+                x: logoX,
+                y: headerY - logoHeight - 10,
+                width: logoWidth,
+                height: logoHeight
+              });
+            }
+          } catch (error) {
+            console.error('Error processing logo:', error);
+          }
+        } else {
+          // Fallback: Medical cross symbol if no logo
+          pageToAddHeader.drawText('+', {
+            x: logoX + 20,
+            y: headerY - 55,
+            size: 32,
+            font: boldFont,
+            color: primaryBlue
+          });
+        }
+        
+        // Header information (clinic name, address, phone) - to the right of logo
+        const headerInfoX = logoX + logoWidth + 20;
+        let headerTextY = headerY - 20;
+        
+        // Clinic name
+        const clinicName = clinicHeader?.clinicName || organization?.name || organization?.brandName || 'CURA HEALTH EMR';
+        pageToAddHeader.drawText(clinicName, {
+          x: headerInfoX,
+          y: headerTextY,
+          size: 16,
+          font: boldFont,
+          color: primaryBlue
+        });
+        headerTextY -= 18;
+        
+        // Address
+        const address = clinicHeader?.address || '';
+        if (address) {
+          pageToAddHeader.drawText(address, {
+            x: headerInfoX,
+            y: headerTextY,
+            size: 8,
+            font,
+            color: darkGray
+          });
+          headerTextY -= 13;
+        }
+        
+        // Phone and email
+        const phone = clinicHeader?.phone || '';
+        if (phone) {
+          pageToAddHeader.drawText(phone, {
+            x: headerInfoX,
+            y: headerTextY,
+            size: 8,
+            font,
+            color: darkGray
+          });
+          headerTextY -= 13;
+        }
+        
+        const email = clinicHeader?.email || '';
+        if (email) {
+          pageToAddHeader.drawText(email, {
+            x: headerInfoX,
+            y: headerTextY,
+            size: 8,
+            font,
+            color: darkGray
+          });
+        }
+      };
+      
+      // Helper function to add footer to any page
+      const addFooterToPage = (pageToAddFooter: typeof page) => {
+        if (clinicFooter && clinicFooter.footerText) {
+          let footerBgColor = rgb(0.29, 0.49, 1.0); // Default #4A7DFF
+          if (clinicFooter.backgroundColor) {
+            try {
+              const bgColor = clinicFooter.backgroundColor.startsWith('#') 
+                ? clinicFooter.backgroundColor.slice(1) 
+                : clinicFooter.backgroundColor;
+              if (bgColor.length === 6) {
+                footerBgColor = rgb(
+                  parseInt(bgColor.slice(0, 2), 16) / 255,
+                  parseInt(bgColor.slice(2, 4), 16) / 255,
+                  parseInt(bgColor.slice(4, 6), 16) / 255
+                );
+              }
+            } catch (error) {
+              console.error('Error parsing footer background color:', error);
+            }
+          }
+          
+          const footerHeight = 40;
+          const footerY = 40;
+          pageToAddFooter.drawRectangle({
+            x: 0,
+            y: footerY,
+            width: width,
+            height: footerHeight,
+            color: footerBgColor
+          });
+          
+          const footerText = clinicFooter.footerText;
+          let footerTextColor = rgb(1, 1, 1); // Default white
+          if (clinicFooter.textColor) {
+            try {
+              const textColor = clinicFooter.textColor.startsWith('#') 
+                ? clinicFooter.textColor.slice(1) 
+                : clinicFooter.textColor;
+              if (textColor.length === 6) {
+                footerTextColor = rgb(
+                  parseInt(textColor.slice(0, 2), 16) / 255,
+                  parseInt(textColor.slice(2, 4), 16) / 255,
+                  parseInt(textColor.slice(4, 6), 16) / 255
+                );
+              }
+            } catch (error) {
+              console.error('Error parsing footer text color:', error);
+            }
+          }
+          
+          const footerTextWidth = font.widthOfTextAtSize(footerText, 10);
+          pageToAddFooter.drawText(footerText, {
+            x: (width - footerTextWidth) / 2,
+            y: footerY + 15,
+            size: 10,
+            font,
+            color: footerTextColor
+          });
+        }
+      };
+      
+      // Add header from database at the very top of the first page
+      await addHeaderToPage(page);
+      
+      // Position tracker (account for header height - header takes ~100 points)
+      let yPosition = height - 120;
       
       // Generate prescription ID
       const prescriptionId = `RX-${medicalImage.imageId}ORDERORDER`;
@@ -27831,7 +29918,18 @@ Cura EMR Team
               height: signatureBoxHeight - 4,
             });
             
-            yPosition -= signatureBoxHeight + 15; // Update position after signature box
+            yPosition -= signatureBoxHeight + 10; // Update position after signature box
+            
+            // Add signature datetime after the signature box
+            const signatureDateTime = formatDateTime(medicalImage.signatureDate || new Date());
+            page.drawText(signatureDateTime, {
+              x: leftColumnX,
+              y: yPosition,
+              size: 8,
+              font,
+              color: darkGray
+            });
+            yPosition -= 15;
           } else {
             // If signature image couldn't be embedded, still draw empty box
             const signatureBoxWidth = 120;
@@ -27844,7 +29942,18 @@ Cura EMR Team
               borderColor: rgb(0.7, 0.7, 0.7),
               borderWidth: 1,
             });
-            yPosition -= signatureBoxHeight + 15;
+            yPosition -= signatureBoxHeight + 10;
+            
+            // Add signature datetime after the empty signature box
+            const signatureDateTime = formatDateTime(medicalImage.signatureDate || new Date());
+            page.drawText(signatureDateTime, {
+              x: leftColumnX,
+              y: yPosition,
+              size: 8,
+              font,
+              color: darkGray
+            });
+            yPosition -= 15;
           }
         } catch (error) {
           console.error('Error processing signature:', error);
@@ -27859,7 +29968,18 @@ Cura EMR Team
             borderColor: rgb(0.7, 0.7, 0.7),
             borderWidth: 1,
           });
-          yPosition -= signatureBoxHeight + 15;
+          yPosition -= signatureBoxHeight + 10;
+          
+          // Add signature datetime after the empty signature box
+          const signatureDateTime = formatDateTime(medicalImage.signatureDate || new Date());
+          page.drawText(signatureDateTime, {
+            x: leftColumnX,
+            y: yPosition,
+            size: 8,
+            font,
+            color: darkGray
+          });
+          yPosition -= 15;
         }
       } else {
         // If no signature, draw empty signature box
@@ -27873,64 +29993,29 @@ Cura EMR Team
           borderColor: rgb(0.7, 0.7, 0.7),
           borderWidth: 1,
         });
-        yPosition -= signatureBoxHeight + 15;
+        yPosition -= signatureBoxHeight + 10;
+        
+        // Add signature datetime after the empty signature box
+        const signatureDateTime = formatDateTime(medicalImage.signatureDate || new Date());
+        page.drawText(signatureDateTime, {
+          x: leftColumnX,
+          y: yPosition,
+          size: 8,
+          font,
+          color: darkGray
+        });
+        yPosition -= 15;
       }
       
-      // Footer
-      let footerBgColor = rgb(0.29, 0.49, 1.0); // Default #4A7DFF
-      if (clinicFooter?.backgroundColor) {
-        try {
-          const bgColor = clinicFooter.backgroundColor.startsWith('#') 
-            ? clinicFooter.backgroundColor.slice(1) 
-            : clinicFooter.backgroundColor;
-          if (bgColor.length === 6) {
-            footerBgColor = rgb(
-              parseInt(bgColor.slice(0, 2), 16) / 255,
-              parseInt(bgColor.slice(2, 4), 16) / 255,
-              parseInt(bgColor.slice(4, 6), 16) / 255
-            );
-          }
-        } catch (error) {
-          console.error('Error parsing footer background color:', error);
-        }
+      // Add header and footer to all pages if available
+      const pageCount = pdfDoc.getPageCount();
+      for (let i = 0; i < pageCount; i++) {
+        const currentPage = pdfDoc.getPage(i);
+        // Add header to each page
+        await addHeaderToPage(currentPage);
+        // Add footer to each page
+        addFooterToPage(currentPage);
       }
-      
-      const footerHeight = 40;
-      const footerY = 40;
-      page.drawRectangle({
-        x: 0,
-        y: footerY,
-        width: width,
-        height: footerHeight,
-        color: footerBgColor
-      });
-      
-      const footerText = clinicFooter?.footerText || 'Generated by Cura EMR Platform';
-      let footerTextColor = rgb(1, 1, 1); // Default white
-      if (clinicFooter?.textColor) {
-        try {
-          const textColor = clinicFooter.textColor.startsWith('#') 
-            ? clinicFooter.textColor.slice(1) 
-            : clinicFooter.textColor;
-          if (textColor.length === 6) {
-            footerTextColor = rgb(
-              parseInt(textColor.slice(0, 2), 16) / 255,
-              parseInt(textColor.slice(2, 4), 16) / 255,
-              parseInt(textColor.slice(4, 6), 16) / 255
-            );
-          }
-        } catch (error) {
-          console.error('Error parsing footer text color:', error);
-        }
-      }
-      
-      page.drawText(footerText, {
-        x: width / 2 - (footerText.length * 3),
-        y: footerY + 15,
-        size: 10,
-        font,
-        color: footerTextColor
-      });
       
       // Save PDF
       const fileName = `PRESCRIPTION_${medicalImage.imageId}_${Date.now()}.pdf`;

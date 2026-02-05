@@ -315,8 +315,14 @@ export function useLiveKitRoom(): UseLiveKitRoomReturn {
         console.log('Error during track cleanup:', e);
       }
       
-      // Now disconnect from the room
+      // Now disconnect from the room (only if room exists)
+      if (roomRef.current) {
+        try {
       roomRef.current.disconnect();
+        } catch (e) {
+          console.log('Error disconnecting from room:', e);
+        }
+      }
       roomRef.current = null;
       setRoom(null);
       setIsConnected(false);

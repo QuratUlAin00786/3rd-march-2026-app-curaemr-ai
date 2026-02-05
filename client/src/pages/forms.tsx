@@ -6376,21 +6376,21 @@ const formIds = useMemo(
                               </Button>
                               {/* Hide "Open Form" button if form has been shared with patients */}
                               {(!formSharesMap[form.id] || formSharesMap[form.id].length === 0) && (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  disabled={!latestLinks[form.id]}
-                                  asChild
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={!latestLinks[form.id]}
+                                asChild
+                              >
+                                <a
+                                  href={latestLinks[form.id]}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={!latestLinks[form.id] ? "pointer-events-none opacity-60" : ""}
                                 >
-                                  <a
-                                    href={latestLinks[form.id]}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className={!latestLinks[form.id] ? "pointer-events-none opacity-60" : ""}
-                                  >
-                                    Open Form
-                                  </a>
-                                </Button>
+                                  Open Form
+                                </a>
+                              </Button>
                               )}
                             </div>
                           </div>

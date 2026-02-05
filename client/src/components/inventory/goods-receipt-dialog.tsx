@@ -43,7 +43,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Check, ChevronsUpDown } from "lucide-react";
+import { Plus, Trash2, Check, ChevronsUpDown, XCircle, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -100,6 +100,8 @@ interface GoodsReceiptDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   items: InventoryItem[];
+  defaultPurchaseOrderId?: number;
+  onReceiptCreated?: (receiptId: number) => void;
 }
 
 interface ReceiptItem {
@@ -125,14 +127,14 @@ const addItemSchema = z.object({
   quantityReceived: z.number().min(1, "Quantity must be at least 1"),
   unitPrice: z.string().min(1, "Unit price is required").regex(/^\d+(\.\d{1,2})?$/, "Invalid price format"),
   batchNumber: z.string().min(1, "Batch number is required"),
-  expiryDate: z.string().optional(),
-  manufacturingDate: z.string().optional(),
+  expiryDate: z.string().min(1, "Expiry date is required"),
+  manufacturingDate: z.string().min(1, "Manufacturing date is required"),
 });
 
 type GoodsReceiptFormData = z.infer<typeof goodsReceiptSchema>;
 type AddItemFormData = z.infer<typeof addItemSchema>;
 
-export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsReceiptDialogProps) {
+export default function GoodsReceiptDialog({ open, onOpenChange, items, defaultPurchaseOrderId, onReceiptCreated }: GoodsReceiptDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
@@ -140,6 +142,9 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
   const [purchaseOrderOpen, setPurchaseOrderOpen] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [showAddExtraItems, setShowAddExtraItems] = useState(false);
+  const [showDuplicateErrorModal, setShowDuplicateErrorModal] = useState(false);
+  const [duplicateErrorMessage, setDuplicateErrorMessage] = useState("");
 
   // Fetch purchase orders
   const { data: purchaseOrders = [], isLoading: purchaseOrdersLoading } = useQuery<PurchaseOrder[]>({
@@ -151,7 +156,7 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
   const form = useForm<GoodsReceiptFormData>({
     resolver: zodResolver(goodsReceiptSchema),
     defaultValues: {
-      purchaseOrderId: 0,
+      purchaseOrderId: defaultPurchaseOrderId || 0,
       receivedDate: new Date().toISOString().split("T")[0],
       notes: "",
     },
@@ -172,35 +177,123 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
 
   const createReceiptMutation = useMutation({
     mutationFn: async (data: any) => {
-      return apiRequest("POST", "/api/inventory/goods-receipts", data);
+      const response = await apiRequest("POST", "/api/inventory/goods-receipts", data);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Failed to create goods receipt" }));
+        throw new Error(errorData.message || errorData.error || "Failed to create goods receipt");
+      }
+      return response.json();
     },
-    onSuccess: () => {
-      setSuccessMessage("Goods receipt created successfully");
-      setShowSuccessModal(true);
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/goods-receipts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/reports/value"] });
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/reports/low-stock"] });
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/items"] });
       resetForm();
+      // Close the Create Goods Receipt dialog on success
+      onOpenChange(false);
+      // Call callback to show PDF popup
+      const receiptId = data?.id || data?.items?.[0]?.id;
+      if (receiptId && onReceiptCreated) {
+        setTimeout(() => {
+          onReceiptCreated(receiptId);
+        }, 300);
+      }
     },
     onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to create goods receipt",
-        variant: "destructive",
-      });
+      // Parse error message to extract user-friendly message
+      let errorMessage = error.message || "Failed to create goods receipt";
+      
+      // Try to parse JSON from error message if it contains JSON
+      try {
+        // Check if error message contains JSON (e.g., "400: {...}")
+        const jsonMatch = errorMessage.match(/\{.*\}/);
+        if (jsonMatch) {
+          const errorData = JSON.parse(jsonMatch[0]);
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        }
+      } catch {
+        // If parsing fails, use the original message
+      }
+      
+      // Check if it's a duplicate purchase order error
+      if (errorMessage.toLowerCase().includes("already exists") || errorMessage.toLowerCase().includes("purchase order")) {
+        // Show user-friendly message
+        setDuplicateErrorMessage("This Purchase Order has already been received. Please select a different Purchase Order to create a new Goods Receipt.");
+        setShowDuplicateErrorModal(true);
+      } else {
+        toast({
+          title: "Error",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      }
     },
   });
 
   const resetForm = () => {
-    form.reset();
+    form.reset({
+      purchaseOrderId: defaultPurchaseOrderId || 0,
+      receivedDate: new Date().toISOString().split("T")[0],
+      notes: "",
+    });
     addItemForm.reset();
     setReceiptItems([]);
   };
 
   const addItem = (data: AddItemFormData) => {
+    // Validate all fields are filled
+    if (!data.itemId || data.itemId.trim() === "") {
+      addItemForm.setError("itemId", {
+        type: "manual",
+        message: "Item selection is required"
+      });
+      return;
+    }
+    if (!data.quantityReceived || data.quantityReceived < 1) {
+      addItemForm.setError("quantityReceived", {
+        type: "manual",
+        message: "Quantity must be at least 1"
+      });
+      return;
+    }
+    if (!data.unitPrice || data.unitPrice.trim() === "") {
+      addItemForm.setError("unitPrice", {
+        type: "manual",
+        message: "Unit price is required"
+      });
+      return;
+    }
+    if (!data.batchNumber || data.batchNumber.trim() === "") {
+      addItemForm.setError("batchNumber", {
+        type: "manual",
+        message: "Batch number is required"
+      });
+      return;
+    }
+    if (!data.expiryDate || data.expiryDate.trim() === "") {
+      addItemForm.setError("expiryDate", {
+        type: "manual",
+        message: "Expiry date is required"
+      });
+      return;
+    }
+    if (!data.manufacturingDate || data.manufacturingDate.trim() === "") {
+      addItemForm.setError("manufacturingDate", {
+        type: "manual",
+        message: "Manufacturing date is required"
+      });
+      return;
+    }
+
     const selectedItem = items.find(item => item.id === parseInt(data.itemId));
-    if (!selectedItem) return;
+    if (!selectedItem) {
+      addItemForm.setError("itemId", {
+        type: "manual",
+        message: "Selected item not found"
+      });
+      return;
+    }
 
     const receiptItem: ReceiptItem = {
       itemId: parseInt(data.itemId),
@@ -208,8 +301,8 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
       quantityReceived: data.quantityReceived,
       unitPrice: data.unitPrice,
       batchNumber: data.batchNumber,
-      expiryDate: data.expiryDate || "",
-      manufacturingDate: data.manufacturingDate || ""
+      expiryDate: data.expiryDate,
+      manufacturingDate: data.manufacturingDate
     };
 
     setReceiptItems([...receiptItems, receiptItem]);
@@ -299,12 +392,23 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
     if (!open) return;
     if (!purchaseOrders.length) return;
     const currentId = getValues("purchaseOrderId");
+    
+    // If defaultPurchaseOrderId is provided, use it
+    if (defaultPurchaseOrderId && purchaseOrders.some((po) => po.id === defaultPurchaseOrderId)) {
+      if (currentId !== defaultPurchaseOrderId) {
+        setValue("purchaseOrderId", defaultPurchaseOrderId);
+        setReceiptItems([]);
+      }
+      return;
+    }
+    
+    // Otherwise, check if current selection is valid
     const hasSelected = purchaseOrders.some((po) => po.id === currentId);
     if (!hasSelected) {
       setValue("purchaseOrderId", purchaseOrders[0].id);
       setReceiptItems([]);
     }
-  }, [open, purchaseOrders, getValues, setValue, setReceiptItems]);
+  }, [open, purchaseOrders, getValues, setValue, setReceiptItems, defaultPurchaseOrderId]);
 
   useEffect(() => {
     if (!purchaseOrderItems.length) return;
@@ -324,20 +428,61 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
   }, [purchaseOrderItems, receiptItems.length]);
 
   const handleSubmit = (data: GoodsReceiptFormData) => {
-    if (receiptItems.length === 0) {
+    // Validate purchase order is selected
+    if (!data.purchaseOrderId || data.purchaseOrderId === 0) {
+      form.setError("purchaseOrderId", {
+        type: "manual",
+        message: "Purchase order is required"
+      });
+      return;
+    }
+
+    // Validate received date
+    if (!data.receivedDate || data.receivedDate.trim() === "") {
+      form.setError("receivedDate", {
+        type: "manual",
+        message: "Received date is required"
+      });
+      return;
+    }
+
+    // Removed validation: "Please add at least one item to the receipt"
+    // Allow creating receipt even without items
+
+    // Separate PO items from manually added items
+    // PO items are those that were auto-populated (have empty batch numbers initially)
+    // Manually added items are those added via "Add extra items" form
+    const poItemIds = new Set((purchaseOrderItems || []).map(item => item.itemId));
+    const manuallyAddedItems = receiptItems.filter(item => !poItemIds.has(item.itemId));
+    
+    // Validate all manually added items have required fields
+    const invalidItems = manuallyAddedItems.filter(item => 
+      !item.itemId || 
+      !item.quantityReceived || 
+      item.quantityReceived < 1 ||
+      !item.batchNumber || 
+      item.batchNumber.trim() === "" ||
+      !item.expiryDate || 
+      item.expiryDate.trim() === "" ||
+      !item.manufacturingDate || 
+      item.manufacturingDate.trim() === ""
+    );
+
+    if (invalidItems.length > 0) {
       form.setError("root", {
         type: "manual",
-        message: "Please add at least one item to the receipt"
+        message: "Please ensure all manually added items have item, quantity, batch number, expiry date, and manufacturing date filled"
       });
       return;
     }
 
     // Map receipt items to backend expected format
+    // Use receiptItems which includes both PO items and manually added items
     const mappedItems = receiptItems.map(item => ({
       itemId: item.itemId,
       quantityReceived: item.quantityReceived,
-      batchNumber: item.batchNumber || undefined,
-      expiryDate: item.expiryDate || undefined
+      batchNumber: item.batchNumber && item.batchNumber.trim() !== "" ? item.batchNumber : undefined,
+      expiryDate: item.expiryDate && item.expiryDate.trim() !== "" ? item.expiryDate : undefined
     }));
 
     createReceiptMutation.mutate({
@@ -349,21 +494,21 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="max-w-5xl max-h-[700px] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Create Goods Receipt</DialogTitle>
+    <DialogContent className="max-w-3xl max-h-[500px] overflow-hidden p-2 flex flex-col" style={{ fontSize: '12px' }}>
+        <DialogHeader className="pb-1 flex-shrink-0">
+          <DialogTitle className="font-semibold" style={{ fontSize: '12px' }}>Create Goods Receipt</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-6">
+        <div className="flex-1 overflow-y-auto space-y-2 pr-1" style={{ fontSize: '12px' }}>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
+            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-1.5">
+              <div className="grid gap-1.5 md:grid-cols-3">
                 <FormField
                   control={form.control}
                   name="purchaseOrderId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Purchase Order</FormLabel>
+                      <FormLabel className="" style={{ fontSize: '12px' }}>Purchase Order</FormLabel>
                       <FormControl>
                         <Popover open={purchaseOrderOpen} onOpenChange={setPurchaseOrderOpen}>
                           <PopoverTrigger asChild>
@@ -371,25 +516,27 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                               variant="outline"
                               role="combobox"
                               aria-expanded={purchaseOrderOpen}
-                              className="w-full justify-between text-left"
+                              className="w-full justify-between text-left h-7"
+                              style={{ fontSize: '12px' }}
                               data-testid="select-purchase-order"
                             >
-                              <span className="truncate">
+                              <span className="truncate" style={{ fontSize: '12px' }}>
                                 {selectedPO ? selectedPO.poNumber : "Select purchase order..."}
                               </span>
                               <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
                             </Button>
                           </PopoverTrigger>
-                          <PopoverContent className="w-full p-0" align="start">
+                          <PopoverContent className="w-full p-0" align="start" style={{ fontSize: '12px' }}>
                             <div className="max-h-[200px] overflow-y-auto">
                               <Command>
-                                <CommandInput placeholder="Search purchase orders..." />
-                                <CommandEmpty>No purchase order found.</CommandEmpty>
+                                <CommandInput placeholder="Search purchase orders..." style={{ fontSize: '12px' }} />
+                                <CommandEmpty style={{ fontSize: '12px' }}>No purchase order found.</CommandEmpty>
                                 <CommandGroup>
                                   {purchaseOrders.map((po) => (
                                     <CommandItem
                                       key={po.id}
                                       value={po.poNumber}
+                                      style={{ fontSize: '12px' }}
                                       onSelect={() => {
                                         field.onChange(po.id);
                                         setPurchaseOrderOpen(false);
@@ -403,8 +550,8 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                                         )}
                                       />
                                       <div className="flex flex-col">
-                                        <span className="font-medium">{po.poNumber}</span>
-                                        <span className="text-sm text-gray-500 truncate">
+                                        <span className="font-medium" style={{ fontSize: '12px' }}>{po.poNumber}</span>
+                                        <span className="text-gray-500 truncate" style={{ fontSize: '12px' }}>
                                           {po.supplierName} — £{po.totalAmount}
                                         </span>
                                       </div>
@@ -416,7 +563,7 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                           </PopoverContent>
                         </Popover>
                       </FormControl>
-                      <FormMessage />
+                      <FormMessage style={{ fontSize: '12px' }} />
                     </FormItem>
                   )}
                 />
@@ -426,11 +573,11 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                   name="receivedDate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Received Date</FormLabel>
+                      <FormLabel className="" style={{ fontSize: '12px' }}>Received Date</FormLabel>
                       <FormControl>
-                        <Input type="date" data-testid="input-received-date" {...field} />
+                        <Input type="date" data-testid="input-received-date" className="h-7" style={{ fontSize: '12px' }} {...field} />
                       </FormControl>
-                      <FormMessage />
+                      <FormMessage style={{ fontSize: '12px' }} />
                     </FormItem>
                   )}
                 />
@@ -440,41 +587,43 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                 control={form.control}
                 name="notes"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notes</FormLabel>
-                    <FormControl>
+                    <FormItem>
+                      <FormLabel className="" style={{ fontSize: '12px' }}>Notes</FormLabel>
+                      <FormControl>
                       <Textarea
                         data-testid="textarea-notes"
                         placeholder="Additional notes about this goods receipt..."
+                        className="min-h-[60px]"
+                        style={{ fontSize: '12px' }}
                         {...field}
                       />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage style={{ fontSize: '12px' }} />
                   </FormItem>
                 )}
               />
             </form>
           </Form>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-1.5 md:grid-cols-3">
             <Card className="shadow-sm bg-white/90">
-              <CardHeader>
-                <CardTitle className="text-xs font-semibold tracking-[0.3em] text-gray-500 uppercase">
+              <CardHeader className="pb-1 pt-2 px-2">
+                <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 uppercase" style={{ fontSize: '12px' }}>
                   Purchase Order
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-1">
-                <p className="text-lg font-semibold text-gray-900">
+              <CardContent className="space-y-0.5 py-1 px-2">
+                <p className="font-semibold text-gray-900" style={{ fontSize: '12px' }}>
                   {selectedPO?.poNumber || "Select a purchase order"}
                 </p>
-                <p className="text-sm text-gray-500 truncate">
+                <p className="text-gray-500 truncate" style={{ fontSize: '12px' }}>
                   {selectedPO?.supplierName || "Supplier will populate here"}
                 </p>
-                <Badge variant="secondary" className="text-xs capitalize">
+                <Badge variant="secondary" className="capitalize" style={{ fontSize: '12px' }}>
                   {selectedPO?.status?.replace("_", " ") || "status pending"}
                 </Badge>
                 {selectedPO?.expectedDeliveryDate && (
-                  <p className="text-xs text-gray-500">
+                  <p className="text-gray-500" style={{ fontSize: '12px' }}>
                     Expected delivery: {format(new Date(selectedPO.expectedDeliveryDate), "MMM dd, yyyy")}
                   </p>
                 )}
@@ -482,112 +631,112 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
             </Card>
 
             <Card className="shadow-sm border">
-              <CardHeader>
-                <CardTitle className="text-xs font-semibold tracking-[0.3em] text-gray-500 uppercase">
+              <CardHeader className="pb-1 pt-2 px-2">
+                <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 uppercase" style={{ fontSize: '12px' }}>
                   Items overview
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-1 text-sm text-gray-600">
+              <CardContent className="space-y-0.5 text-gray-600 py-1 px-2" style={{ fontSize: '12px' }}>
                 <div className="flex justify-between">
-                  <span>Items found</span>
-                  <span>{purchaseOrderItems.length || receiptItems.length}</span>
+                  <span style={{ fontSize: '12px' }}>Items found</span>
+                  <span style={{ fontSize: '12px' }}>{purchaseOrderItems.length || receiptItems.length}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Total value</span>
-                  <span>£{calculateTotalAmount()}</span>
+                  <span style={{ fontSize: '12px' }}>Total value</span>
+                  <span style={{ fontSize: '12px' }}>£{calculateTotalAmount()}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Received date</span>
-                  <span>{form.getValues("receivedDate")}</span>
+                  <span style={{ fontSize: '12px' }}>Received date</span>
+                  <span style={{ fontSize: '12px' }}>{form.getValues("receivedDate")}</span>
                 </div>
               </CardContent>
             </Card>
 
             <Card className="shadow-sm border">
-              <CardHeader>
-                <CardTitle className="text-xs font-semibold tracking-[0.3em] text-gray-500 uppercase">
+              <CardHeader className="pb-1 pt-2 px-2">
+                <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 uppercase" style={{ fontSize: '12px' }}>
                   Sync status
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-1 text-sm text-gray-500">
-                <p>
+              <CardContent className="space-y-0.5 text-gray-500 py-1 px-2" style={{ fontSize: '12px' }}>
+                <p style={{ fontSize: '12px' }}>
                   {purchaseOrderItemsLoading ? "Pulling PO items..." : "Auto-fetch ready"}
                 </p>
-                <p>Use the add-item grid to include extras outside the PO.</p>
+                <p style={{ fontSize: '12px' }}>Use the add-item grid to include extras outside the PO.</p>
               </CardContent>
             </Card>
           </div>
 
         {selectedPO && (
           <Card className="border shadow-sm bg-white">
-            <CardHeader className="space-y-2">
-              <CardTitle className="text-xs font-semibold tracking-[0.3em] text-gray-500 uppercase">
+            <CardHeader className="space-y-0.5 pb-1 pt-2 px-2">
+              <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 uppercase" style={{ fontSize: '12px' }}>
                 Purchase Order Details
               </CardTitle>
-              <p className="text-sm text-gray-600">
+              <p className="text-gray-600" style={{ fontSize: '12px' }}>
                 {computedPurchaseOrderMeta.status.replace("_", " ")} · Created on{" "}
                 {format(new Date(computedPurchaseOrderMeta.orderDate), "PPP")}
               </p>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm text-gray-600">
+            <CardContent className="space-y-1 py-1 px-2">
+              <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4 text-gray-600" style={{ fontSize: '12px' }}>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">PO Number</p>
-                  <p className="font-semibold text-gray-900">{computedPurchaseOrderMeta.poNumber}</p>
+                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>PO Number</p>
+                  <p className="font-semibold text-gray-900" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.poNumber}</p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Supplier</p>
-                  <p className="font-medium">{computedPurchaseOrderMeta.supplierName}</p>
-                  <p className="text-xs text-gray-500">
+                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Supplier</p>
+                  <p className="font-medium" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.supplierName}</p>
+                  <p className="text-gray-500" style={{ fontSize: '12px' }}>
                     {computedPurchaseOrderMeta.supplierEmail || "No email"}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Expected Delivery</p>
-                  <p className="font-semibold">
+                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Expected Delivery</p>
+                  <p className="font-semibold" style={{ fontSize: '12px' }}>
                     {computedPurchaseOrderMeta.expectedDeliveryDate
                       ? format(new Date(computedPurchaseOrderMeta.expectedDeliveryDate), "PPP")
                       : "Not set"}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Status</p>
-                  <p className="font-semibold text-emerald-600">{computedPurchaseOrderMeta.status}</p>
+                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Status</p>
+                  <p className="font-semibold text-emerald-600" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.status}</p>
                 </div>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2 text-sm text-gray-600">
+              <div className="grid gap-1 sm:grid-cols-2 text-gray-600" style={{ fontSize: '12px' }}>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Total Amount</p>
-                  <p className="font-semibold text-lg">£{parseFloat(computedPurchaseOrderMeta.totalAmount || "0").toFixed(2)}</p>
+                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Total Amount</p>
+                  <p className="font-semibold" style={{ fontSize: '12px' }}>£{parseFloat(computedPurchaseOrderMeta.totalAmount || "0").toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Tax / Discount</p>
-                  <p className="text-sm text-gray-500">
+                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Tax / Discount</p>
+                  <p className="text-gray-500" style={{ fontSize: '12px' }}>
                     Tax: £{parseFloat(computedPurchaseOrderMeta.taxAmount || "0").toFixed(2)} · Discount: £{parseFloat(computedPurchaseOrderMeta.discountAmount || "0").toFixed(2)}
                   </p>
                 </div>
               </div>
 
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Notes</p>
-                <p className="text-sm text-gray-600">
+                <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Notes</p>
+                <p className="text-gray-600" style={{ fontSize: '12px' }}>
                   {computedPurchaseOrderMeta.notes || "No additional notes were added."}
                 </p>
               </div>
 
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-2">
+                <p className="uppercase tracking-[0.2em] text-gray-400 mb-0.5" style={{ fontSize: '12px' }}>
                   Items in Purchase Order
                 </p>
                 <div className="overflow-hidden rounded-md border">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Item</TableHead>
-                        <TableHead>Qty</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Line Total</TableHead>
+                        <TableHead className="py-1 px-2" style={{ fontSize: '12px' }}>Item</TableHead>
+                        <TableHead className="py-1 px-2" style={{ fontSize: '12px' }}>Qty</TableHead>
+                        <TableHead className="text-right py-1 px-2" style={{ fontSize: '12px' }}>Unit Price</TableHead>
+                        <TableHead className="text-right py-1 px-2" style={{ fontSize: '12px' }}>Line Total</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -595,7 +744,8 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                         <TableRow>
                           <TableCell
                             colSpan={4}
-                            className="text-center py-4 text-sm text-gray-500"
+                            className="text-center py-1 text-gray-500"
+                            style={{ fontSize: '12px' }}
                           >
                             {purchaseOrderDetailLoading || purchaseOrderItemsLoading
                               ? "Loading purchase order items..."
@@ -605,12 +755,12 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                       ) : (
                         displayedPurchaseOrderItems.map((item) => (
                           <TableRow key={item.id}>
-                            <TableCell>{item.itemName}</TableCell>
-                            <TableCell>{item.quantity}</TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className="py-1 px-2" style={{ fontSize: '12px' }}>{item.itemName}</TableCell>
+                            <TableCell className="py-1 px-2" style={{ fontSize: '12px' }}>{item.quantity}</TableCell>
+                            <TableCell className="text-right py-1 px-2" style={{ fontSize: '12px' }}>
                               £{parseFloat(item.unitPrice || "0").toFixed(2)}
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className="text-right py-1 px-2" style={{ fontSize: '12px' }}>
                               £{parseFloat(item.totalPrice || "0").toFixed(2)}
                             </TableCell>
                           </TableRow>
@@ -624,35 +774,64 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
           </Card>
         )}
 
-          <Form {...addItemForm}>
-            <div className="border rounded-lg bg-slate-50 p-4 shadow-inner">
-              <div className="flex items-center justify-between mb-3">
-                <h6 className="text-sm font-semibold text-gray-700">Add extra items</h6>
-                <span className="text-xs text-gray-500">Optional</span>
-              </div>
-              <div className="grid gap-3">
-                <div className="grid gap-3 md:grid-cols-4">
+          {!showAddExtraItems ? (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowAddExtraItems(true)}
+                className="h-7 px-3"
+                style={{ fontSize: '12px' }}
+              >
+                <Plus className="h-3 w-3 mr-1" />
+                Add Item
+              </Button>
+            </div>
+          ) : (
+            <Form {...addItemForm}>
+              <div className="border rounded-lg bg-slate-50 p-1.5 shadow-inner">
+                <div className="flex items-center justify-between mb-1">
+                  <h6 className="font-semibold text-gray-700" style={{ fontSize: '12px' }}>Add extra items</h6>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500" style={{ fontSize: '12px' }}>Optional</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddExtraItems(false);
+                        addItemForm.reset();
+                      }}
+                      className="h-5 w-5 p-0 text-gray-500 hover:text-gray-700"
+                      title="Hide"
+                    >
+                      <XCircle className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-1">
+                <div className="grid gap-1 md:grid-cols-4">
                   <FormField
                     control={addItemForm.control}
                     name="itemId"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Item</FormLabel>
+                        <FormLabel className="" style={{ fontSize: '12px' }}>Item</FormLabel>
                         <FormControl>
                           <Select value={field.value} onValueChange={field.onChange}>
-                            <SelectTrigger data-testid="select-item">
-                              <SelectValue placeholder="Select item" />
+                            <SelectTrigger data-testid="select-item" className="h-7" style={{ fontSize: '12px' }}>
+                              <SelectValue placeholder="Select item" style={{ fontSize: '12px' }} />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent style={{ fontSize: '12px' }}>
                               {items.map((item) => (
-                                <SelectItem key={item.id} value={item.id.toString()}>
+                                <SelectItem key={item.id} value={item.id.toString()} style={{ fontSize: '12px' }}>
                                   {item.name}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-600" style={{ fontSize: '12px' }} />
                       </FormItem>
                     )}
                   />
@@ -661,17 +840,20 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                     name="quantityReceived"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Quantity</FormLabel>
+                        <FormLabel className="" style={{ fontSize: '12px' }}>Quantity</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
                             min="1"
                             data-testid="input-quantity"
+                            className="h-7"
+                            style={{ fontSize: '12px' }}
+                            placeholder="1"
                             {...field}
                             onChange={(e) => field.onChange(parseInt(e.target.value) || 1)}
                           />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-600" style={{ fontSize: '12px' }} />
                       </FormItem>
                     )}
                   />
@@ -680,16 +862,19 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                     name="unitPrice"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Unit Price</FormLabel>
+                        <FormLabel className="" style={{ fontSize: '12px' }}>Unit Price</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
                             step="0.01"
                             data-testid="input-unit-price"
+                            className="h-7"
+                            style={{ fontSize: '12px' }}
+                            placeholder="0.00"
                             {...field}
                           />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-600" style={{ fontSize: '12px' }} />
                       </FormItem>
                     )}
                   />
@@ -698,26 +883,26 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                     name="batchNumber"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Batch #</FormLabel>
+                        <FormLabel className="" style={{ fontSize: '12px' }}>Batch #</FormLabel>
                         <FormControl>
-                          <Input data-testid="input-batch-number" {...field} />
+                          <Input data-testid="input-batch-number" className="h-7" style={{ fontSize: '12px' }} placeholder="Batch #" {...field} />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-600" style={{ fontSize: '12px' }} />
                       </FormItem>
                     )}
                   />
                 </div>
-                <div className="grid gap-3 md:grid-cols-3 items-end">
+                <div className="grid gap-1 md:grid-cols-3 items-end">
                   <FormField
                     control={addItemForm.control}
                     name="expiryDate"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Expiry</FormLabel>
+                        <FormLabel className="" style={{ fontSize: '12px' }}>Expiry</FormLabel>
                         <FormControl>
-                          <Input type="date" data-testid="input-expiry-date" {...field} />
+                          <Input type="date" data-testid="input-expiry-date" className="h-7" style={{ fontSize: '12px' }} placeholder="dd/mm/yyyy" {...field} />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-600" style={{ fontSize: '12px' }} />
                       </FormItem>
                     )}
                   />
@@ -726,15 +911,18 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                     name="manufacturingDate"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Mfg Date</FormLabel>
+                        <FormLabel className="" style={{ fontSize: '12px' }}>Mfg Date</FormLabel>
                         <FormControl>
                           <Input
                             type="date"
                             data-testid="input-manufacturing-date"
+                            className="h-7"
+                            style={{ fontSize: '12px' }}
+                            placeholder="dd/mm/yyyy"
                             {...field}
                           />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-600" style={{ fontSize: '12px' }} />
                       </FormItem>
                     )}
                   />
@@ -742,6 +930,7 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                     <Button
                       type="button"
                       className="w-full"
+                      style={{ fontSize: '12px' }}
                       onClick={addItemForm.handleSubmit(addItem)}
                     >
                       <Plus className="h-4 w-4 mr-2" />
@@ -752,24 +941,37 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
               </div>
             </div>
           </Form>
+          )}
 
           {form.formState.errors.root && (
-            <div className="text-xs text-red-600" data-testid="error-form-root">
+            <div className="text-red-600 font-medium" style={{ fontSize: '12px' }} data-testid="error-form-root">
               {form.formState.errors.root.message}
             </div>
           )}
+          {form.formState.errors.purchaseOrderId && (
+            <div className="text-red-600 font-medium" style={{ fontSize: '12px' }}>
+              {form.formState.errors.purchaseOrderId.message}
+            </div>
+          )}
+          {form.formState.errors.receivedDate && (
+            <div className="text-red-600 font-medium" style={{ fontSize: '12px' }}>
+              {form.formState.errors.receivedDate.message}
+            </div>
+          )}
+        </div>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={resetForm}>
-              Reset
-            </Button>
-            <Button
-              onClick={() => form.handleSubmit(handleSubmit)()}
-              disabled={createReceiptMutation.isPending}
-            >
-              {createReceiptMutation.isPending ? "Processing..." : "Create Goods Receipt"}
-            </Button>
-          </div>
+        <div className="flex justify-end gap-2 pt-1 border-t flex-shrink-0 mt-1">
+          <Button variant="outline" onClick={resetForm} className="h-7 px-3" style={{ fontSize: '12px' }}>
+            Reset
+          </Button>
+          <Button
+            onClick={() => form.handleSubmit(handleSubmit)()}
+            disabled={createReceiptMutation.isPending}
+            className="h-7 px-3"
+            style={{ fontSize: '12px' }}
+          >
+            {createReceiptMutation.isPending ? "Processing..." : "Create Goods Receipt"}
+          </Button>
         </div>
       </DialogContent>
 
@@ -790,6 +992,40 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items }: GoodsR
                 setShowSuccessModal(false);
                 setSuccessMessage("");
               }}
+            >
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Duplicate Purchase Order Error Modal */}
+      <Dialog open={showDuplicateErrorModal} onOpenChange={setShowDuplicateErrorModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-600">
+              <AlertTriangle className="h-5 w-5" />
+              Purchase Order Already Received
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-3 py-4 text-center">
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-orange-100 text-orange-600">
+              <AlertTriangle className="h-6 w-6" />
+            </span>
+            <p className="text-base font-medium text-gray-700 leading-relaxed">
+              {duplicateErrorMessage || "This Purchase Order has already been received. Please select a different Purchase Order to create a new Goods Receipt."}
+            </p>
+            <p className="text-sm text-gray-500 mt-2">
+              You can view the existing Goods Receipt in the list above.
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              onClick={() => {
+                setShowDuplicateErrorModal(false);
+                setDuplicateErrorMessage("");
+              }}
+              className="min-w-[80px]"
             >
               OK
             </Button>

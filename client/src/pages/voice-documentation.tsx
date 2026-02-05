@@ -2596,12 +2596,12 @@ export default function VoiceDocumentation() {
                             </DialogTitle>
                           </DialogHeader>
                           {editingTemplate && (
-                            <div className="space-y-4">
-                              <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                  <label className="text-sm font-medium mb-2 block">
-                                    Template Name
-                                  </label>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="text-sm font-medium mb-2 block">
+                                  Template Name
+                                </label>
                                   <Input 
                                     value={editingTemplate.name}
                                     onChange={(e) => {
@@ -2611,11 +2611,11 @@ export default function VoiceDocumentation() {
                                       });
                                     }}
                                   />
-                                </div>
-                                <div>
-                                  <label className="text-sm font-medium mb-2 block">
-                                    Category
-                                  </label>
+                              </div>
+                              <div>
+                                <label className="text-sm font-medium mb-2 block">
+                                  Category
+                                </label>
                                   <Select 
                                     value={editingTemplate.category}
                                     onValueChange={(value) => {
@@ -2625,35 +2625,35 @@ export default function VoiceDocumentation() {
                                       });
                                     }}
                                   >
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="soap_note">
-                                        SOAP Note
-                                      </SelectItem>
-                                      <SelectItem value="procedure">
-                                        Procedure
-                                      </SelectItem>
-                                      <SelectItem value="consultation">
-                                        Consultation
-                                      </SelectItem>
-                                      <SelectItem value="discharge">
-                                        Discharge
-                                      </SelectItem>
-                                      <SelectItem value="admission">
-                                        Admission
-                                      </SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="soap_note">
+                                      SOAP Note
+                                    </SelectItem>
+                                    <SelectItem value="procedure">
+                                      Procedure
+                                    </SelectItem>
+                                    <SelectItem value="consultation">
+                                      Consultation
+                                    </SelectItem>
+                                    <SelectItem value="discharge">
+                                      Discharge
+                                    </SelectItem>
+                                    <SelectItem value="admission">
+                                      Admission
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
+                            </div>
 
-                              <div>
-                                <label className="text-sm font-medium mb-2 block">
-                                  Template Content
-                                </label>
-                                <Textarea
+                            <div>
+                              <label className="text-sm font-medium mb-2 block">
+                                Template Content
+                              </label>
+                              <Textarea
                                   value={editingTemplate.template}
                                   onChange={(e) => {
                                     setEditingTemplate({
@@ -2661,16 +2661,16 @@ export default function VoiceDocumentation() {
                                       template: e.target.value
                                     });
                                   }}
-                                  className="min-h-[200px] font-mono text-sm"
-                                  placeholder="Enter template content with field placeholders like {chief_complaint}, {assessment}, etc."
-                                />
-                              </div>
+                                className="min-h-[200px] font-mono text-sm"
+                                placeholder="Enter template content with field placeholders like {chief_complaint}, {assessment}, etc."
+                              />
+                            </div>
 
-                              <div>
-                                <div className="flex items-center justify-between mb-2">
-                                  <label className="text-sm font-medium">
-                                    Template Fields
-                                  </label>
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className="text-sm font-medium">
+                                  Template Fields
+                                </label>
                                   <Button 
                                     size="sm" 
                                     variant="outline"
@@ -2686,17 +2686,17 @@ export default function VoiceDocumentation() {
                                       });
                                     }}
                                   >
-                                    <Plus className="w-4 h-4 mr-1" />
-                                    Add Field
-                                  </Button>
-                                </div>
-                                <div className="space-y-2 max-h-40 overflow-y-auto">
+                                  <Plus className="w-4 h-4 mr-1" />
+                                  Add Field
+                                </Button>
+                              </div>
+                              <div className="space-y-2 max-h-40 overflow-y-auto">
                                   {editingTemplate.fields.map((field, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="flex items-center gap-2 p-2 border rounded"
-                                    >
-                                      <Input
+                                  <div
+                                    key={idx}
+                                    className="flex items-center gap-2 p-2 border rounded"
+                                  >
+                                    <Input
                                         value={field.name}
                                         onChange={(e) => {
                                           const updatedFields = [...editingTemplate.fields];
@@ -2709,9 +2709,9 @@ export default function VoiceDocumentation() {
                                             fields: updatedFields
                                           });
                                         }}
-                                        className="flex-1"
-                                        placeholder="Field name"
-                                      />
+                                      className="flex-1"
+                                      placeholder="Field name"
+                                    />
                                       <Select 
                                         value={field.type}
                                         onValueChange={(value) => {
@@ -2726,21 +2726,21 @@ export default function VoiceDocumentation() {
                                           });
                                         }}
                                       >
-                                        <SelectTrigger className="w-32">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="text">
-                                            Text
-                                          </SelectItem>
-                                          <SelectItem value="textarea">
-                                            Textarea
-                                          </SelectItem>
-                                          <SelectItem value="select">
-                                            Select
-                                          </SelectItem>
-                                        </SelectContent>
-                                      </Select>
+                                      <SelectTrigger className="w-32">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="text">
+                                          Text
+                                        </SelectItem>
+                                        <SelectItem value="textarea">
+                                          Textarea
+                                        </SelectItem>
+                                        <SelectItem value="select">
+                                          Select
+                                        </SelectItem>
+                                      </SelectContent>
+                                    </Select>
                                       <Button 
                                         size="sm" 
                                         variant="outline"
@@ -2754,18 +2754,18 @@ export default function VoiceDocumentation() {
                                           });
                                         }}
                                       >
-                                        <X className="w-4 h-4" />
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
+                                      <X className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                ))}
                               </div>
+                            </div>
 
-                              <div className="flex items-center gap-4">
-                                <div className="flex items-center space-x-2">
-                                  <input
-                                    type="checkbox"
-                                    id="autoComplete"
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  id="autoComplete"
                                     checked={editingTemplate.autoComplete}
                                     onChange={(e) => {
                                       setEditingTemplate({
@@ -2773,19 +2773,19 @@ export default function VoiceDocumentation() {
                                         autoComplete: e.target.checked
                                       });
                                     }}
-                                    className="rounded"
-                                  />
-                                  <label
-                                    htmlFor="autoComplete"
-                                    className="text-sm"
-                                  >
-                                    Enable auto-complete
-                                  </label>
-                                </div>
+                                  className="rounded"
+                                />
+                                <label
+                                  htmlFor="autoComplete"
+                                  className="text-sm"
+                                >
+                                  Enable auto-complete
+                                </label>
                               </div>
+                            </div>
 
-                              <div className="flex justify-end gap-2 pt-4">
-                                <DialogClose asChild>
+                            <div className="flex justify-end gap-2 pt-4">
+                              <DialogClose asChild>
                                   <Button 
                                     variant="outline"
                                     onClick={() => {
@@ -2795,9 +2795,9 @@ export default function VoiceDocumentation() {
                                   >
                                     Cancel
                                   </Button>
-                                </DialogClose>
-                                <Button
-                                  onClick={() => {
+                              </DialogClose>
+                              <Button
+                                onClick={() => {
                                     // Update the template in localTemplates
                                     setLocalTemplates((prev) => {
                                       const updated = prev.map((t) =>
@@ -2822,19 +2822,19 @@ export default function VoiceDocumentation() {
                                       console.error("Error updating localStorage:", error);
                                     }
                                     
-                                    toast({
-                                      title: "Template Updated",
+                                  toast({
+                                    title: "Template Updated",
                                       description: `${editingTemplate.name} has been successfully updated`,
-                                    });
+                                  });
                                     
                                     setEditingTemplate(null);
                                     setEditTemplateDialogOpen(false);
-                                  }}
-                                >
-                                  Save Changes
-                                </Button>
-                              </div>
+                                }}
+                              >
+                                Save Changes
+                              </Button>
                             </div>
+                          </div>
                           )}
                         </DialogContent>
                       </Dialog>

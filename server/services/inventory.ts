@@ -37,7 +37,7 @@ import {
   type InsertInventoryStockAdjustment,
   type InsertInventoryCreditNote
 } from "@shared/schema";
-import { eq, and, desc, asc, sql, sum, gte, lte, gt, isNull, or } from "drizzle-orm";
+import { eq, and, desc, asc, sql, sum, gte, lte, gt, isNull, isNotNull, or } from "drizzle-orm";
 import { emailService } from "../services/email";
 
 /**
@@ -738,27 +738,41 @@ Cura Healthcare Team
   // ====== GOODS RECEIPTS ======
   
   async getGoodsReceipts(organizationId: number) {
-    const receipts = await db
+    // Get all stock movements that represent goods receipts
+    const stockMovements = await db
       .select({
         id: inventoryStockMovements.id,
         receiptNumber: sql<string>`CONCAT('GR-', ${inventoryStockMovements.id})`,
         purchaseOrderId: inventoryStockMovements.referenceId,
-        poNumber: inventoryPurchaseOrders.poNumber,
-        supplierName: inventorySuppliers.name,
         receivedDate: inventoryStockMovements.createdAt,
-        totalAmount: sql<number>`${inventoryStockMovements.quantity} * ${inventoryStockMovements.unitCost}`,
         receivedBy: inventoryStockMovements.createdBy,
         notes: inventoryStockMovements.notes,
         itemId: inventoryStockMovements.itemId,
         itemName: inventoryItems.name,
         quantityReceived: inventoryStockMovements.quantity,
+        unitCost: inventoryStockMovements.unitCost,
         batchNumber: inventoryBatches.batchNumber,
-        expiryDate: inventoryBatches.expiryDate
+        expiryDate: inventoryBatches.expiryDate,
+        // Purchase Order details
+        poNumber: inventoryPurchaseOrders.poNumber,
+        poStatus: inventoryPurchaseOrders.status,
+        poOrderDate: inventoryPurchaseOrders.orderDate,
+        poExpectedDeliveryDate: inventoryPurchaseOrders.expectedDeliveryDate,
+        poTotalAmount: inventoryPurchaseOrders.totalAmount,
+        poTaxAmount: inventoryPurchaseOrders.taxAmount,
+        poDiscountAmount: inventoryPurchaseOrders.discountAmount,
+        poNotes: inventoryPurchaseOrders.notes,
+        // Supplier details
+        supplierId: inventorySuppliers.id,
+        supplierName: inventorySuppliers.name,
+        supplierEmail: inventorySuppliers.email,
+        supplierPhone: inventorySuppliers.phone,
+        supplierAddress: inventorySuppliers.address,
       })
       .from(inventoryStockMovements)
+      .innerJoin(inventoryPurchaseOrders, eq(inventoryStockMovements.referenceId, inventoryPurchaseOrders.id))
       .leftJoin(inventoryItems, eq(inventoryStockMovements.itemId, inventoryItems.id))
       .leftJoin(inventoryBatches, eq(inventoryStockMovements.batchId, inventoryBatches.id))
-      .leftJoin(inventoryPurchaseOrders, eq(inventoryStockMovements.referenceId, inventoryPurchaseOrders.id))
       .leftJoin(inventorySuppliers, eq(inventoryPurchaseOrders.supplierId, inventorySuppliers.id))
       .where(and(
         eq(inventoryStockMovements.organizationId, organizationId),
@@ -766,11 +780,74 @@ Cura Healthcare Team
       ))
       .orderBy(desc(inventoryStockMovements.createdAt));
 
+    // Group by receipt ID (stock movement ID) and aggregate data
+    const receiptMap = new Map<number, any>();
+    
+    for (const movement of stockMovements) {
+      const receiptId = movement.id;
+      
+      if (!receiptMap.has(receiptId)) {
+        receiptMap.set(receiptId, {
+          id: receiptId,
+          receiptNumber: movement.receiptNumber,
+          purchaseOrderId: movement.purchaseOrderId,
+          poNumber: movement.poNumber || null,
+          poStatus: movement.poStatus || null,
+          poOrderDate: movement.poOrderDate || null,
+          poExpectedDeliveryDate: movement.poExpectedDeliveryDate || null,
+          poTotalAmount: movement.poTotalAmount ? parseFloat(String(movement.poTotalAmount)) : null,
+          poTaxAmount: movement.poTaxAmount ? parseFloat(String(movement.poTaxAmount)) : null,
+          poDiscountAmount: movement.poDiscountAmount ? parseFloat(String(movement.poDiscountAmount)) : null,
+          poNotes: movement.poNotes || null,
+          supplierId: movement.supplierId || null,
+          supplierName: movement.supplierName || null,
+          supplierEmail: movement.supplierEmail || null,
+          supplierPhone: movement.supplierPhone || null,
+          supplierAddress: movement.supplierAddress || null,
+          receivedDate: movement.receivedDate,
+          receivedBy: movement.receivedBy,
+          notes: movement.notes || null,
+          items: [],
+          totalAmount: 0,
+        });
+      }
+      
+      const receipt = receiptMap.get(receiptId)!;
+      
+      // Add item to receipt
+      if (movement.itemId) {
+        receipt.items.push({
+          itemId: movement.itemId,
+          itemName: movement.itemName || 'Unknown Item',
+          quantityReceived: movement.quantityReceived || 0,
+          unitCost: movement.unitCost ? parseFloat(String(movement.unitCost)) : 0,
+          batchNumber: movement.batchNumber || null,
+          expiryDate: movement.expiryDate || null,
+        });
+        
+        // Calculate total amount from items
+        const itemTotal = (movement.quantityReceived || 0) * (movement.unitCost ? parseFloat(String(movement.unitCost)) : 0);
+        receipt.totalAmount += itemTotal;
+      }
+    }
+    
+    // If purchase order total amount exists, use it; otherwise use calculated total
+    const receipts = Array.from(receiptMap.values()).map(receipt => ({
+      ...receipt,
+      totalAmount: receipt.poTotalAmount !== null && receipt.poTotalAmount > 0 
+        ? receipt.poTotalAmount 
+        : receipt.totalAmount,
+    }));
+
     return receipts;
   }
 
   async getGoodsReceiptById(receiptId: number, organizationId: number) {
-    const [movement] = await db
+    try {
+      console.log(`[INVENTORY] Starting getGoodsReceiptById for receiptId: ${receiptId}, organizationId: ${organizationId}`);
+      
+      // First, get the movement to find the purchase order ID and receipt details
+      const movementResult = await db
       .select({
         id: inventoryStockMovements.id,
         receiptNumber: sql<string>`CONCAT('GR-', ${inventoryStockMovements.id})`,
@@ -778,8 +855,8 @@ Cura Healthcare Team
         poNumber: inventoryPurchaseOrders.poNumber,
         supplierName: inventorySuppliers.name,
         receivedDate: inventoryStockMovements.createdAt,
-        totalAmount: sql<number>`${inventoryStockMovements.quantity} * ${inventoryStockMovements.unitCost}`,
         notes: inventoryStockMovements.notes,
+          referenceId: inventoryStockMovements.referenceId,
       })
       .from(inventoryStockMovements)
       .leftJoin(inventoryPurchaseOrders, eq(inventoryStockMovements.referenceId, inventoryPurchaseOrders.id))
@@ -791,9 +868,92 @@ Cura Healthcare Team
       ))
       .limit(1);
 
-    if (!movement) return null;
+      // Safely log movement result
+      try {
+        console.log(`[INVENTORY] Movement query result length:`, movementResult?.length || 0);
+        if (movementResult && movementResult.length > 0) {
+          const firstMovement = movementResult[0];
+          console.log(`[INVENTORY] First movement raw data:`, {
+            id: firstMovement?.id,
+            receiptNumber: firstMovement?.receiptNumber,
+            purchaseOrderId: firstMovement?.purchaseOrderId,
+            poNumber: firstMovement?.poNumber,
+            supplierName: firstMovement?.supplierName,
+            receivedDate: firstMovement?.receivedDate,
+            notes: firstMovement?.notes,
+            referenceId: firstMovement?.referenceId
+          });
+          console.log(`[INVENTORY] First movement types:`, {
+            id: typeof firstMovement?.id,
+            receiptNumber: typeof firstMovement?.receiptNumber,
+            purchaseOrderId: typeof firstMovement?.purchaseOrderId,
+            poNumber: typeof firstMovement?.poNumber,
+            supplierName: typeof firstMovement?.supplierName,
+            receivedDate: typeof firstMovement?.receivedDate,
+            notes: typeof firstMovement?.notes,
+            referenceId: typeof firstMovement?.referenceId
+          });
+        }
+      } catch (logError: any) {
+        console.error(`[INVENTORY] Error logging movement result:`, logError?.message, logError?.stack);
+      }
+      
+      const movement = movementResult?.[0];
+      
+      if (!movement) {
+        console.log(`[INVENTORY] Goods receipt ${receiptId} not found for organization ${organizationId}`);
+        return null;
+      }
+      
+      // Validate movement is a proper object
+      if (typeof movement !== 'object') {
+        console.error(`[INVENTORY] Movement is not an object:`, typeof movement, movement);
+        return null;
+      }
+      
+      console.log(`[INVENTORY] Movement object keys:`, Object.keys(movement));
+      
+      if (!movement.id) {
+        console.error(`[INVENTORY] Goods receipt ${receiptId} found but missing ID:`, movement);
+        return null;
+      }
+      
+      console.log(`[INVENTORY] Found movement with ID: ${movement.id}, referenceId: ${movement.referenceId}`);
 
-    const items = await db
+      // Get ALL items for this goods receipt
+      // If referenceId exists, get all movements with the same referenceId (same purchase order)
+      // Otherwise, just get the single movement
+      let items: any[] = [];
+      
+      // Safely check referenceId
+      const movementReferenceId = movement.referenceId != null ? Number(movement.referenceId) : null;
+      
+      if (movementReferenceId) {
+        // Get all items from the same purchase order created on the same day
+        let receiptDate: Date;
+        try {
+          if (movement.receivedDate instanceof Date) {
+            receiptDate = movement.receivedDate;
+          } else if (movement.receivedDate) {
+            receiptDate = new Date(movement.receivedDate);
+            if (isNaN(receiptDate.getTime())) {
+              throw new Error('Invalid date');
+            }
+          } else {
+            receiptDate = new Date();
+          }
+        } catch (dateError) {
+          console.error(`[INVENTORY] Invalid receipt date, using current date:`, dateError);
+          receiptDate = new Date();
+        }
+        
+        const receiptDateStart = new Date(receiptDate);
+        receiptDateStart.setHours(0, 0, 0, 0);
+        const receiptDateEnd = new Date(receiptDate);
+        receiptDateEnd.setHours(23, 59, 59, 999);
+
+        try {
+          const itemsResult = await db
       .select({
         id: inventoryStockMovements.id,
         itemId: inventoryStockMovements.itemId,
@@ -808,17 +968,446 @@ Cura Healthcare Team
       .leftJoin(inventoryItems, eq(inventoryStockMovements.itemId, inventoryItems.id))
       .where(and(
         eq(inventoryStockMovements.organizationId, organizationId),
-        eq(inventoryStockMovements.id, receiptId)
-      ));
+              eq(inventoryStockMovements.referenceId, movementReferenceId),
+              eq(inventoryStockMovements.movementType, 'purchase'),
+              gte(inventoryStockMovements.createdAt, receiptDateStart),
+              lte(inventoryStockMovements.createdAt, receiptDateEnd)
+            ));
+          items = Array.isArray(itemsResult) ? itemsResult : [];
+        } catch (dateError: any) {
+          console.error(`[INVENTORY] Error querying items by date, falling back to referenceId only:`, dateError);
+          try {
+            // Fallback: just get items by referenceId without date filter
+            const fallbackResult = await db
+              .select({
+                id: inventoryStockMovements.id,
+                itemId: inventoryStockMovements.itemId,
+                itemName: inventoryItems.name,
+                batchNumber: inventoryStockMovements.batchNumber,
+                expiryDate: inventoryStockMovements.expiryDate,
+                quantity: inventoryStockMovements.quantity,
+                unitPrice: inventoryStockMovements.unitCost,
+                totalPrice: sql<number>`(${inventoryStockMovements.quantity} * ${inventoryStockMovements.unitCost})`,
+              })
+              .from(inventoryStockMovements)
+              .leftJoin(inventoryItems, eq(inventoryStockMovements.itemId, inventoryItems.id))
+              .where(and(
+                eq(inventoryStockMovements.organizationId, organizationId),
+                eq(inventoryStockMovements.referenceId, movementReferenceId),
+                eq(inventoryStockMovements.movementType, 'purchase')
+              ));
+            items = Array.isArray(fallbackResult) ? fallbackResult : [];
+          } catch (fallbackError: any) {
+            console.error(`[INVENTORY] Error in fallback query:`, fallbackError);
+            items = [];
+          }
+        }
+      } else {
+        // If no referenceId, just return the single movement as an item
+        // Query items directly by receiptId (which is the movement id)
+        try {
+          // Query with explicit field selection to avoid Drizzle issues
+          const itemsResult = await db
+            .select({
+              id: inventoryStockMovements.id,
+              itemId: inventoryStockMovements.itemId,
+              itemName: inventoryItems.name,
+              batchNumber: inventoryStockMovements.batchNumber,
+              expiryDate: inventoryStockMovements.expiryDate,
+              quantity: inventoryStockMovements.quantity,
+              unitPrice: inventoryStockMovements.unitCost,
+              totalPrice: sql<number>`(${inventoryStockMovements.quantity} * ${inventoryStockMovements.unitCost})`,
+            })
+            .from(inventoryStockMovements)
+            .leftJoin(inventoryItems, eq(inventoryStockMovements.itemId, inventoryItems.id))
+            .where(and(
+              eq(inventoryStockMovements.organizationId, organizationId),
+              eq(inventoryStockMovements.id, receiptId),
+              eq(inventoryStockMovements.movementType, 'purchase')
+            ));
+          
+          // Ensure result is an array
+          items = Array.isArray(itemsResult) ? itemsResult : [];
+        } catch (queryError: any) {
+          console.error(`[INVENTORY] Error querying items for receipt ${receiptId} without referenceId:`, queryError);
+          console.error(`[INVENTORY] Query error message:`, queryError?.message);
+          console.error(`[INVENTORY] Query error stack:`, queryError?.stack);
+          // Fallback: return empty array if query fails
+          items = [];
+        }
+      }
 
-    return { ...movement, items };
+      // Ensure items is always an array and handle query failures
+      let itemsArray: any[] = [];
+      try {
+        if (items !== undefined && items !== null) {
+          itemsArray = Array.isArray(items) ? items : [];
+        }
+      } catch (itemsError) {
+        console.error(`[INVENTORY] Error processing items array:`, itemsError);
+        itemsArray = [];
+      }
+      console.log(`[INVENTORY] Found ${itemsArray.length} items for goods receipt ${receiptId}`);
+
+      // Calculate total amount from all items with null safety
+      const totalAmount = itemsArray.reduce((sum, item) => {
+        if (!item || typeof item !== 'object') {
+          return sum;
+        }
+        try {
+          const itemTotal = typeof item.totalPrice === 'number' 
+            ? item.totalPrice 
+            : (item.totalPrice !== null && item.totalPrice !== undefined
+                ? parseFloat(String(item.totalPrice)) || 0
+                : 0);
+          return sum + (isNaN(itemTotal) ? 0 : itemTotal);
+        } catch (error) {
+          console.error(`[INVENTORY] Error calculating item total:`, error, item);
+          return sum;
+        }
+      }, 0);
+
+      console.log(`[INVENTORY] Found goods receipt ${receiptId} with ${itemsArray.length} items, total: ${totalAmount}`);
+
+      // Safely construct the return object with comprehensive null checks
+      // Ensure all values are properly serializable
+      
+      // STEP 1: Safely extract movement properties with null checks
+      console.log(`[INVENTORY STEP 1] Checking movement.id:`, movement?.id, typeof movement?.id);
+      const movementId = movement?.id != null ? Number(movement.id) : null;
+      if (!movementId) {
+        console.error(`[INVENTORY STEP 1 ERROR] Movement ID is null/undefined for receipt ${receiptId}`);
+        console.error(`[INVENTORY STEP 1 ERROR] Movement object:`, JSON.stringify(movement, null, 2));
+        return null;
+      }
+      console.log(`[INVENTORY STEP 1 SUCCESS] Movement ID: ${movementId}`);
+
+      // STEP 2: Safely handle receiptNumber (from SQL CONCAT)
+      console.log(`[INVENTORY STEP 2] Checking movement.receiptNumber:`, movement?.receiptNumber, typeof movement?.receiptNumber);
+      let safeReceiptNumber: string;
+      try {
+        if (movement.receiptNumber != null) {
+          console.log(`[INVENTORY STEP 2] receiptNumber exists, converting to string`);
+          safeReceiptNumber = String(movement.receiptNumber);
+        } else {
+          console.log(`[INVENTORY STEP 2] receiptNumber is null, using fallback`);
+          safeReceiptNumber = `GR-${movementId}`;
+        }
+        console.log(`[INVENTORY STEP 2 SUCCESS] safeReceiptNumber: ${safeReceiptNumber}`);
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 2 ERROR] Error converting receiptNumber:`, error?.message, error?.stack);
+        safeReceiptNumber = `GR-${movementId}`;
+      }
+
+      // STEP 3: Safely handle receivedDate
+      console.log(`[INVENTORY STEP 3] Checking movement.receivedDate:`, movement?.receivedDate, typeof movement?.receivedDate);
+      let validReceivedDate: Date;
+      try {
+        if (movement.receivedDate) {
+          if (movement.receivedDate instanceof Date) {
+            console.log(`[INVENTORY STEP 3] receivedDate is Date instance`);
+            validReceivedDate = movement.receivedDate;
+          } else {
+            console.log(`[INVENTORY STEP 3] receivedDate is not Date, converting`);
+            validReceivedDate = new Date(movement.receivedDate);
+            if (isNaN(validReceivedDate.getTime())) {
+              console.error(`[INVENTORY STEP 3] Invalid date, using current date`);
+              validReceivedDate = new Date();
+            }
+          }
+        } else {
+          console.log(`[INVENTORY STEP 3] receivedDate is null/undefined, using current date`);
+          validReceivedDate = new Date();
+        }
+        console.log(`[INVENTORY STEP 3 SUCCESS] validReceivedDate: ${validReceivedDate.toISOString()}`);
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 3 ERROR] Error processing receivedDate:`, error?.message, error?.stack);
+        validReceivedDate = new Date();
+      }
+
+      // STEP 4: Safely map items array to ensure all properties are serializable
+      console.log(`[INVENTORY STEP 4] Processing ${itemsArray.length} items`);
+      const safeItemsArray = itemsArray.map((item: any, index: number) => {
+        console.log(`[INVENTORY STEP 4] Processing item ${index}:`, item);
+        if (!item || typeof item !== 'object') {
+          console.error(`[INVENTORY STEP 4 ERROR] Item ${index} is not an object:`, typeof item, item);
+          return null;
+        }
+        try {
+          console.log(`[INVENTORY STEP 4] Item ${index} fields:`, {
+            id: item.id,
+            itemId: item.itemId,
+            itemName: item.itemName,
+            batchNumber: item.batchNumber,
+            expiryDate: item.expiryDate,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice: item.totalPrice
+          });
+          // Convert all values to plain JavaScript types
+          const safeItem = {
+            id: item.id != null ? Number(item.id) : null,
+            itemId: item.itemId != null ? Number(item.itemId) : null,
+            itemName: item.itemName != null ? String(item.itemName) : null,
+            batchNumber: item.batchNumber != null ? String(item.batchNumber) : null,
+            expiryDate: item.expiryDate != null 
+              ? (item.expiryDate instanceof Date 
+                  ? item.expiryDate.toISOString() 
+                  : String(item.expiryDate))
+              : null,
+            quantity: item.quantity != null ? Number(item.quantity) : 0,
+            unitPrice: item.unitPrice != null ? Number(item.unitPrice) : 0,
+            totalPrice: item.totalPrice != null ? Number(item.totalPrice) : 0,
+          };
+          console.log(`[INVENTORY STEP 4 SUCCESS] Item ${index} mapped successfully`);
+          return safeItem;
+        } catch (error: any) {
+          console.error(`[INVENTORY STEP 4 ERROR] Error mapping item ${index}:`, error?.message, error?.stack);
+          console.error(`[INVENTORY STEP 4 ERROR] Item data:`, JSON.stringify(item, null, 2));
+          return null;
+        }
+      }).filter((item: any) => item !== null);
+      console.log(`[INVENTORY STEP 4 SUCCESS] Mapped ${safeItemsArray.length} items successfully`);
+
+      // STEP 5: Safely extract all movement properties
+      console.log(`[INVENTORY STEP 5] Extracting movement properties`);
+      let safePurchaseOrderId: number | null = null;
+      let safePoNumber: string | null = null;
+      let safeSupplierName: string | null = null;
+      let safeNotes: string | null = null;
+      let safeReferenceId: number | null = null;
+
+      try {
+        console.log(`[INVENTORY STEP 5] movement.purchaseOrderId:`, movement?.purchaseOrderId, typeof movement?.purchaseOrderId);
+        safePurchaseOrderId = movement.purchaseOrderId != null ? Number(movement.purchaseOrderId) : null;
+        console.log(`[INVENTORY STEP 5] safePurchaseOrderId:`, safePurchaseOrderId);
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 5 ERROR] Error extracting purchaseOrderId:`, error?.message);
+      }
+
+      try {
+        console.log(`[INVENTORY STEP 5] movement.poNumber:`, movement?.poNumber, typeof movement?.poNumber);
+        safePoNumber = movement.poNumber != null ? String(movement.poNumber) : null;
+        console.log(`[INVENTORY STEP 5] safePoNumber:`, safePoNumber);
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 5 ERROR] Error extracting poNumber:`, error?.message);
+      }
+
+      try {
+        console.log(`[INVENTORY STEP 5] movement.supplierName:`, movement?.supplierName, typeof movement?.supplierName);
+        safeSupplierName = movement.supplierName != null ? String(movement.supplierName) : null;
+        console.log(`[INVENTORY STEP 5] safeSupplierName:`, safeSupplierName);
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 5 ERROR] Error extracting supplierName:`, error?.message);
+      }
+
+      try {
+        console.log(`[INVENTORY STEP 5] movement.notes:`, movement?.notes, typeof movement?.notes);
+        safeNotes = movement.notes != null ? String(movement.notes) : null;
+        console.log(`[INVENTORY STEP 5] safeNotes:`, safeNotes);
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 5 ERROR] Error extracting notes:`, error?.message);
+      }
+
+      try {
+        console.log(`[INVENTORY STEP 5] movement.referenceId:`, movement?.referenceId, typeof movement?.referenceId);
+        safeReferenceId = movement.referenceId != null ? Number(movement.referenceId) : null;
+        console.log(`[INVENTORY STEP 5] safeReferenceId:`, safeReferenceId);
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 5 ERROR] Error extracting referenceId:`, error?.message);
+      }
+
+      // STEP 6: Fetch purchase order details and items if purchaseOrderId exists
+      console.log(`[INVENTORY STEP 6] Fetching purchase order details`);
+      let purchaseOrderDetails: any = null;
+      let purchaseOrderItems: any[] = [];
+
+      if (safePurchaseOrderId) {
+        try {
+          console.log(`[INVENTORY STEP 6] Fetching purchase order ${safePurchaseOrderId}`);
+          // Fetch purchase order details
+          const [poDetails] = await db
+            .select({
+              id: inventoryPurchaseOrders.id,
+              poNumber: inventoryPurchaseOrders.poNumber,
+              orderDate: inventoryPurchaseOrders.orderDate,
+              expectedDeliveryDate: inventoryPurchaseOrders.expectedDeliveryDate,
+              status: inventoryPurchaseOrders.status,
+              totalAmount: inventoryPurchaseOrders.totalAmount,
+              taxAmount: inventoryPurchaseOrders.taxAmount,
+              discountAmount: inventoryPurchaseOrders.discountAmount,
+              notes: inventoryPurchaseOrders.notes,
+              supplierId: inventoryPurchaseOrders.supplierId,
+              supplierName: inventorySuppliers.name,
+              supplierEmail: inventorySuppliers.email,
+              createdAt: inventoryPurchaseOrders.createdAt,
+              updatedAt: inventoryPurchaseOrders.updatedAt,
+            })
+            .from(inventoryPurchaseOrders)
+            .leftJoin(inventorySuppliers, eq(inventoryPurchaseOrders.supplierId, inventorySuppliers.id))
+            .where(and(
+              eq(inventoryPurchaseOrders.id, safePurchaseOrderId),
+              eq(inventoryPurchaseOrders.organizationId, organizationId)
+            ))
+            .limit(1);
+
+          if (poDetails) {
+            console.log(`[INVENTORY STEP 6] Found purchase order: ${poDetails.poNumber}`);
+            purchaseOrderDetails = {
+              id: poDetails.id ?? null,
+              poNumber: poDetails.poNumber ?? null,
+              orderDate: poDetails.orderDate ? (poDetails.orderDate instanceof Date ? poDetails.orderDate.toISOString() : String(poDetails.orderDate)) : null,
+              expectedDeliveryDate: poDetails.expectedDeliveryDate ? (poDetails.expectedDeliveryDate instanceof Date ? poDetails.expectedDeliveryDate.toISOString() : String(poDetails.expectedDeliveryDate)) : null,
+              status: poDetails.status ?? null,
+              totalAmount: poDetails.totalAmount != null ? Number(poDetails.totalAmount) : 0,
+              taxAmount: poDetails.taxAmount != null ? Number(poDetails.taxAmount) : 0,
+              discountAmount: poDetails.discountAmount != null ? Number(poDetails.discountAmount) : 0,
+              notes: poDetails.notes ?? null,
+              supplierId: poDetails.supplierId ?? null,
+              supplierName: poDetails.supplierName ?? null,
+              supplierEmail: poDetails.supplierEmail ?? null,
+              createdAt: poDetails.createdAt ? (poDetails.createdAt instanceof Date ? poDetails.createdAt.toISOString() : String(poDetails.createdAt)) : null,
+              updatedAt: poDetails.updatedAt ? (poDetails.updatedAt instanceof Date ? poDetails.updatedAt.toISOString() : String(poDetails.updatedAt)) : null,
+            };
+
+            // Fetch purchase order items
+            try {
+              console.log(`[INVENTORY STEP 6] Fetching purchase order items for PO ${safePurchaseOrderId}`);
+              const poItemsResult = await db
+                .select({
+                  id: inventoryPurchaseOrderItems.id,
+                  itemId: inventoryPurchaseOrderItems.itemId,
+                  itemName: inventoryItems.name,
+                  quantity: inventoryPurchaseOrderItems.quantity,
+                  unitPrice: inventoryPurchaseOrderItems.unitPrice,
+                  totalPrice: inventoryPurchaseOrderItems.totalPrice,
+                  receivedQuantity: inventoryPurchaseOrderItems.receivedQuantity,
+                })
+                .from(inventoryPurchaseOrderItems)
+                .leftJoin(inventoryItems, eq(inventoryPurchaseOrderItems.itemId, inventoryItems.id))
+                .where(and(
+                  eq(inventoryPurchaseOrderItems.purchaseOrderId, safePurchaseOrderId),
+                  eq(inventoryPurchaseOrderItems.organizationId, organizationId)
+                ))
+                .orderBy(inventoryPurchaseOrderItems.id);
+
+              purchaseOrderItems = Array.isArray(poItemsResult) ? poItemsResult.map((item: any) => ({
+                id: item.id ?? null,
+                itemId: item.itemId != null ? Number(item.itemId) : null,
+                itemName: item.itemName ?? null,
+                quantity: item.quantity != null ? Number(item.quantity) : 0,
+                unitPrice: item.unitPrice != null ? Number(item.unitPrice) : 0,
+                totalPrice: item.totalPrice != null ? Number(item.totalPrice) : 0,
+                receivedQuantity: item.receivedQuantity != null ? Number(item.receivedQuantity) : 0,
+              })) : [];
+              console.log(`[INVENTORY STEP 6] Found ${purchaseOrderItems.length} purchase order items`);
+            } catch (poItemsError: any) {
+              console.error(`[INVENTORY STEP 6 ERROR] Error fetching purchase order items:`, poItemsError?.message);
+              purchaseOrderItems = [];
+            }
+          } else {
+            console.log(`[INVENTORY STEP 6] Purchase order ${safePurchaseOrderId} not found`);
+          }
+        } catch (poError: any) {
+          console.error(`[INVENTORY STEP 6 ERROR] Error fetching purchase order details:`, poError?.message, poError?.stack);
+          // Continue without purchase order details
+        }
+      } else {
+        console.log(`[INVENTORY STEP 6] No purchaseOrderId, skipping purchase order fetch`);
+      }
+
+      // STEP 7: Construct return object
+      console.log(`[INVENTORY STEP 7] Constructing return object`);
+      try {
+        const returnObject = { 
+          id: movementId,
+          receiptNumber: safeReceiptNumber,
+          purchaseOrderId: safePurchaseOrderId,
+          poNumber: safePoNumber,
+          supplierName: safeSupplierName,
+          receivedDate: validReceivedDate.toISOString(),
+          notes: safeNotes,
+          referenceId: safeReferenceId,
+          items: safeItemsArray,
+          totalAmount: Number(totalAmount) || 0,
+          purchaseOrder: purchaseOrderDetails,
+          purchaseOrderItems: purchaseOrderItems
+        };
+        console.log(`[INVENTORY STEP 7 SUCCESS] Return object constructed successfully`);
+        console.log(`[INVENTORY STEP 7] Return object keys:`, Object.keys(returnObject));
+        return returnObject;
+      } catch (error: any) {
+        console.error(`[INVENTORY STEP 7 ERROR] Error constructing return object:`, error?.message, error?.stack);
+        throw error;
+      }
+    } catch (error: any) {
+      console.error(`[INVENTORY] Error fetching goods receipt ${receiptId}:`, error);
+      console.error(`[INVENTORY] Error stack:`, error?.stack);
+      console.error(`[INVENTORY] Error message:`, error?.message);
+      
+      // Re-throw with more context
+      const errorMessage = error?.message || String(error);
+      if (errorMessage.includes('Cannot convert undefined or null to object')) {
+        console.error(`[INVENTORY] Null/undefined conversion error detected. This usually means a property access on null/undefined.`);
+      }
+      
+      throw new Error(`Failed to fetch goods receipt ${receiptId}: ${errorMessage}`);
+    }
+  }
+
+  async checkGoodsReceiptExists(purchaseOrderId: number, organizationId: number): Promise<boolean> {
+    try {
+      const existingReceipt = await db
+        .select({
+          id: inventoryStockMovements.id,
+        })
+        .from(inventoryStockMovements)
+        .where(and(
+          eq(inventoryStockMovements.organizationId, organizationId),
+          eq(inventoryStockMovements.referenceId, purchaseOrderId),
+          eq(inventoryStockMovements.movementType, 'purchase')
+        ))
+        .limit(1);
+
+      return existingReceipt.length > 0;
+    } catch (error) {
+      console.error(`[INVENTORY] Error checking goods receipt existence:`, error);
+      return false;
+    }
   }
 
   async createGoodsReceipt(receiptData: any) {
     return await db.transaction(async (tx) => {
       const movements = [];
       
+      // Fetch purchase order items to get unit prices
+      let purchaseOrderItemsMap = new Map<number, any>();
+      try {
+        const poItems = await tx
+          .select({
+            itemId: inventoryPurchaseOrderItems.itemId,
+            unitPrice: inventoryPurchaseOrderItems.unitPrice,
+          })
+          .from(inventoryPurchaseOrderItems)
+          .where(and(
+            eq(inventoryPurchaseOrderItems.purchaseOrderId, receiptData.purchaseOrderId),
+            eq(inventoryPurchaseOrderItems.organizationId, receiptData.organizationId)
+          ));
+        
+        for (const poItem of poItems) {
+          purchaseOrderItemsMap.set(poItem.itemId, {
+            unitPrice: poItem.unitPrice ? parseFloat(String(poItem.unitPrice)) : 0
+          });
+        }
+      } catch (error) {
+        console.error(`[INVENTORY] Error fetching purchase order items for unit prices:`, error);
+      }
+      
       for (const item of receiptData.items) {
+        // Get unit price from purchase order items
+        const poItem = purchaseOrderItemsMap.get(item.itemId);
+        const unitCost = poItem?.unitPrice || item.unitPrice || 0;
+        
         // Create stock movement for receipt
         const [movement] = await tx
           .insert(inventoryStockMovements)
@@ -829,6 +1418,7 @@ Cura Healthcare Team
             quantity: item.quantityReceived,
             previousStock: 0, // Will be updated
             newStock: 0, // Will be updated
+            unitCost: unitCost > 0 ? String(unitCost) : null,
             referenceType: 'purchase_order',
             referenceId: receiptData.purchaseOrderId,
             notes: receiptData.notes,
@@ -858,7 +1448,7 @@ Cura Healthcare Team
               remainingQuantity: item.quantityReceived,
               expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
               manufactureDate: item.manufactureDate ? new Date(item.manufactureDate) : null,
-              purchasePrice: item.unitPrice || '0.00',
+              purchasePrice: poItem?.unitPrice ? String(poItem.unitPrice) : (item.unitPrice || '0.00'),
               receivedDate: new Date(receiptData.receivedDate),
               status: 'active'
             });
@@ -874,6 +1464,147 @@ Cura Healthcare Team
         items: movements 
       };
     });
+  }
+
+  async deleteGoodsReceipt(receiptId: number, organizationId: number) {
+    try {
+      // First, try to get the goods receipt to find related movements
+      // But don't fail if getGoodsReceiptById fails - we can still delete by receiptId
+      let receipt: any = null;
+      try {
+        receipt = await this.getGoodsReceiptById(receiptId, organizationId);
+      } catch (getReceiptError) {
+        console.warn(`[INVENTORY] Could not fetch receipt details for ${receiptId}, will delete by receiptId directly:`, getReceiptError);
+      }
+
+      return await db.transaction(async (tx) => {
+        // Get all movements for this receipt
+        // If receipt has a purchaseOrderId (referenceId), use it; otherwise use receiptId directly
+        let movements;
+        if (receipt?.purchaseOrderId) {
+          // Get movements by referenceId (purchase order)
+          movements = await tx
+            .select()
+            .from(inventoryStockMovements)
+            .where(and(
+              eq(inventoryStockMovements.organizationId, organizationId),
+              eq(inventoryStockMovements.referenceId, receipt.purchaseOrderId),
+              eq(inventoryStockMovements.movementType, 'purchase')
+            ));
+        } else {
+          // Get movements by receiptId (single movement or movements created on same day)
+          // First get the initial movement to find its createdAt date
+          const [initialMovement] = await tx
+            .select()
+            .from(inventoryStockMovements)
+            .where(and(
+              eq(inventoryStockMovements.organizationId, organizationId),
+              eq(inventoryStockMovements.id, receiptId),
+              eq(inventoryStockMovements.movementType, 'purchase')
+            ))
+            .limit(1);
+
+          if (!initialMovement) {
+            console.log(`[INVENTORY] Goods receipt ${receiptId} not found`);
+            return false;
+          }
+
+          // Get all movements created on the same day (for goods receipts without referenceId)
+          const receiptDate = initialMovement.createdAt instanceof Date 
+            ? initialMovement.createdAt 
+            : new Date(initialMovement.createdAt);
+          const receiptDateStart = new Date(receiptDate);
+          receiptDateStart.setHours(0, 0, 0, 0);
+          const receiptDateEnd = new Date(receiptDate);
+          receiptDateEnd.setHours(23, 59, 59, 999);
+
+          movements = await tx
+            .select()
+            .from(inventoryStockMovements)
+            .where(and(
+              eq(inventoryStockMovements.organizationId, organizationId),
+              eq(inventoryStockMovements.id, receiptId),
+              eq(inventoryStockMovements.movementType, 'purchase'),
+              gte(inventoryStockMovements.createdAt, receiptDateStart),
+              lte(inventoryStockMovements.createdAt, receiptDateEnd)
+            ));
+        }
+
+        // Reverse stock for each movement
+        for (const movement of movements) {
+          if (movement.itemId) {
+            // Get current stock
+            const item = await tx
+              .select()
+              .from(inventoryItems)
+              .where(and(
+                eq(inventoryItems.id, movement.itemId),
+                eq(inventoryItems.organizationId, organizationId)
+              ))
+              .limit(1);
+
+            if (item.length > 0) {
+              const currentStock = item[0].currentStock || 0;
+              const newStock = Math.max(0, currentStock - movement.quantity);
+              
+              // Update stock
+              await tx
+                .update(inventoryItems)
+                .set({ currentStock: newStock })
+                .where(eq(inventoryItems.id, movement.itemId));
+            }
+          }
+        }
+
+        // Delete all movements for this receipt
+        if (receipt?.purchaseOrderId) {
+          await tx
+            .delete(inventoryStockMovements)
+            .where(and(
+              eq(inventoryStockMovements.organizationId, organizationId),
+              eq(inventoryStockMovements.referenceId, receipt.purchaseOrderId),
+              eq(inventoryStockMovements.movementType, 'purchase')
+            ));
+        } else {
+          // Delete by receiptId and date range
+          const [initialMovement] = await tx
+            .select()
+            .from(inventoryStockMovements)
+            .where(and(
+              eq(inventoryStockMovements.organizationId, organizationId),
+              eq(inventoryStockMovements.id, receiptId),
+              eq(inventoryStockMovements.movementType, 'purchase')
+            ))
+            .limit(1);
+
+          if (initialMovement) {
+            const receiptDate = initialMovement.createdAt instanceof Date 
+              ? initialMovement.createdAt 
+              : new Date(initialMovement.createdAt);
+            const receiptDateStart = new Date(receiptDate);
+            receiptDateStart.setHours(0, 0, 0, 0);
+            const receiptDateEnd = new Date(receiptDate);
+            receiptDateEnd.setHours(23, 59, 59, 999);
+
+            await tx
+              .delete(inventoryStockMovements)
+              .where(and(
+                eq(inventoryStockMovements.organizationId, organizationId),
+                eq(inventoryStockMovements.id, receiptId),
+                eq(inventoryStockMovements.movementType, 'purchase'),
+                gte(inventoryStockMovements.createdAt, receiptDateStart),
+                lte(inventoryStockMovements.createdAt, receiptDateEnd)
+              ));
+          }
+        }
+
+        console.log(`[INVENTORY] Successfully deleted goods receipt ${receiptId} and ${movements.length} movements`);
+        return true;
+      });
+    } catch (error) {
+      console.error(`[INVENTORY] Error deleting goods receipt ${receiptId}:`, error);
+      throw error;
+    }
   }
 
   async getBatches(organizationId: number) {

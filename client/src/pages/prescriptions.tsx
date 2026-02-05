@@ -21,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Popover,
@@ -64,6 +65,7 @@ import {
   Download,
   Share2,
   History,
+  Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
@@ -666,11 +668,17 @@ export default function PrescriptionsPage() {
 
   // E-signature state
   const [showESignDialog, setShowESignDialog] = useState(false);
+  const [showSignatureRequiredDialog, setShowSignatureRequiredDialog] = useState(false);
+  const [pendingSavePrescriptionId, setPendingSavePrescriptionId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<"save" | "print" | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [signature, setSignature] = useState<string>("");
   const [signatureSaved, setSignatureSaved] = useState(false);
   const [showSignatureDetailsDialog, setShowSignatureDetailsDialog] = useState(false);
   const [selectedSignatureData, setSelectedSignatureData] = useState<any>(null);
+  const [showPdfViewerDialog, setShowPdfViewerDialog] = useState(false);
+  const [pdfViewerUrl, setPdfViewerUrl] = useState<string>("");
+  const [selectedPdfPrescription, setSelectedPdfPrescription] = useState<any>(null);
   const [showShareLogDialog, setShowShareLogDialog] = useState(false);
   const [selectedPrescriptionForShareLog, setSelectedPrescriptionForShareLog] = useState<any>(null);
   const [shareLogs, setShareLogs] = useState<any[]>([]);
@@ -2214,7 +2222,8 @@ export default function PrescriptionsPage() {
     }
 
     try {
-      const response = await apiRequest(
+      // Step 1: Save the signature
+      const signResponse = await apiRequest(
         "POST",
         `/api/prescriptions/${selectedPrescription.id}/e-sign`,
         {
@@ -2222,33 +2231,120 @@ export default function PrescriptionsPage() {
         },
       );
 
-      if (response.ok) {
-        const result = await response.json();
-
-        // Update the prescription queries to refresh data
-        queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
-
-        // Show success message in modal
-        setSignatureSaved(true);
-
-        // Auto-close after 2 seconds
-        setTimeout(() => {
-          clearSignature();
-          setShowESignDialog(false);
-          setSignatureSaved(false);
-        }, 2000);
-      } else {
-        const errorData = await response
+      if (!signResponse.ok) {
+        const errorData = await signResponse
           .json()
           .catch(() => ({ error: "Unknown error" }));
         throw new Error(errorData.error || "Failed to save signature");
       }
+
+      const signResult = await signResponse.json();
+      console.log("[PRESCRIPTIONS] E-signature saved successfully:", signResult);
+
+      // Step 2: Save the PDF
+      const pdfResponse = await apiRequest(
+        "POST",
+        `/api/prescriptions/${selectedPrescription.id}/save-pdf`
+      );
+
+      if (!pdfResponse.ok) {
+        const errorData = await pdfResponse.json().catch(() => ({ error: "Failed to save PDF" }));
+        throw new Error(errorData.error || "Failed to save prescription PDF");
+      }
+
+      const pdfData = await pdfResponse.json();
+      console.log("[PRESCRIPTIONS] PDF saved successfully:", pdfData);
+
+      // Step 3: Update status to "completed"
+      const statusResponse = await apiRequest(
+        "PATCH",
+        `/api/prescriptions/${selectedPrescription.id}`,
+        {
+          status: "completed"
+        }
+      );
+
+      if (!statusResponse.ok) {
+        const errorData = await statusResponse.json().catch(() => ({ error: "Failed to update status" }));
+        console.error("[PRESCRIPTIONS] Failed to update status:", errorData);
+        // Don't throw - signature and PDF are saved, status update is secondary
+      } else {
+        console.log("[PRESCRIPTIONS] Status updated to 'completed' successfully");
+      }
+
+      // Update the prescription queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
+
+      // Update the selected prescription status immediately for UI feedback
+      if (selectedPrescription) {
+        setSelectedPrescription({
+          ...selectedPrescription,
+          status: "completed",
+          signature: signResult.signature || signResult.prescription?.signature
+        });
+      }
+
+      // Show success message in modal
+      setSignatureSaved(true);
+
+      toast({
+        title: "✓ Success",
+        description: `Prescription signed, PDF saved, and status updated to "completed" successfully.`,
+        duration: 3000,
+      });
+
+      // Check if we need to proceed with print or save after signing
+      if (pendingAction === "print") {
+        // Proceed with printing after signature is saved
+        setTimeout(async () => {
+          clearSignature();
+          setShowESignDialog(false);
+          setSignatureSaved(false);
+          
+          // Fetch updated prescription with signature
+          try {
+            const updatedPrescriptionResponse = await apiRequest(
+              "GET",
+              `/api/prescriptions/${selectedPrescription.id}`
+            );
+            if (updatedPrescriptionResponse.ok) {
+              const updatedPrescription = await updatedPrescriptionResponse.json();
+              await proceedWithPrint(updatedPrescription);
+            } else {
+              // Fallback to using selectedPrescription with updated signature
+              await proceedWithPrint({
+                ...selectedPrescription,
+                signature: signResult.signature || signResult.prescription?.signature
+              });
+            }
+          } catch (err) {
+            console.error("Failed to fetch updated prescription for printing:", err);
+            // Fallback to using selectedPrescription with updated signature
+            await proceedWithPrint({
+              ...selectedPrescription,
+              signature: signResult.signature || signResult.prescription?.signature
+            });
+          }
+          
+          setPendingSavePrescriptionId(null);
+          setPendingAction(null);
+        }, 2000);
+      } else {
+        // For save action, just close the dialogs
+        setTimeout(() => {
+          clearSignature();
+          setShowESignDialog(false);
+          setSignatureSaved(false);
+          setPendingSavePrescriptionId(null);
+          setPendingAction(null);
+        }, 2000);
+      }
     } catch (error) {
-      console.error("Error saving e-signature:", error);
+      console.error("Error saving e-signature and PDF:", error);
       const errorMessage =
         error instanceof Error
           ? error.message
-          : "Failed to save electronic signature. Please try again.";
+          : "Failed to save electronic signature and PDF. Please try again.";
       toast({
         title: "Error",
         description: errorMessage,
@@ -2298,6 +2394,24 @@ export default function PrescriptionsPage() {
       });
       return;
     }
+
+    // Check if signature exists
+    const hasSignature = prescription.signature?.doctorSignature && 
+                         String(prescription.signature.doctorSignature).trim() !== "";
+    
+    if (!hasSignature) {
+      // Show signature required dialog
+      setPendingSavePrescriptionId(prescriptionId);
+      setPendingAction("print");
+      setShowSignatureRequiredDialog(true);
+      return;
+    }
+
+    // If signature exists, proceed with printing
+    await proceedWithPrint(prescription);
+  };
+
+  const proceedWithPrint = async (prescription: any) => {
 
     // Get patient details
     const patient = patients.find((p) => p.id === prescription.patientId);
@@ -2390,7 +2504,7 @@ export default function PrescriptionsPage() {
     }
     
     if (!doctorInfo) {
-      console.warn("No provider information found for prescription:", prescriptionId);
+      console.warn("No provider information found for prescription:", prescription.id || prescription.prescriptionNumber);
     }
 
     // Fetch creator information from database (who entered the prescription from prescriptions table)
@@ -2955,40 +3069,164 @@ export default function PrescriptionsPage() {
   };
 
   const handleSavePrescription = async (prescriptionId: string) => {
+    // First, fetch prescription to check if signature exists and status
+    let prescription = null;
     try {
-      const response = await apiRequest(
+      const prescriptionResponse = await apiRequest(
+        "GET",
+        `/api/prescriptions/${prescriptionId}`
+      );
+      if (prescriptionResponse.ok) {
+        prescription = await prescriptionResponse.json();
+      } else {
+        // If not found by ID, try to find in local state
+        prescription = Array.isArray(prescriptions)
+          ? prescriptions.find((p: any) => p.id === prescriptionId || p.prescriptionNumber === prescriptionId)
+          : null;
+      }
+    } catch (err) {
+      console.error("Failed to fetch prescription, using local state:", err);
+      prescription = Array.isArray(prescriptions)
+        ? prescriptions.find((p: any) => p.id === prescriptionId || p.prescriptionNumber === prescriptionId)
+        : null;
+    }
+
+    if (!prescription) {
+      toast({
+        title: "Error",
+        description: "Prescription not found. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check if signature exists
+    const hasSignature = prescription.signature?.doctorSignature && 
+                         String(prescription.signature.doctorSignature).trim() !== "";
+    const isCompleted = prescription.status === "completed";
+    
+    if (!hasSignature) {
+      // Show signature required dialog
+      setPendingSavePrescriptionId(prescriptionId);
+      setPendingAction("save");
+      setShowSignatureRequiredDialog(true);
+      return;
+    }
+
+    // If signature exists and status is completed, check if PDF exists and open it
+    if (hasSignature && isCompleted && prescription.savedPdfPath) {
+      // PDF already exists, open it in viewer
+      await handleOpenPrescriptionPdf(prescription);
+      return;
+    }
+
+    // If signature exists but not completed, save PDF and update status, then open PDF viewer
+    try {
+      // Step 1: Save the PDF
+      const pdfResponse = await apiRequest(
         "POST",
         `/api/prescriptions/${prescriptionId}/save-pdf`
       );
-      
-      if (response.ok) {
-        const data = await response.json();
-        setShowSavePdfSuccessModal(true);
-        // Invalidate queries to refresh prescription data and show the saved PDF icon
-        queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
+
+      if (!pdfResponse.ok) {
+        const errorData = await pdfResponse.json().catch(() => ({ error: "Failed to save PDF" }));
+        throw new Error(errorData.error || "Failed to save prescription PDF");
+      }
+
+      const pdfData = await pdfResponse.json();
+      console.log("[PRESCRIPTIONS] PDF saved successfully:", pdfData);
+
+      // Step 2: Update status to "completed"
+      const statusResponse = await apiRequest(
+        "PATCH",
+        `/api/prescriptions/${prescriptionId}`,
+        {
+          status: "completed"
+        }
+      );
+
+      if (!statusResponse.ok) {
+        const errorData = await statusResponse.json().catch(() => ({ error: "Failed to update status" }));
+        console.error("[PRESCRIPTIONS] Failed to update status:", errorData);
+        // Don't throw - PDF is saved, status update is secondary
       } else {
-        const error = await response.json();
-        toast({
-          title: "Error",
-          description: error.error || "Failed to save prescription PDF",
-          variant: "destructive",
-        });
+        console.log("[PRESCRIPTIONS] Status updated to 'completed' successfully");
+      }
+
+      // Step 3: Fetch updated prescription with savedPdfPath
+      let updatedPrescription = null;
+      try {
+        const updatedResponse = await apiRequest(
+          "GET",
+          `/api/prescriptions/${prescriptionId}`
+        );
+        if (updatedResponse.ok) {
+          updatedPrescription = await updatedResponse.json();
+        }
+      } catch (err) {
+        console.error("Failed to fetch updated prescription:", err);
+        // Use the original prescription with updated path from pdfData
+        updatedPrescription = {
+          ...prescription,
+          savedPdfPath: pdfData.filePath,
+          status: "completed"
+        };
+      }
+
+      // Update the prescription queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
+
+      toast({
+        title: "✓ Success",
+        description: `Prescription PDF saved and status updated to "completed" successfully.`,
+        duration: 3000,
+      });
+
+      // Step 4: Open PDF viewer popup
+      if (updatedPrescription) {
+        await handleOpenPrescriptionPdf(updatedPrescription);
       }
     } catch (error) {
       console.error("Error saving prescription PDF:", error);
       toast({
         title: "Error",
-        description: "Failed to save prescription PDF",
+        description: error instanceof Error ? error.message : "Failed to save prescription PDF",
         variant: "destructive",
       });
     }
   };
 
+  const handleReadyToSign = () => {
+    // Close signature required dialog and open e-sign dialog
+    setShowSignatureRequiredDialog(false);
+    if (pendingSavePrescriptionId) {
+      const prescription = prescriptions?.find((p: any) => p.id === pendingSavePrescriptionId || p.prescriptionNumber === pendingSavePrescriptionId);
+      if (prescription) {
+        setSelectedPrescription(prescription);
+        setShowESignDialog(true);
+      }
+    }
+  };
+
   const handleOpenPrescriptionPdf = async (prescription: any) => {
-    if (!prescription.savedPdfPath) {
+    if (!prescription.savedPdfPath && !prescription.id) {
       toast({
         title: "PDF not available",
         description: "This prescription does not have a saved PDF yet. Please click Save first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check if prescription is signed and status is completed
+    const hasSignature = prescription.signature?.doctorSignature && 
+                         String(prescription.signature.doctorSignature).trim() !== "";
+    const isCompleted = prescription.status === "completed";
+
+    if (!hasSignature || !isCompleted) {
+      toast({
+        title: "PDF not available",
+        description: "This prescription must be signed and completed before viewing the PDF.",
         variant: "destructive",
       });
       return;
@@ -3071,8 +3309,12 @@ export default function PrescriptionsPage() {
         }
 
         const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        window.open(url, "_blank");
+        const blobUrl = window.URL.createObjectURL(blob);
+        
+        // Set PDF URL and show viewer dialog
+        setSelectedPdfPrescription(prescription);
+        setPdfViewerUrl(blobUrl);
+        setShowPdfViewerDialog(true);
       } catch (error) {
         console.error("Error viewing PDF:", error);
         toast({
@@ -3408,12 +3650,16 @@ export default function PrescriptionsPage() {
 
   // Compute unique prescription IDs for the filter dropdown
   const applySearchFilter = (value: string) => {
-    const trimmed = value.trim();
-    setSearchQuery(trimmed);
-    setPatientNameFilter("all");
-    if (trimmed) {
-      setStatusFilter("all");
-      setPrescriptionIdFilter("all");
+    try {
+      const trimmed = value.trim();
+      setSearchQuery(trimmed);
+      setPatientNameFilter(""); // Fixed: should be empty string, not "all"
+      if (trimmed) {
+        setStatusFilter("all");
+        setPrescriptionIdFilter("all");
+      }
+    } catch (error) {
+      console.error("Error in applySearchFilter:", error);
     }
   };
 
@@ -3433,25 +3679,66 @@ export default function PrescriptionsPage() {
   };
 
   const handlePatientFilter = (value: string) => {
-    setPatientNameFilter(value);
-    const trimmed = value.trim();
-    if (trimmed) {
-      setSearchInput("");
-      setSearchQuery("");
-      setStatusFilter("all");
-      setPrescriptionIdFilter("all");
+    try {
+      // Validate input
+      if (value === null || value === undefined) {
+        setPatientNameFilter("");
+        return;
+      }
+      
+      const stringValue = String(value).trim();
+      
+      // Use React's batching to update state safely
+      if (stringValue) {
+        // Batch all state updates together
+        setPatientNameFilter(stringValue);
+        setSearchInput("");
+        setSearchQuery("");
+        setStatusFilter("all");
+        setPrescriptionIdFilter("all");
+      } else {
+        setPatientNameFilter("");
+      }
+    } catch (error) {
+      console.error("Error in handlePatientFilter:", error);
+      // Reset to empty string on error
+      setPatientNameFilter("");
     }
   };
 
   const handleDoctorFilter = (value: string) => {
-    setDoctorFilter(value);
-    const trimmed = value.trim();
-    if (trimmed) {
-      setSearchInput("");
-      setSearchQuery("");
-      setStatusFilter("all");
-      setPrescriptionIdFilter("all");
-      setPatientNameFilter("");
+    try {
+      // Validate input
+      if (value === null || value === undefined) {
+        setDoctorFilter("");
+        return;
+      }
+      
+      const stringValue = String(value).trim();
+      
+      if (stringValue) {
+        // Validate that it's a valid number if it's not empty
+        const numValue = parseInt(stringValue, 10);
+        if (isNaN(numValue) && stringValue !== "") {
+          console.warn("Invalid doctor filter value:", stringValue);
+          setDoctorFilter("");
+          return;
+        }
+        
+        // Batch all state updates together
+        setDoctorFilter(stringValue);
+        setSearchInput("");
+        setSearchQuery("");
+        setStatusFilter("all");
+        setPrescriptionIdFilter("all");
+        setPatientNameFilter("");
+      } else {
+        setDoctorFilter("");
+      }
+    } catch (error) {
+      console.error("Error in handleDoctorFilter:", error);
+      // Reset to empty string on error
+      setDoctorFilter("");
     }
   };
 
@@ -3467,33 +3754,68 @@ export default function PrescriptionsPage() {
   }, [prescriptions]);
 
   const doctorOptions = useMemo(() => {
-    if (!Array.isArray(allUsers)) return [];
-    const options = allUsers
-      .filter((userItem: any) => {
-        const role = userItem.role?.toString().toLowerCase() || "";
-        return isDoctorLike(role) || role === "doctor";
-      })
-      .map((userItem: any) => ({
-        id: userItem.id,
-        name: getDoctorLabel(userItem),
-      }))
-      .filter((entry: any) => entry.name);
-    const unique = Array.from(
-      new Map(options.map((entry: any) => [entry.name, entry])).values(),
-    );
-    return unique.sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-    );
+    try {
+      if (!Array.isArray(allUsers) || allUsers.length === 0) return [];
+      const options = allUsers
+        .filter((userItem: any) => {
+          if (!userItem || !userItem.role) return false;
+          const role = userItem.role?.toString().toLowerCase() || "";
+          return isDoctorLike(role) || role === "doctor";
+        })
+        .map((userItem: any) => {
+          try {
+            if (!userItem || !userItem.id) return null;
+            const name = getDoctorLabel(userItem);
+            if (!name) return null;
+            return {
+              id: userItem.id,
+              name: name,
+            };
+          } catch (error) {
+            console.error("Error mapping doctor option:", error);
+            return null;
+          }
+        })
+        .filter((entry: any) => entry && entry.id && entry.name);
+      const unique = Array.from(
+        new Map(options.map((entry: any) => [entry.name, entry])).values(),
+      );
+      return unique.sort((a, b) =>
+        (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }),
+      );
+    } catch (error) {
+      console.error("Error computing doctorOptions:", error);
+      return [];
+    }
   }, [allUsers]);
 
   const patientOptions = useMemo(() => {
-    if (!Array.isArray(patients)) return [];
-    const names = patients
-      .map((p: any) => `${p.firstName || ""} ${p.lastName || ""}`.trim())
-      .filter((name) => name);
-    return Array.from(new Set(names)).sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" }),
-    );
+    try {
+      if (!Array.isArray(patients) || patients.length === 0) return [];
+      
+      const names = patients
+        .map((p: any) => {
+          try {
+            if (!p || (typeof p !== 'object')) return null;
+            const firstName = p.firstName || "";
+            const lastName = p.lastName || "";
+            const fullName = `${firstName} ${lastName}`.trim();
+            return fullName || null;
+          } catch (error) {
+            console.error("Error mapping patient name:", error);
+            return null;
+          }
+        })
+        .filter((name): name is string => name !== null && name !== undefined && typeof name === 'string' && name.trim() !== '');
+      
+      const uniqueNames = Array.from(new Set(names));
+      return uniqueNames.sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" }),
+      );
+    } catch (error) {
+      console.error("Error computing patientOptions:", error);
+      return [];
+    }
   }, [patients]);
   
   // Compute unique prescription IDs for doctors (filtered to this doctor's prescriptions only)
@@ -3539,6 +3861,11 @@ export default function PrescriptionsPage() {
 
   const filteredPrescriptions = Array.isArray(prescriptions)
     ? prescriptions.filter((prescription: any) => {
+        // Safety check: ensure prescription is valid
+        if (!prescription || typeof prescription !== 'object') {
+          return false;
+        }
+        
         // Doctor-specific filtering retains original flow
         if (user?.role === 'doctor') {
           const matchesPatientSearch =
@@ -3568,9 +3895,11 @@ export default function PrescriptionsPage() {
           (providerNames[prescription.providerId] || "")
             .toLowerCase()
             .includes(searchLower);
-        const medicationMatches = prescription.medications.some((med: any) =>
-          med.name.toLowerCase().includes(searchLower),
-        );
+        const medicationMatches = Array.isArray(prescription.medications) 
+          ? prescription.medications.some((med: any) =>
+              med && med.name && typeof med.name === 'string' && med.name.toLowerCase().includes(searchLower),
+            )
+          : false;
 
         // If prescription ID filter is active, prioritize it over search query
         const matchesSearch =
@@ -3593,18 +3922,20 @@ export default function PrescriptionsPage() {
           !filterId ||
           (prescriptionNumber && filterId && prescriptionNumber === filterId);
 
-        const patientFilterValue = patientNameFilter.trim().toLowerCase();
+        const patientFilterValue = (patientNameFilter || "").trim().toLowerCase();
         const matchesPatientNameFilter =
           !patientFilterValue ||
           (prescription.patientName || "")
             .toLowerCase()
             .includes(patientFilterValue);
 
-        const doctorFilterValue = doctorFilter.trim();
+        const doctorFilterValue = (doctorFilter || "").trim();
         const matchesDoctorFilter =
           !doctorFilterValue ||
-          prescription.providerId === parseInt(doctorFilterValue) ||
-          prescription.doctorId === parseInt(doctorFilterValue);
+          (doctorFilterValue && !isNaN(parseInt(doctorFilterValue, 10)) && (
+            prescription.providerId === parseInt(doctorFilterValue, 10) ||
+            prescription.doctorId === parseInt(doctorFilterValue, 10)
+          ));
 
         return (
           matchesSearch &&
@@ -3897,7 +4228,17 @@ export default function PrescriptionsPage() {
                   </div>
                 )}
 
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Select 
+                  value={statusFilter} 
+                  onValueChange={(value: string) => {
+                    try {
+                      setStatusFilter(value || "all");
+                    } catch (error) {
+                      console.error("Error setting status filter:", error);
+                      setStatusFilter("all");
+                    }
+                  }}
+                >
                   <SelectTrigger className="w-40">
                     <SelectValue placeholder="Filter by status" />
                   </SelectTrigger>
@@ -3947,13 +4288,20 @@ export default function PrescriptionsPage() {
                               />
                               All Prescription IDs
                             </CommandItem>
-                            {uniquePrescriptionIds.map((id: string) => (
+                            {Array.isArray(uniquePrescriptionIds) && uniquePrescriptionIds.map((id: string) => {
+                              if (!id) return null;
+                              return (
                               <CommandItem
                                 key={id}
                                 value={id}
                                 onSelect={() => {
-                                  setPrescriptionIdFilter(id);
-                                  setPrescriptionIdPopoverOpen(false);
+                                  try {
+                                    setPrescriptionIdFilter(id);
+                                    setPrescriptionIdPopoverOpen(false);
+                                  } catch (error) {
+                                    console.error("Error selecting prescription ID:", error);
+                                    setPrescriptionIdPopoverOpen(false);
+                                  }
                                 }}
                               >
                                 <Check
@@ -3964,7 +4312,8 @@ export default function PrescriptionsPage() {
                                 />
                                 {id}
                               </CommandItem>
-                            ))}
+                            );
+                            })}
                           </CommandGroup>
                         </CommandList>
                       </Command>
@@ -4843,8 +5192,16 @@ export default function PrescriptionsPage() {
                                 <CommandItem
                                   value="all"
                                   onSelect={() => {
-                                    handlePatientFilter("");
-                                    setPatientFilterOpen(false);
+                                    try {
+                                      handlePatientFilter("");
+                                      // Use setTimeout to ensure state updates complete before closing popover
+                                      setTimeout(() => {
+                                        setPatientFilterOpen(false);
+                                      }, 0);
+                                    } catch (error) {
+                                      console.error("Error selecting all patients:", error);
+                                      setPatientFilterOpen(false);
+                                    }
                                   }}
                                 >
                                   <Check
@@ -4854,23 +5211,45 @@ export default function PrescriptionsPage() {
                                   />
                                   All patients
                                 </CommandItem>
-                                {patientOptions.map((name) => (
-                                  <CommandItem
-                                    key={name}
-                                    value={name}
-                                    onSelect={() => {
-                                      handlePatientFilter(name);
-                                      setPatientFilterOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={`mr-2 h-4 w-4 ${
-                                        patientNameFilter === name ? "opacity-100" : "opacity-0"
-                                      }`}
-                                    />
-                                    {name}
-                                  </CommandItem>
-                                ))}
+                                {Array.isArray(patientOptions) && patientOptions.length > 0 && patientOptions.map((name) => {
+                                  // Validate name before rendering
+                                  if (!name || typeof name !== 'string' || name.trim() === '') {
+                                    return null;
+                                  }
+                                  
+                                  const trimmedName = name.trim();
+                                  
+                                  return (
+                                    <CommandItem
+                                      key={trimmedName}
+                                      value={trimmedName}
+                                      onSelect={() => {
+                                        try {
+                                          if (!trimmedName || trimmedName === '') {
+                                            console.error("Cannot select patient with empty name");
+                                            setPatientFilterOpen(false);
+                                            return;
+                                          }
+                                          handlePatientFilter(trimmedName);
+                                          // Use setTimeout to ensure state updates complete before closing popover
+                                          setTimeout(() => {
+                                            setPatientFilterOpen(false);
+                                          }, 0);
+                                        } catch (error) {
+                                          console.error("Error selecting patient:", error);
+                                          setPatientFilterOpen(false);
+                                        }
+                                      }}
+                                    >
+                                      <Check
+                                        className={`mr-2 h-4 w-4 ${
+                                          patientNameFilter === trimmedName ? "opacity-100" : "opacity-0"
+                                        }`}
+                                      />
+                                      {trimmedName}
+                                    </CommandItem>
+                                  );
+                                })}
                               </CommandGroup>
                             </CommandList>
                           </Command>
@@ -4902,9 +5281,14 @@ export default function PrescriptionsPage() {
                                 <CommandItem
                                   value="all"
                                   onSelect={() => {
-                                    setPrescriptionIdFilter("all");
-                                    setPrescriptionSearchPreviewId("");
-                                    setPrescriptionIdFilterOpen(false);
+                                    try {
+                                      setPrescriptionIdFilter("all");
+                                      setPrescriptionSearchPreviewId("");
+                                      setPrescriptionIdFilterOpen(false);
+                                    } catch (error) {
+                                      console.error("Error setting prescription ID filter:", error);
+                                      setPrescriptionIdFilterOpen(false);
+                                    }
                                   }}
                                 >
                                   <Check
@@ -4914,27 +5298,35 @@ export default function PrescriptionsPage() {
                                   />
                                   All prescriptions
                                 </CommandItem>
-                                {uniquePrescriptionIds.map((id) => (
-                                  <CommandItem
-                                    key={id}
-                                    value={id}
-                                    onSelect={() => {
-                                      setPrescriptionIdFilter(id);
-                                      setPrescriptionSearchPreviewId(id.toLowerCase());
-                                      setSearchQuery("");
-                                      setStatusFilter("all");
-                                      setSearchInput("");
-                                      setPrescriptionIdFilterOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={`mr-2 h-4 w-4 ${
-                                        prescriptionIdFilter === id ? "opacity-100" : "opacity-0"
-                                      }`}
-                                    />
-                                    {id}
-                                  </CommandItem>
-                                ))}
+                                {Array.isArray(uniquePrescriptionIds) && uniquePrescriptionIds.map((id) => {
+                                  if (!id) return null;
+                                  return (
+                                    <CommandItem
+                                      key={id}
+                                      value={id}
+                                      onSelect={() => {
+                                        try {
+                                          setPrescriptionIdFilter(id);
+                                          setPrescriptionSearchPreviewId(id.toLowerCase());
+                                          setSearchQuery("");
+                                          setStatusFilter("all");
+                                          setSearchInput("");
+                                          setPrescriptionIdFilterOpen(false);
+                                        } catch (error) {
+                                          console.error("Error selecting prescription ID:", error);
+                                          setPrescriptionIdFilterOpen(false);
+                                        }
+                                      }}
+                                    >
+                                      <Check
+                                        className={`mr-2 h-4 w-4 ${
+                                          prescriptionIdFilter === id ? "opacity-100" : "opacity-0"
+                                        }`}
+                                      />
+                                      {id}
+                                    </CommandItem>
+                                  );
+                                })}
                               </CommandGroup>
                             </CommandList>
                           </Command>
@@ -4953,8 +5345,8 @@ export default function PrescriptionsPage() {
                             aria-expanded={doctorFilterOpen}
                             className="w-full justify-between rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none h-auto font-normal"
                           >
-                            {doctorFilter
-                              ? doctorOptions.find((entry: any) => String(entry.id) === doctorFilter)?.name || "All doctors"
+                            {doctorFilter && Array.isArray(doctorOptions) && doctorOptions.length > 0
+                              ? (doctorOptions.find((entry: any) => entry && entry.id && String(entry.id) === doctorFilter)?.name || "All doctors")
                               : "All doctors"}
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                           </Button>
@@ -4968,8 +5360,16 @@ export default function PrescriptionsPage() {
                                 <CommandItem
                                   value="all"
                                   onSelect={() => {
-                                    handleDoctorFilter("");
-                                    setDoctorFilterOpen(false);
+                                    try {
+                                      handleDoctorFilter("");
+                                      // Use setTimeout to ensure state updates complete before closing popover
+                                      setTimeout(() => {
+                                        setDoctorFilterOpen(false);
+                                      }, 0);
+                                    } catch (error) {
+                                      console.error("Error selecting all doctors:", error);
+                                      setDoctorFilterOpen(false);
+                                    }
                                   }}
                                 >
                                   <Check
@@ -4979,23 +5379,51 @@ export default function PrescriptionsPage() {
                                   />
                                   All doctors
                                 </CommandItem>
-                                {doctorOptions.map((entry: any) => (
-                                  <CommandItem
-                                    key={entry.id}
-                                    value={`${entry.name} ${entry.id}`}
-                                    onSelect={() => {
-                                      handleDoctorFilter(String(entry.id));
-                                      setDoctorFilterOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={`mr-2 h-4 w-4 ${
-                                        doctorFilter === String(entry.id) ? "opacity-100" : "opacity-0"
-                                      }`}
-                                    />
-                                    {entry.name}
-                                  </CommandItem>
-                                ))}
+                                {Array.isArray(doctorOptions) && doctorOptions.length > 0 && doctorOptions.map((entry: any) => {
+                                  if (!entry || entry.id === null || entry.id === undefined || !entry.name) {
+                                    return null;
+                                  }
+                                  
+                                  const entryId = entry.id;
+                                  const entryIdString = String(entryId);
+                                  
+                                  // Validate entry.id is a valid number
+                                  if (isNaN(Number(entryId))) {
+                                    console.warn("Invalid doctor entry ID:", entryId);
+                                    return null;
+                                  }
+                                  
+                                  return (
+                                    <CommandItem
+                                      key={entryId}
+                                      value={`${entry.name} ${entryId}`}
+                                      onSelect={() => {
+                                        try {
+                                          if (entryId === null || entryId === undefined) {
+                                            console.error("Cannot select doctor with null/undefined ID");
+                                            setDoctorFilterOpen(false);
+                                            return;
+                                          }
+                                          handleDoctorFilter(entryIdString);
+                                          // Use setTimeout to ensure state updates complete before closing popover
+                                          setTimeout(() => {
+                                            setDoctorFilterOpen(false);
+                                          }, 0);
+                                        } catch (error) {
+                                          console.error("Error selecting doctor:", error);
+                                          setDoctorFilterOpen(false);
+                                        }
+                                      }}
+                                    >
+                                      <Check
+                                        className={`mr-2 h-4 w-4 ${
+                                          doctorFilter === entryIdString ? "opacity-100" : "opacity-0"
+                                        }`}
+                                      />
+                                      {entry.name}
+                                    </CommandItem>
+                                  );
+                                })}
                               </CommandGroup>
                             </CommandList>
                           </Command>
@@ -5231,7 +5659,7 @@ export default function PrescriptionsPage() {
                       <div>Created By</div>
                     )}
                   </div>
-                  <div className="w-40 text-center">Print/Download/file</div>
+                  <div className="w-40 text-center">Save/Print/file</div>
                   <div className="w-32 text-center">Sign/Share/log</div>
                   <div className="w-48 text-center">Actions</div>
                 </div>
@@ -5386,6 +5814,17 @@ export default function PrescriptionsPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 w-40 justify-center">
+                    {user?.role !== "patient" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => handleSavePrescription(prescription.id)}
+                        title="Save prescription as PDF"
+                      >
+                        <Save className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -5398,17 +5837,6 @@ export default function PrescriptionsPage() {
                     >
                       <Printer className="h-4 w-4" />
                     </Button>
-                    {user?.role !== "patient" && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => handleSavePrescription(prescription.id)}
-                        title="Save prescription as PDF"
-                      >
-                        <Save className="h-4 w-4" />
-                      </Button>
-                    )}
                     {prescription.savedPdfPath && (
                       <Button
                         variant="ghost"
@@ -7738,8 +8166,73 @@ export default function PrescriptionsPage() {
       </Dialog>
 
       {/* Advanced E-Signature Dialog */}
-      <Dialog open={showESignDialog} onOpenChange={setShowESignDialog}>
-        <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
+      {/* Signature Required Dialog */}
+      <Dialog open={showSignatureRequiredDialog} onOpenChange={(open) => {
+        // Only allow closing via Cancel button, not by clicking outside
+        if (!open) {
+          // User is trying to close - only allow if explicitly cancelled via button
+          // This prevents closing on outside click
+          return;
+        }
+        setShowSignatureRequiredDialog(open);
+      }}>
+        <DialogContent className="max-w-md" onInteractOutside={(e) => {
+          // Prevent closing on outside click
+          e.preventDefault();
+        }}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <AlertTriangle className="h-6 w-6 text-yellow-600" />
+              Signature Required
+            </DialogTitle>
+            <DialogDescription>
+              A signature is required before saving the prescription PDF. Please sign the prescription to proceed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-gray-700 dark:text-gray-300">
+              A signature is required before saving the prescription PDF. Please sign the prescription to proceed.
+            </p>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowSignatureRequiredDialog(false);
+                setPendingSavePrescriptionId(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleReadyToSign}
+              className="bg-medical-blue hover:bg-blue-700"
+            >
+              Ready to Sign
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Advanced Electronic Signature Dialog */}
+      <Dialog open={showESignDialog} onOpenChange={(open) => {
+        // Only allow closing if signature is saved, not by clicking outside
+        if (!open && !signatureSaved) {
+          // Prevent closing on outside click
+          return;
+        }
+        setShowESignDialog(open);
+        if (!open) {
+          setPendingSavePrescriptionId(null);
+        }
+      }}>
+        <DialogContent 
+          className="max-w-4xl max-h-[95vh] overflow-y-auto"
+          onInteractOutside={(e) => {
+            // Prevent closing on outside click
+            e.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <PenTool className="h-6 w-6 text-medical-blue" />
@@ -7862,10 +8355,6 @@ export default function PrescriptionsPage() {
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
                       Clear
-                    </Button>
-                    <Button variant="outline" className="flex-1">
-                      <Eye className="h-4 w-4 mr-2" />
-                      Preview
                     </Button>
                   </div>
                 </div>
@@ -8501,6 +8990,102 @@ export default function PrescriptionsPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* PDF Viewer Dialog */}
+      <Dialog 
+        open={showPdfViewerDialog} 
+        onOpenChange={(open) => {
+          setShowPdfViewerDialog(open);
+          if (!open && pdfViewerUrl) {
+            URL.revokeObjectURL(pdfViewerUrl);
+            setPdfViewerUrl("");
+            setSelectedPdfPrescription(null);
+          }
+        }}
+      >
+        <DialogContent 
+          className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col p-0"
+          onInteractOutside={(e) => {
+            // Prevent closing on outside click
+            e.preventDefault();
+          }}
+        >
+          <DialogHeader className="px-6 pt-6 pb-4 border-b">
+            <DialogTitle>
+              PDF Report: {selectedPdfPrescription?.prescriptionNumber || selectedPdfPrescription?.id || 'Prescription'}.pdf
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-hidden px-6 pb-4" style={{ minHeight: '600px', height: 'calc(90vh - 120px)' }}>
+            {pdfViewerUrl ? (
+              <iframe
+                src={pdfViewerUrl}
+                className="w-full h-full border rounded"
+                title="Prescription PDF"
+                style={{ minHeight: '600px' }}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                <span className="ml-2 text-sm text-gray-600">Loading PDF...</span>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-between items-center px-6 pb-6 pt-4 border-t">
+            <Button 
+              onClick={() => {
+                setShowPdfViewerDialog(false);
+                if (pdfViewerUrl) {
+                  URL.revokeObjectURL(pdfViewerUrl);
+                  setPdfViewerUrl("");
+                  setSelectedPdfPrescription(null);
+                }
+              }}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Close
+            </Button>
+            {pdfViewerUrl && (
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.href = pdfViewerUrl;
+                    link.download = `${selectedPdfPrescription?.prescriptionNumber || selectedPdfPrescription?.id || 'prescription'}.pdf`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const printWindow = window.open(pdfViewerUrl, '_blank');
+                    if (printWindow) {
+                      printWindow.onload = () => {
+                        printWindow.print();
+                      };
+                    }
+                  }}
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => window.open(pdfViewerUrl, '_blank')}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Open in New Tab
+                </Button>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </>

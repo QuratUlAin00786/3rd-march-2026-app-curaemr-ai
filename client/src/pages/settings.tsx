@@ -612,10 +612,27 @@ export default function Settings() {
     queryFn: async () => {
       const response = await apiRequest('GET', '/api/clinic-headers');
       if (!response.ok) {
+        console.log('[SETTINGS] Failed to fetch clinic header, status:', response.status);
         return null;
       }
       const data = await response.json();
-      return Array.isArray(data) ? data[0] : data;
+      const headerData = Array.isArray(data) ? data[0] : data;
+      
+      // Log what we received
+      if (headerData) {
+        console.log('[SETTINGS] Clinic header data received:', {
+          id: headerData.id,
+          clinicName: headerData.clinicName,
+          hasLogo: !!headerData.logoBase64,
+          logoLength: headerData.logoBase64 ? headerData.logoBase64.length : 0,
+          logoPosition: headerData.logoPosition,
+          logoBase64Preview: headerData.logoBase64 ? headerData.logoBase64.substring(0, 50) + '...' : 'null'
+        });
+      } else {
+        console.log('[SETTINGS] No clinic header data received (null)');
+      }
+      
+      return headerData;
     },
   });
 
@@ -625,10 +642,26 @@ export default function Settings() {
     queryFn: async () => {
       const response = await apiRequest('GET', '/api/clinic-footers');
       if (!response.ok) {
+        console.log('[SETTINGS] Failed to fetch clinic footer, status:', response.status);
         return null;
       }
       const data = await response.json();
-      return Array.isArray(data) ? data[0] : data;
+      const footerData = Array.isArray(data) ? data[0] : data;
+      
+      // Log what we received
+      if (footerData) {
+        console.log('[SETTINGS] Clinic footer data received:', {
+          id: footerData.id,
+          footerText: footerData.footerText,
+          backgroundColor: footerData.backgroundColor,
+          textColor: footerData.textColor,
+          showSocial: footerData.showSocial
+        });
+      } else {
+        console.log('[SETTINGS] No clinic footer data received (null)');
+      }
+      
+      return footerData;
     },
   });
 
@@ -648,8 +681,11 @@ export default function Settings() {
         fontStyle: savedHeader.fontStyle || "normal",
         textDecoration: savedHeader.textDecoration || "none",
       });
-      if (savedHeader.logoBase64) {
+      // Always set logo preview from saved data, even if empty (to clear previous logo)
+      if (savedHeader.logoBase64 && savedHeader.logoBase64.trim() !== "") {
         setClinicLogoPreview(savedHeader.logoBase64);
+      } else {
+        setClinicLogoPreview("");
       }
       if (savedHeader.logoPosition) {
         setSelectedLogoPosition(savedHeader.logoPosition);
@@ -697,9 +733,21 @@ export default function Settings() {
     }
 
     try {
+      // Ensure logoBase64 is properly formatted - use null if empty string
+      const logoBase64Value = clinicLogoPreview && clinicLogoPreview.trim() !== "" 
+        ? clinicLogoPreview 
+        : null;
+
+      console.log("[SETTINGS] Preparing to save header:");
+      console.log("[SETTINGS] - clinicLogoPreview exists:", !!clinicLogoPreview);
+      console.log("[SETTINGS] - clinicLogoPreview length:", clinicLogoPreview ? clinicLogoPreview.length : 0);
+      console.log("[SETTINGS] - logoBase64Value:", logoBase64Value ? `present (${logoBase64Value.length} chars)` : 'null');
+      console.log("[SETTINGS] - clinicName:", clinicHeaderInfo.clinicName);
+      console.log("[SETTINGS] - organizationId:", user?.organizationId);
+
       const headerData = {
         organizationId: user?.organizationId || 0,
-        logoBase64: clinicLogoPreview || null,
+        logoBase64: logoBase64Value,
         logoPosition: selectedLogoPosition,
         clinicName: clinicHeaderInfo.clinicName,
         address: clinicHeaderInfo.address || null,
@@ -715,31 +763,54 @@ export default function Settings() {
         isActive: true,
       };
 
-      const response = await fetch('/api/clinic-headers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
-          'X-Tenant-Subdomain': localStorage.getItem("user_subdomain") || '',
-        },
-        body: JSON.stringify(headerData),
+      console.log("[SETTINGS] Sending headerData:", {
+        ...headerData,
+        logoBase64: headerData.logoBase64 ? `present (${headerData.logoBase64.length} chars)` : 'null'
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to save header');
+      const response = await apiRequest('POST', '/api/clinic-headers', headerData);
+
+      // apiRequest throws on non-OK responses, so if we get here, response is OK
+      const contentType = response.headers.get('content-type') || '';
+      
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error("[SETTINGS] Received non-JSON response:", text.substring(0, 200));
+        throw new Error(`Server returned ${contentType} instead of JSON. Status: ${response.status}`);
       }
 
+      const savedData = await response.json();
+      
+      console.log("[SETTINGS] Header save response received:", {
+        id: savedData.id,
+        clinicName: savedData.clinicName,
+        logoBase64: savedData.logoBase64 ? `present (${savedData.logoBase64.length} chars)` : 'null',
+        logoPosition: savedData.logoPosition
+      });
+      
+      // Update logo preview from saved data to ensure consistency
+      if (savedData.logoBase64 && savedData.logoBase64.trim() !== "") {
+        console.log("[SETTINGS] Updating clinicLogoPreview from saved data");
+        setClinicLogoPreview(savedData.logoBase64);
+      } else {
+        console.log("[SETTINGS] No logoBase64 in saved data, keeping current preview");
+      }
+
+      // Refetch to ensure UI is in sync
+      console.log("[SETTINGS] Refetching header data...");
       await refetchHeader();
+      console.log("[SETTINGS] Header data refetched");
       setShowHeaderSuccessModal(true);
       toast({
         title: "✓ Header Saved Successfully",
-        description: "Clinic header information saved to database",
+        description: "Clinic header information and logo saved to database",
         duration: 3000,
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Error saving header:", error);
       toast({
         title: "⚠️ Save Failed",
-        description: "Failed to save header information",
+        description: error.message || "Failed to save header information",
         variant: "destructive",
         duration: 3000,
       });
@@ -758,6 +829,12 @@ export default function Settings() {
     }
 
     try {
+      console.log("[SETTINGS] Preparing to save footer:");
+      console.log("[SETTINGS] - footerText:", clinicFooterInfo.footerText);
+      console.log("[SETTINGS] - backgroundColor:", clinicFooterInfo.backgroundColor);
+      console.log("[SETTINGS] - textColor:", clinicFooterInfo.textColor);
+      console.log("[SETTINGS] - organizationId:", user?.organizationId);
+
       const footerData = {
         organizationId: user?.organizationId || 0,
         footerText: clinicFooterInfo.footerText,
@@ -770,21 +847,30 @@ export default function Settings() {
         isActive: true,
       };
 
-      const response = await fetch('/api/clinic-footers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
-          'X-Tenant-Subdomain': localStorage.getItem("user_subdomain") || '',
-        },
-        body: JSON.stringify(footerData),
-      });
+      console.log("[SETTINGS] Sending footerData:", footerData);
 
-      if (!response.ok) {
-        throw new Error('Failed to save footer');
+      const response = await apiRequest('POST', '/api/clinic-footers', footerData);
+
+      // apiRequest throws on non-OK responses, so if we get here, response is OK
+      const contentType = response.headers.get('content-type') || '';
+      
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error("[SETTINGS] Received non-JSON response for footer:", text.substring(0, 200));
+        throw new Error(`Server returned ${contentType} instead of JSON. Status: ${response.status}`);
       }
 
+      const savedFooterData = await response.json();
+      console.log("[SETTINGS] Footer save response received:", {
+        id: savedFooterData.id,
+        footerText: savedFooterData.footerText,
+        backgroundColor: savedFooterData.backgroundColor,
+        textColor: savedFooterData.textColor
+      });
+
+      console.log("[SETTINGS] Refetching footer data...");
       await refetchFooter();
+      console.log("[SETTINGS] Footer data refetched");
       setShowFooterSuccessModal(true);
       toast({
         title: "✓ Footer Saved Successfully",
@@ -1976,6 +2062,13 @@ export default function Settings() {
               </DialogHeader>
 
               <div className="space-y-6 mt-4">
+                {(headerLoading || footerLoading) ? (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--cura-bluewave))] mx-auto mb-4"></div>
+                    <p className="text-gray-500 dark:text-gray-400">Loading clinic information...</p>
+                  </div>
+                ) : (
+                  <>
                 {savedHeader && (
                   <div className="border rounded-lg p-6 bg-white dark:bg-[hsl(var(--cura-midnight))]">
                     <h4 className="text-md font-semibold mb-4 text-[hsl(var(--cura-bluewave))] flex items-center gap-2">
@@ -1985,12 +2078,23 @@ export default function Settings() {
                     <div className="border rounded-lg p-6 bg-gray-50 dark:bg-gray-800">
                       <div style={{ borderBottom: '3px solid ' + (savedFooter?.backgroundColor || '#4A7DFF'), paddingBottom: '20px' }}>
                         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: savedHeader.logoPosition === 'center' ? "center" : "flex-start", gap: "20px", flexDirection: savedHeader.logoPosition === 'right' ? "row-reverse" : "row" }}>
-                          {savedHeader.logoBase64 && (
+                              {savedHeader.logoBase64 && savedHeader.logoBase64.trim() !== "" ? (
                             <img 
                               src={savedHeader.logoBase64} 
                               alt="Clinic Logo" 
                               style={{ maxHeight: "80px", objectFit: "contain" }}
-                            />
+                                  onError={(e) => {
+                                    console.error('[SETTINGS] Error loading logo image:', savedHeader.logoBase64?.substring(0, 50));
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                  onLoad={() => {
+                                    console.log('[SETTINGS] Logo image loaded successfully');
+                                  }}
+                                />
+                              ) : (
+                                <div style={{ padding: "10px", color: "#999", fontSize: "12px" }}>
+                                  No logo saved
+                                </div>
                           )}
                           <div style={{ flex: 1, textAlign: savedHeader.logoPosition === 'center' ? "center" : savedHeader.logoPosition === 'right' ? "right" : "left" }}>
                             <h1 style={{ 
@@ -2048,7 +2152,7 @@ export default function Settings() {
                   </div>
                 )}
 
-                {savedFooter && (
+                    {savedFooter ? (
                   <div className="border rounded-lg p-6 bg-white dark:bg-[hsl(var(--cura-midnight))]">
                     <h4 className="text-md font-semibold mb-4 text-[hsl(var(--cura-bluewave))] flex items-center gap-2">
                       <Palette className="h-4 w-4" />
@@ -2057,11 +2161,11 @@ export default function Settings() {
                     <div 
                       className="rounded-lg p-6 text-center"
                       style={{ 
-                        backgroundColor: savedFooter.backgroundColor,
-                        color: savedFooter.textColor 
+                            backgroundColor: savedFooter.backgroundColor || '#4A7DFF',
+                            color: savedFooter.textColor || '#FFFFFF' 
                       }}
                     >
-                      <p className="text-sm font-medium">{savedFooter.footerText}</p>
+                          <p className="text-sm font-medium">{savedFooter.footerText || "No footer text set"}</p>
                       {savedFooter.showSocial && (savedFooter.facebook || savedFooter.twitter || savedFooter.linkedin) && (
                         <div className="flex justify-center gap-4 mt-3">
                           {savedFooter.facebook && <span className="text-xs">📘 Facebook</span>}
@@ -2071,6 +2175,17 @@ export default function Settings() {
                       )}
                     </div>
                   </div>
+                    ) : (
+                      <div className="border rounded-lg p-6 bg-white dark:bg-[hsl(var(--cura-midnight))]">
+                        <h4 className="text-md font-semibold mb-4 text-[hsl(var(--cura-bluewave))] flex items-center gap-2">
+                          <Palette className="h-4 w-4" />
+                          Saved Clinic Footer
+                        </h4>
+                        <div className="text-center py-4 text-gray-500 dark:text-gray-400">
+                          <p className="text-sm">No footer information saved yet.</p>
+                          <p className="text-xs mt-2">Please save footer information in the Footer tab.</p>
+                        </div>
+                      </div>
                 )}
 
                 {!savedHeader && !savedFooter && (
@@ -2079,6 +2194,8 @@ export default function Settings() {
                     <p>No saved clinic information found.</p>
                     <p className="text-sm mt-2">Please create and save header and footer information first.</p>
                   </div>
+                    )}
+                  </>
                 )}
               </div>
             </DialogContent>

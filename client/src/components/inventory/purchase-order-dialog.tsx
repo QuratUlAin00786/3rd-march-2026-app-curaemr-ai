@@ -23,6 +23,7 @@ interface PurchaseOrderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   items: InventoryItem[];
+  onPurchaseOrderCreated?: (purchaseOrderId: number) => void;
 }
 
 interface POItem {
@@ -33,13 +34,14 @@ interface POItem {
   totalPrice: string;
 }
 
-export default function PurchaseOrderDialog({ open, onOpenChange, items }: PurchaseOrderDialogProps) {
+export default function PurchaseOrderDialog({ open, onOpenChange, items, onPurchaseOrderCreated }: PurchaseOrderDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [createdPONumber, setCreatedPONumber] = useState<string | null>(null);
+  const [createdPOId, setCreatedPOId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     supplierId: 1, // Default supplier
     expectedDeliveryDate: "",
@@ -62,7 +64,9 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
     },
     onSuccess: (data: any) => {
       const poNumber = data?.purchaseOrder?.poNumber;
+      const poId = data?.purchaseOrder?.id;
       setCreatedPONumber(poNumber || null);
+      setCreatedPOId(poId || null);
       setSuccessMessage(
         poNumber
           ? `Purchase order ${poNumber} created successfully`
@@ -95,6 +99,8 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
       quantity: 1,
       unitPrice: ""
     });
+    setCreatedPOId(null);
+    setCreatedPONumber(null);
   };
 
   const addItem = () => {
@@ -173,21 +179,21 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden p-4 flex flex-col">
+        <DialogHeader className="pb-2 flex-shrink-0">
           <DialogTitle>Create New Purchase Order</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-6">
+        <div className="flex-1 overflow-y-auto space-y-4 pr-2" style={{ fontSize: '12px' }}>
           {/* Basic Information */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="supplier">Supplier</Label>
+              <Label htmlFor="supplier" style={{ fontSize: '12px', marginBottom: '4px' }}>Supplier</Label>
               <Select value={formData.supplierId.toString()} onValueChange={(value) => setFormData({...formData, supplierId: parseInt(value)})}>
-                <SelectTrigger>
+                <SelectTrigger className="h-9" style={{ fontSize: '12px' }}>
                   <SelectValue placeholder="Select supplier" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent style={{ fontSize: '12px' }}>
                   <SelectItem value="1">Halo Pharmacy</SelectItem>
                   <SelectItem value="2">MedSupply Co.</SelectItem>
                   <SelectItem value="3">Healthcare Solutions</SelectItem>
@@ -195,27 +201,30 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
               </Select>
             </div>
             <div>
-              <Label htmlFor="deliveryDate">Expected Delivery Date</Label>
+              <Label htmlFor="deliveryDate" style={{ fontSize: '12px', marginBottom: '4px' }}>Expected Delivery Date</Label>
               <Input
                 type="date"
                 value={formData.expectedDeliveryDate}
                 onChange={(e) => setFormData({...formData, expectedDeliveryDate: e.target.value})}
+                className="h-9"
+                style={{ fontSize: '12px' }}
+                min={new Date().toISOString().split('T')[0]}
               />
             </div>
           </div>
 
           {/* Quick Add Item */}
           <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800/50">
-            <h3 className="mb-3 text-sm font-medium text-gray-900 dark:text-gray-100">Quick Add Item</h3>
+            <h3 className="mb-3 font-medium text-gray-900 dark:text-gray-100" style={{ fontSize: '12px' }}>Quick Add Item</h3>
             
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
               <div>
-                <Label htmlFor="item" className="text-sm">Item</Label>
+                <Label htmlFor="item" style={{ fontSize: '12px', marginBottom: '4px' }}>Item</Label>
                 <Select value={newItem.itemId} onValueChange={(value) => setNewItem({...newItem, itemId: value})}>
-                  <SelectTrigger className="bg-white dark:bg-gray-900">
+                  <SelectTrigger className="bg-white dark:bg-gray-900 h-9" style={{ fontSize: '12px' }}>
                     <SelectValue placeholder="Select item" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent style={{ fontSize: '12px' }}>
                     {items.map(item => (
                       <SelectItem key={item.id} value={item.id.toString()}>
                         {item.name}
@@ -226,25 +235,27 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
               </div>
               
               <div>
-                <Label htmlFor="quantity" className="text-sm">Quantity</Label>
+                <Label htmlFor="quantity" style={{ fontSize: '12px', marginBottom: '4px' }}>Quantity</Label>
                 <Input
                   type="number"
                   min="1"
                   value={newItem.quantity}
                   onChange={(e) => setNewItem({...newItem, quantity: parseInt(e.target.value) || 1})}
-                  className="bg-white dark:bg-gray-900"
+                  className="bg-white dark:bg-gray-900 h-9"
+                  style={{ fontSize: '12px' }}
                 />
               </div>
               
               <div>
-                <Label htmlFor="unitPrice" className="text-sm">Unit Price</Label>
+                <Label htmlFor="unitPrice" style={{ fontSize: '12px', marginBottom: '4px' }}>Unit Price</Label>
                 <Input
                   type="number"
                   step="0.01"
                   placeholder="0.00"
                   value={newItem.unitPrice}
                   onChange={(e) => setNewItem({...newItem, unitPrice: e.target.value})}
-                  className="bg-white dark:bg-gray-900"
+                  className="bg-white dark:bg-gray-900 h-9"
+                  style={{ fontSize: '12px' }}
                 />
               </div>
               
@@ -284,9 +295,10 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
                   // Reset form
                   setNewItem({ itemId: "", quantity: 1, unitPrice: "" });
                 }}
-                className="bg-green-600 hover:bg-green-700 text-white"
+                className="bg-green-600 hover:bg-green-700 text-white h-9"
+                style={{ fontSize: '12px', padding: '6px 12px' }}
               >
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="h-4 w-4 mr-1.5" />
                 Add Item NOW
               </Button>
             </div>
@@ -295,81 +307,89 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
           {/* Items Table */}
           {poItems.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium mb-3">Purchase Order Items</h3>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Item</TableHead>
-                    <TableHead>Quantity</TableHead>
-                    <TableHead>Unit Price</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {poItems.map((item, index) => (
-                    <TableRow key={index}>
-                      <TableCell>{item.itemName}</TableCell>
-                      <TableCell>{item.quantity}</TableCell>
-                      <TableCell>£{item.unitPrice}</TableCell>
-                      <TableCell>£{item.totalPrice}</TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="sm" onClick={() => removeItem(index)}>
-                          <Trash2 className="h-4 w-4 text-red-600" />
-                        </Button>
-                      </TableCell>
+              <h3 className="font-medium mb-2" style={{ fontSize: '12px' }}>Purchase Order Items</h3>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead style={{ fontSize: '12px', padding: '8px' }}>Item</TableHead>
+                      <TableHead style={{ fontSize: '12px', padding: '8px' }}>Quantity</TableHead>
+                      <TableHead style={{ fontSize: '12px', padding: '8px' }}>Unit Price</TableHead>
+                      <TableHead style={{ fontSize: '12px', padding: '8px' }}>Total</TableHead>
+                      <TableHead style={{ fontSize: '12px', padding: '8px' }}>Action</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {poItems.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell style={{ fontSize: '12px', padding: '8px' }}>{item.itemName}</TableCell>
+                        <TableCell style={{ fontSize: '12px', padding: '8px' }}>{item.quantity}</TableCell>
+                        <TableCell style={{ fontSize: '12px', padding: '8px' }}>£{item.unitPrice}</TableCell>
+                        <TableCell style={{ fontSize: '12px', padding: '8px' }}>£{item.totalPrice}</TableCell>
+                        <TableCell style={{ fontSize: '12px', padding: '8px' }}>
+                          <Button variant="ghost" size="sm" onClick={() => removeItem(index)} className="h-7 w-7 p-0">
+                            <Trash2 className="h-4 w-4 text-red-600" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
 
           {/* Financial Details */}
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <Label>Tax Amount</Label>
+              <Label style={{ fontSize: '12px', marginBottom: '4px' }}>Tax Amount</Label>
               <Input
                 type="number"
                 step="0.01"
                 value={formData.taxAmount}
                 onChange={(e) => setFormData({...formData, taxAmount: e.target.value})}
+                className="h-9"
+                style={{ fontSize: '12px' }}
               />
             </div>
             <div>
-              <Label>Discount Amount</Label>
+              <Label style={{ fontSize: '12px', marginBottom: '4px' }}>Discount Amount</Label>
               <Input
                 type="number"
                 step="0.01"
                 value={formData.discountAmount}
                 onChange={(e) => setFormData({...formData, discountAmount: e.target.value})}
+                className="h-9"
+                style={{ fontSize: '12px' }}
               />
             </div>
             <div>
-              <Label>Total Amount</Label>
-              <Input value={`£${calculateTotalAmount()}`} disabled />
+              <Label style={{ fontSize: '12px', marginBottom: '4px' }}>Total Amount</Label>
+              <Input value={`£${calculateTotalAmount()}`} disabled className="h-9" style={{ fontSize: '12px' }} />
             </div>
           </div>
 
           {/* Notes */}
           <div>
-            <Label>Notes</Label>
+            <Label style={{ fontSize: '12px', marginBottom: '4px' }}>Notes</Label>
             <Textarea
               value={formData.notes}
               onChange={(e) => setFormData({...formData, notes: e.target.value})}
               placeholder="Additional notes or special instructions"
+              className="min-h-[80px]"
+              style={{ fontSize: '12px', padding: '8px' }}
             />
           </div>
+        </div>
 
-          {/* Actions */}
-          <div className="flex justify-end space-x-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={createPOMutation.isPending}>
-              {createPOMutation.isPending ? "Creating..." : "Create Purchase Order"}
-            </Button>
-          </div>
+        {/* Actions */}
+        <div className="flex justify-end gap-3 pt-3 flex-shrink-0 border-t mt-3">
+          <Button variant="outline" onClick={() => onOpenChange(false)} className="h-9" style={{ fontSize: '12px', padding: '6px 16px' }}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={createPOMutation.isPending} className="h-9" style={{ fontSize: '12px', padding: '6px 16px' }}>
+            {createPOMutation.isPending ? "Creating..." : "Create Purchase Order"}
+          </Button>
         </div>
       </DialogContent>
 
@@ -397,7 +417,17 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items }: Purch
               onClick={() => {
                 setShowSuccessModal(false);
                 setSuccessMessage("");
+                const poId = createdPOId;
                 setCreatedPONumber(null);
+                setCreatedPOId(null);
+                // Close the Purchase Order dialog
+                onOpenChange(false);
+                // Call callback if provided (to open Goods Receipt dialog)
+                if (onPurchaseOrderCreated && poId) {
+                  setTimeout(() => {
+                    onPurchaseOrderCreated(poId);
+                  }, 100);
+                }
               }}
             >
               OK
