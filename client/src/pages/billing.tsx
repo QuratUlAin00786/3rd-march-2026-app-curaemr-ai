@@ -47,7 +47,8 @@ import {
   Target,
   Edit,
   LayoutGrid,
-  List
+  List,
+  Loader2
 } from "lucide-react";
 import { SearchComboBox } from "@/components/SearchComboBox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command";
@@ -202,9 +203,23 @@ function PricingManagementDashboard() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isAddingDefaultFees, setIsAddingDefaultFees] = useState(false);
+  const [showDefaultFeesSuccessModal, setShowDefaultFeesSuccessModal] = useState(false);
+  const [defaultFeesSuccessMessage, setDefaultFeesSuccessMessage] = useState({ title: "", description: "" });
   const [multipleServices, setMultipleServices] = useState<any[]>([
     { serviceName: "", serviceCode: "", category: "", basePrice: "" }
   ]);
+
+  // Default Doctor Fees
+  const DEFAULT_DOCTOR_FEES = [
+    { serviceName: "Emergency Visit", serviceCode: "EV001", category: "Immediate or off-hours consultation", basePrice: "150.00" },
+    { serviceName: "Follow-up Visit", serviceCode: "FV001", category: "Follow-up within a certain time period", basePrice: "30.00" },
+    { serviceName: "General Consultation", serviceCode: "GC001", category: "Standard visit for diagnosis or follow-up", basePrice: "50.00" },
+    { serviceName: "Home Visit", serviceCode: "HV001", category: "Doctor visits patient's home", basePrice: "100.00" },
+    { serviceName: "Injection Anesthesia", serviceCode: "IA001", category: "Pre- or post-surgery consultation", basePrice: "50.00" },
+    { serviceName: "Specialist Consultation", serviceCode: "SC001", category: "Visit with a specialist doctor (e.g., Cardiologist)", basePrice: "120.00" },
+    { serviceName: "Teleconsultation", serviceCode: "TC001", category: "Online or phone consultation", basePrice: "40.00" }
+  ];
   const [showServiceSuggestions, setShowServiceSuggestions] = useState(false);
   const [showRoleSuggestions, setShowRoleSuggestions] = useState(false);
   const [showDoctorSuggestions, setShowDoctorSuggestions] = useState(false);
@@ -228,6 +243,8 @@ function PricingManagementDashboard() {
   const [isDeletingAllImaging, setIsDeletingAllImaging] = useState(false);
   const [currentlyDeletingImaging, setCurrentlyDeletingImaging] = useState<string>("");
   const [deleteProgress, setDeleteProgress] = useState({ current: 0, total: 0 });
+  const [duplicateServiceNames, setDuplicateServiceNames] = useState<string[]>([]);
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   
   // Validation error states
   const [doctorRoleError, setDoctorRoleError] = useState("");
@@ -513,6 +530,7 @@ function PricingManagementDashboard() {
     if (!formData.doctorRole) return true;
     return user.role === formData.doctorRole;
   });
+
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1169,6 +1187,155 @@ function PricingManagementDashboard() {
     }
   };
 
+  const handleSkipAndAddOthers = async () => {
+    setIsSaving(true);
+    try {
+      const apiPath = getApiPath(pricingTab);
+      const validServices = multipleServices.filter(
+        service => service.serviceName && service.basePrice
+      );
+      
+      // Filter out duplicate service names
+      const newServices = validServices.filter(service => 
+        !duplicateServiceNames.some(dup => dup.toLowerCase() === service.serviceName.toLowerCase())
+      );
+      
+      if (newServices.length === 0) {
+        toast({
+          title: "No New Services",
+          description: "All service names already exist in the database.",
+          variant: "destructive"
+        });
+        setIsSaving(false);
+        setShowDuplicateDialog(false);
+        return;
+      }
+      
+      // Create only new services
+      for (const service of newServices) {
+        const payload = {
+          serviceName: service.serviceName,
+          serviceCode: service.serviceCode,
+          category: service.category,
+          doctorId: formData.doctorId,
+          doctorName: formData.doctorName,
+          doctorRole: formData.doctorRole,
+          basePrice: parseFloat(service.basePrice) || 0,
+          isActive: true,
+          currency: "GBP",
+          version: 1
+        };
+        
+        await apiRequest('POST', `/api/pricing/${apiPath}`, payload);
+      }
+      
+      queryClient.invalidateQueries({ queryKey: [`/api/pricing/${apiPath}`] });
+      toast({
+        title: "Doctor Fees Added",
+        description: `${newServices.length} new service(s) created successfully. ${duplicateServiceNames.length} duplicate(s) skipped.`
+      });
+      setShowAddDialog(false);
+      setMultipleServices([{ serviceName: "", serviceCode: "", category: "", basePrice: "" }]);
+      setFormData({});
+      setDuplicateServiceNames([]);
+      setShowDuplicateDialog(false);
+    } catch (error: any) {
+      console.error("Error creating doctor fees:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create doctor fees",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleAddDefaultDoctorFees = async () => {
+    if (!formData.doctorRole) {
+      setDoctorRoleError("Please select a role");
+      return;
+    }
+    
+    if (!formData.doctorName) {
+      setDoctorNameError("Please select a name");
+      return;
+    }
+
+    setIsAddingDefaultFees(true);
+    try {
+      const apiPath = getApiPath(pricingTab);
+      
+      // Check for existing fees for this specific doctor/role combination
+      const existingFeesForDoctor = doctorsFees.filter((fee: any) => 
+        fee.doctorName?.toLowerCase() === formData.doctorName.toLowerCase() &&
+        fee.doctorRole?.toLowerCase() === formData.doctorRole.toLowerCase()
+      );
+      
+      // Get service names that already exist for this doctor/role
+      const existingServiceNames = existingFeesForDoctor.map((fee: any) => fee.serviceName.toLowerCase());
+      
+      // Filter out services that already exist for this doctor/role
+      const newFees = DEFAULT_DOCTOR_FEES.filter(fee => 
+        !existingServiceNames.includes(fee.serviceName.toLowerCase())
+      );
+      
+      if (newFees.length === 0) {
+        setDefaultFeesSuccessMessage({
+          title: "All Default Fees Already Exist",
+          description: `All default doctor fees already exist for ${formData.doctorName} (${formData.doctorRole}).`
+        });
+        setShowDefaultFeesSuccessModal(true);
+        setIsAddingDefaultFees(false);
+        return;
+      }
+      
+      // Add only new fees for this doctor/role
+      let addedCount = 0;
+      let skippedCount = 0;
+      
+      for (const fee of DEFAULT_DOCTOR_FEES) {
+        const exists = existingServiceNames.includes(fee.serviceName.toLowerCase());
+        
+        if (!exists) {
+          const payload = {
+            serviceName: fee.serviceName,
+            serviceCode: fee.serviceCode,
+            category: fee.category,
+            doctorId: formData.doctorId,
+            doctorName: formData.doctorName,
+            doctorRole: formData.doctorRole,
+            basePrice: parseFloat(fee.basePrice) || 0,
+            isActive: true,
+            currency: "GBP",
+            version: 1
+          };
+          
+          await apiRequest('POST', `/api/pricing/${apiPath}`, payload);
+          addedCount++;
+        } else {
+          skippedCount++;
+        }
+      }
+      
+      queryClient.invalidateQueries({ queryKey: [`/api/pricing/${apiPath}`] });
+      setDefaultFeesSuccessMessage({
+        title: "Default Doctor Fees Added",
+        description: `${addedCount} default fee(s) added successfully for ${formData.doctorName} (${formData.doctorRole}). ${skippedCount > 0 ? `${skippedCount} fee(s) already existed and were skipped.` : ''}`
+      });
+      setShowDefaultFeesSuccessModal(true);
+      setIsAddingDefaultFees(false);
+    } catch (error: any) {
+      console.error("Error adding default doctor fees:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add default doctor fees",
+        variant: "destructive"
+      });
+      setIsAddingDefaultFees(false);
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -1198,29 +1365,11 @@ function PricingManagementDashboard() {
             setIsSaving(false);
             return;
           }
-          
-          // Check for duplicate (doctorRole + doctorId combination)
-          if (formData.doctorId) {
-            try {
-              const checkResponse = await apiRequest('GET', `/api/pricing/doctors-fees/check-duplicate?doctorRole=${encodeURIComponent(formData.doctorRole)}&doctorId=${formData.doctorId}`, undefined);
-              const checkData = await checkResponse.json();
-              
-              if (checkData.exists) {
-                toast({
-                  title: "Duplicate Entry",
-                  description: "Price already exists in the database",
-                  variant: "destructive"
-                });
-                setIsSaving(false);
-                return;
-              }
-            } catch (error: any) {
-              console.error("Error checking for duplicate:", error);
-            }
-          }
         }
         
-        const validServices = multipleServices.filter(
+        // Only process custom services from multipleServices (not existing/default ones)
+        // For imaging: only process entries from "Add Custom Imaging" section, skip "Existing Imaging in Database"
+        let validServices = multipleServices.filter(
           service => service.serviceName && service.basePrice
         );
         
@@ -1248,15 +1397,83 @@ function PricingManagementDashboard() {
           setImagingError("");
         }
         
-        // Create all services/tests/imaging
+        // Check for duplicate service names (doctors fees and imaging)
+        if (pricingTab === "doctors") {
+          try {
+            const serviceNames = validServices.map(s => s.serviceName);
+            const checkResponse = await apiRequest('POST', '/api/pricing/doctors-fees/check-duplicates', { serviceNames });
+            const checkData = await checkResponse.json();
+            
+            if (checkData.duplicates && checkData.duplicates.length > 0) {
+              setDuplicateServiceNames(checkData.duplicates);
+              setShowDuplicateDialog(true);
+              setIsSaving(false);
+              return;
+            }
+          } catch (error: any) {
+            console.error("Error checking for duplicates:", error);
+            // Continue with creation if check fails
+          }
+        } else if (pricingTab === "imaging") {
+          // Check for duplicate imaging types
+          try {
+            const imagingTypes = validServices.map(s => s.serviceName.trim()).filter(Boolean);
+            if (imagingTypes.length > 0) {
+              const checkResponse = await apiRequest('POST', '/api/pricing/imaging/check-duplicates', { imagingTypes });
+              const checkData = await checkResponse.json();
+              
+              if (checkData.duplicates && checkData.duplicates.length > 0) {
+                // Filter out duplicates and only add new ones
+                const newServices = validServices.filter(service => {
+                  const serviceName = service.serviceName.trim();
+                  return serviceName && !checkData.duplicates.some((dup: string) => 
+                    dup.toLowerCase() === serviceName.toLowerCase()
+                  );
+                });
+                
+                if (newServices.length === 0) {
+                  toast({
+                    title: "All Imaging Services Already Exist",
+                    description: "All imaging services already exist in the database.",
+                    variant: "default"
+                  });
+                  setIsSaving(false);
+                  return;
+                }
+                
+                // Replace validServices with only new ones (skip duplicates)
+                validServices = newServices;
+                
+                toast({
+                  title: "Skipping Duplicates",
+                  description: `${checkData.duplicates.length} imaging service(s) already exist and will be skipped. ${newServices.length} new service(s) will be added.`,
+                  variant: "default"
+                });
+              }
+            }
+          } catch (error: any) {
+            console.error("Error checking for duplicate imaging:", error);
+            // Continue with creation if check fails
+          }
+        }
+        
+        // Create only custom services/tests/imaging from the "Add Custom" section
+        // Note: This only processes entries from multipleServices, not existing/default entries
+        // For imaging: validServices contains ONLY entries from "Add Custom Imaging" table, NOT from "Existing Imaging in Database"
+        // Duplicates have already been filtered out for imaging
         for (const service of validServices) {
+          // Additional validation: Ensure we're only processing custom entries with valid data
+          if (!service.serviceName || !service.serviceName.trim()) {
+            continue; // Skip empty entries
+          }
+          
           let payload: any = {};
           
           if (pricingTab === "doctors") {
             payload = {
-              serviceName: service.serviceName,
-              serviceCode: service.serviceCode,
-              category: service.category,
+              serviceName: service.serviceName.trim(),
+              serviceCode: service.serviceCode?.trim() || "",
+              category: service.category?.trim() || "",
               doctorId: formData.doctorId,
               doctorName: formData.doctorName,
               doctorRole: formData.doctorRole,
@@ -1267,24 +1484,33 @@ function PricingManagementDashboard() {
             };
           } else if (pricingTab === "lab-tests") {
             payload = {
-              testName: service.serviceName,
-              testCode: service.serviceCode,
-              category: service.category,
+              testName: service.serviceName.trim(),
+              testCode: service.serviceCode?.trim() || "",
+              category: service.category?.trim() || "",
               basePrice: parseFloat(service.basePrice) || 0,
               isActive: true,
               currency: "GBP",
               version: 1
             };
           } else if (pricingTab === "imaging") {
+            // Only create imaging services from "Add Custom Imaging" section
+            // This explicitly excludes any default/existing imaging from "Existing Imaging in Database"
+            // Duplicates have already been filtered out above
             payload = {
-              imagingType: service.serviceName,
-              imagingCode: service.serviceCode,
-              modality: service.category,
+              imagingType: service.serviceName.trim(),
               basePrice: parseFloat(service.basePrice) || 0,
-              isActive: true,
+              isActive: formData.isActive !== undefined ? formData.isActive : true,
               currency: "GBP",
               version: 1
             };
+            
+            // Add optional fields only if they have values
+            if (service.serviceCode?.trim()) {
+              payload.imagingCode = service.serviceCode.trim();
+            }
+            if (service.category?.trim()) {
+              payload.modality = service.category.trim();
+            }
           }
           
           await apiRequest('POST', `/api/pricing/${apiPath}`, payload);
@@ -1306,6 +1532,8 @@ function PricingManagementDashboard() {
         setShowAddDialog(false);
         setMultipleServices([{ serviceName: "", serviceCode: "", category: "", basePrice: "" }]);
         setFormData({});
+        setDuplicateServiceNames([]);
+        setShowDuplicateDialog(false);
       } else {
         // Original single save logic for editing or other tabs
         const endpoint = editingItem 
@@ -1414,18 +1642,10 @@ function PricingManagementDashboard() {
     setLabTestError("");
     setImagingError("");
     
-    // Pre-populate with predefined services for doctors fees
+    // Start with one blank row for custom doctor fees (do not pre-populate with predefined services)
     if (pricingTab === "doctors") {
-      const predefinedServices = [
-        { serviceName: "General Consultation", serviceCode: "GC001", category: "Standard visit for diagnosis or follow-up", basePrice: "50" },
-        { serviceName: "Specialist Consultation", serviceCode: "SC001", category: "Visit with a specialist doctor (e.g., Cardiologist)", basePrice: "120" },
-        { serviceName: "Follow-up Visit", serviceCode: "FV001", category: "Follow-up within a certain time period", basePrice: "30" },
-        { serviceName: "Teleconsultation", serviceCode: "TC001", category: "Online or phone consultation", basePrice: "40" },
-        { serviceName: "Emergency Visit", serviceCode: "EV001", category: "Immediate or off-hours consultation", basePrice: "150" },
-        { serviceName: "Home Visit", serviceCode: "HV001", category: "Doctor visits patient's home", basePrice: "100" },
-        { serviceName: "Procedure Consultation", serviceCode: "PC001", category: "Pre- or post-surgery consultation", basePrice: "" }
-      ];
-      setMultipleServices(predefinedServices);
+      // Start with one blank row for custom doctor fee
+      setMultipleServices([{ serviceName: "", serviceCode: "", category: "", basePrice: "" }]);
     } else if (pricingTab === "imaging") {
       // Start with one blank row for custom imaging
       setMultipleServices([{ serviceName: "", serviceCode: "", category: "", basePrice: "" }]);
@@ -1439,6 +1659,8 @@ function PricingManagementDashboard() {
     setEditingItem(null);
     setShowAddDialog(true);
     setSkipRoleSuggestionFocus(true);
+    setDuplicateServiceNames([]);
+    setShowDuplicateDialog(false);
     setTimeout(() => setSkipRoleSuggestionFocus(false), 0);
   };
 
@@ -1524,55 +1746,101 @@ function PricingManagementDashboard() {
             <div className="text-center py-8 text-gray-500">
               <p>No doctor fees match your filters. Try adjusting your search criteria.</p>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-gray-50 dark:bg-gray-800">
-                    <th className="text-left p-3">Service Name</th>
-                    <th className="text-left p-3">Doctor Name</th>
-                    <th className="text-left p-3">Code</th>
-                    <th className="text-left p-3">Category</th>
-                    <th className="text-left p-3">Price</th>
-                    <th className="text-left p-3">Status</th>
-                    <th className="text-left p-3">Version</th>
-                    <th className="text-left p-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredFees.map((fee: any) => (
-                    <tr key={fee.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800" data-testid={`row-doctor-fee-${fee.id}`}>
-                      <td className="p-3 font-medium">{fee.serviceName}</td>
-                      <td className="p-3">{fee.doctorName || '-'}</td>
-                      <td className="p-3">{fee.serviceCode || '-'}</td>
-                      <td className="p-3">{fee.category || '-'}</td>
-                      <td className="p-3 font-semibold">{fee.currency} {fee.basePrice}</td>
-                      <td className="p-3">
-                        <Badge variant={fee.isActive ? "default" : "secondary"}>
-                          {fee.isActive ? "Active" : "Inactive"}
-                        </Badge>
-                      </td>
-                      <td className="p-3">v{fee.version}</td>
-                      <td className="p-3">
-                        <div className="flex gap-2">
-                          {canEdit('billing') && (
-                            <Button size="sm" variant="outline" onClick={() => openEditDialog(fee)} data-testid={`button-edit-${fee.id}`}>
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {canDelete('billing') && (
-                            <Button size="sm" variant="outline" onClick={() => handleDelete("doctors-fees", fee.id)} data-testid={`button-delete-${fee.id}`}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
+          ) : (() => {
+            // Group fees by role, then by doctor/nurse name within each role
+            const groupedByRoleAndName = filteredFees.reduce((acc: any, fee: any) => {
+              const role = fee.doctorRole || 'Unknown';
+              const doctorName = fee.doctorName || 'Unknown';
+              
+              if (!acc[role]) {
+                acc[role] = {};
+              }
+              if (!acc[role][doctorName]) {
+                acc[role][doctorName] = [];
+              }
+              acc[role][doctorName].push(fee);
+              return acc;
+            }, {});
+
+            const roleGroups = Object.entries(groupedByRoleAndName).sort((a, b) => {
+              // Sort roles alphabetically, but put 'Unknown' at the end
+              if (a[0] === 'Unknown') return 1;
+              if (b[0] === 'Unknown') return -1;
+              return a[0].localeCompare(b[0]);
+            });
+
+            return (
+              <div className="space-y-4">
+                {roleGroups.map(([role, nameGroups]: [string, any]) => (
+                  <div key={role} className="border rounded-md overflow-hidden bg-white dark:bg-gray-900">
+                    {/* Role Header */}
+                    <div className="bg-gray-200 dark:bg-gray-700 px-4 py-3 font-semibold text-base sticky top-0 z-10">
+                      {role.charAt(0).toUpperCase() + role.slice(1)}
+                    </div>
+                    {/* Group by doctor/nurse name within this role */}
+                    {Object.entries(nameGroups as Record<string, any[]>)
+                      .sort((a, b) => a[0].localeCompare(b[0]))
+                      .map(([doctorName, fees]: [string, any[]]) => (
+                        <div key={`${role}-${doctorName}`} className="border-b last:border-b-0">
+                          {/* Doctor/Nurse Name Header */}
+                          <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2 font-medium text-sm">
+                            {doctorName}
+                          </div>
+                          {/* Fees Table for this Doctor/Nurse */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b bg-gray-50 dark:bg-gray-800">
+                                  <th className="text-left p-3">Service Name</th>
+                                  <th className="text-left p-3">Doctor Name</th>
+                                  <th className="text-left p-3">Code</th>
+                                  <th className="text-left p-3">Category</th>
+                                  <th className="text-left p-3">Price</th>
+                                  <th className="text-left p-3">Status</th>
+                                  <th className="text-left p-3">Version</th>
+                                  <th className="text-left p-3">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {fees.map((fee: any) => (
+                                  <tr key={fee.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800" data-testid={`row-doctor-fee-${fee.id}`}>
+                                    <td className="p-3 font-medium">{fee.serviceName}</td>
+                                    <td className="p-3">{fee.doctorName || '-'}</td>
+                                    <td className="p-3">{fee.serviceCode || '-'}</td>
+                                    <td className="p-3">{fee.category || '-'}</td>
+                                    <td className="p-3 font-semibold">{fee.currency} {fee.basePrice}</td>
+                                    <td className="p-3">
+                                      <Badge variant={fee.isActive ? "default" : "secondary"}>
+                                        {fee.isActive ? "Active" : "Inactive"}
+                                      </Badge>
+                                    </td>
+                                    <td className="p-3">v{fee.version}</td>
+                                    <td className="p-3">
+                                      <div className="flex gap-2">
+                                        {canEdit('billing') && (
+                                          <Button size="sm" variant="outline" onClick={() => openEditDialog(fee)} data-testid={`button-edit-${fee.id}`}>
+                                            <Edit className="h-4 w-4" />
+                                          </Button>
+                                        )}
+                                        {canDelete('billing') && (
+                                          <Button size="sm" variant="outline" onClick={() => handleDelete("doctors-fees", fee.id)} data-testid={`button-delete-${fee.id}`}>
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
+                      ))}
+                  </div>
+                ))}
+              </div>
+            );
+          })();
         })()}
       </TabsContent>
 
@@ -1828,81 +2096,127 @@ function PricingManagementDashboard() {
           <div className="text-center py-8 text-gray-500">
             <p>No treatments configured yet. Click "Add Treatments" to get started.</p>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                  <tr className="border-b bg-gray-50 dark:bg-gray-800">
-                  <th className="text-left p-3">Name</th>
-                  <th className="text-left p-3">Role</th>
-                  <th className="text-left p-3">Assigned To</th>
-                  <th className="text-left p-3">Price</th>
-                  <th className="text-left p-3">Color</th>
-                  <th className="text-left p-3">Status</th>
-                  <th className="text-left p-3">Version</th>
-                    <th className="text-left p-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {treatments.map((treatment: any) => (
-                  <tr key={treatment.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800">
-                    <td className="p-3 font-medium">{treatment.name}</td>
-                    <td className="p-3 text-gray-600 dark:text-gray-400 capitalize">{treatment.doctorRole || "—"}</td>
-                    <td className="p-3 font-medium text-blue-600 dark:text-blue-400">{treatment.doctorName || "—"}</td>
-                    <td className="p-3 font-semibold">
-                      {(() => {
-                        const priceNumber = Number(treatment.basePrice);
-                        return Number.isNaN(priceNumber)
-                          ? `${treatment.currency || ""} ${treatment.basePrice ?? "—"}`.trim()
-                          : formatCurrency(priceNumber);
-                      })()}
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-2">
-                        <span 
-                          className="w-4 h-4 rounded-full border" 
-                          style={{ backgroundColor: treatment.colorCode || "#000" }}
-                          aria-hidden="true"
-                        />
-                        <span>{treatment.colorCode || "—"}</span>
+        ) : (() => {
+          // Group treatments by role, then by doctor/nurse name within each role
+          const groupedByRoleAndName = treatments.reduce((acc: any, treatment: any) => {
+            const role = treatment.doctorRole || 'Unknown';
+            const doctorName = treatment.doctorName || 'Unknown';
+            
+            if (!acc[role]) {
+              acc[role] = {};
+            }
+            if (!acc[role][doctorName]) {
+              acc[role][doctorName] = [];
+            }
+            acc[role][doctorName].push(treatment);
+            return acc;
+          }, {});
+
+          const roleGroups = Object.entries(groupedByRoleAndName).sort((a, b) => {
+            // Sort roles alphabetically, but put 'Unknown' at the end
+            if (a[0] === 'Unknown') return 1;
+            if (b[0] === 'Unknown') return -1;
+            return a[0].localeCompare(b[0]);
+          });
+
+          return (
+            <div className="space-y-4">
+              {roleGroups.map(([role, nameGroups]: [string, any]) => (
+                <div key={role} className="border rounded-md overflow-hidden bg-white dark:bg-gray-900">
+                  {/* Role Header */}
+                  <div className="bg-gray-200 dark:bg-gray-700 px-4 py-3 font-semibold text-base sticky top-0 z-10">
+                    {role.charAt(0).toUpperCase() + role.slice(1)}
+                  </div>
+                  {/* Group by doctor/nurse name within this role */}
+                  {Object.entries(nameGroups as Record<string, any[]>)
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([doctorName, treatmentsList]: [string, any[]]) => (
+                      <div key={`${role}-${doctorName}`} className="border-b last:border-b-0">
+                        {/* Doctor/Nurse Name Header */}
+                        <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2 font-medium text-sm">
+                          {doctorName}
+                        </div>
+                        {/* Treatments Table for this Doctor/Nurse */}
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b bg-gray-50 dark:bg-gray-800">
+                                <th className="text-left p-3">Name</th>
+                                <th className="text-left p-3">Role</th>
+                                <th className="text-left p-3">Assigned To</th>
+                                <th className="text-left p-3">Price</th>
+                                <th className="text-left p-3">Color</th>
+                                <th className="text-left p-3">Status</th>
+                                <th className="text-left p-3">Version</th>
+                                <th className="text-left p-3">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {treatmentsList.map((treatment: any) => (
+                                <tr key={treatment.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800">
+                                  <td className="p-3 font-medium">{treatment.name}</td>
+                                  <td className="p-3 text-gray-600 dark:text-gray-400 capitalize">{treatment.doctorRole || "—"}</td>
+                                  <td className="p-3 font-medium text-blue-600 dark:text-blue-400">{treatment.doctorName || "—"}</td>
+                                  <td className="p-3 font-semibold">
+                                    {(() => {
+                                      const priceNumber = Number(treatment.basePrice);
+                                      return Number.isNaN(priceNumber)
+                                        ? `${treatment.currency || ""} ${treatment.basePrice ?? "—"}`.trim()
+                                        : formatCurrency(priceNumber);
+                                    })()}
+                                  </td>
+                                  <td className="p-3">
+                                    <div className="flex items-center gap-2">
+                                      <span 
+                                        className="w-4 h-4 rounded-full border" 
+                                        style={{ backgroundColor: treatment.colorCode || "#000" }}
+                                        aria-hidden="true"
+                                      />
+                                      <span>{treatment.colorCode || "—"}</span>
+                                    </div>
+                                  </td>
+                                  <td className="p-3">
+                                    <Badge variant={treatment.isActive ? "default" : "secondary"}>
+                                      {treatment.isActive ? "Active" : "Inactive"}
+                                    </Badge>
+                                  </td>
+                                  <td className="p-3">v{treatment.version ?? 1}</td>
+                                  <td className="p-3">
+                                    <div className="flex gap-2">
+                                      {canEdit('billing') && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => openEditTreatmentDialog(treatment)}
+                                          data-testid={`button-edit-treatment-${treatment.id}`}
+                                        >
+                                          <Edit className="h-4 w-4" />
+                                        </Button>
+                                      )}
+                                      {canDelete('billing') && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => handleDeleteTreatment(treatment)}
+                                          data-testid={`button-delete-treatment-${treatment.id}`}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
-                    </td>
-                    <td className="p-3">
-                      <Badge variant={treatment.isActive ? "default" : "secondary"}>
-                        {treatment.isActive ? "Active" : "Inactive"}
-                      </Badge>
-                    </td>
-                    <td className="p-3">v{treatment.version ?? 1}</td>
-                    <td className="p-3">
-                      <div className="flex gap-2">
-                        {canEdit('billing') && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEditTreatmentDialog(treatment)}
-                            data-testid={`button-edit-treatment-${treatment.id}`}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {canDelete('billing') && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleDeleteTreatment(treatment)}
-                            data-testid={`button-delete-treatment-${treatment.id}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                    ))}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </TabsContent>
 
       <TabsContent value="all-treatments" className="space-y-4 mt-4">
@@ -1990,6 +2304,60 @@ function PricingManagementDashboard() {
           <div className="grid gap-4 py-4">
             {pricingTab === "doctors" && !editingItem && (
               <>
+                {/* Existing Doctor Fees in Database (Read-only) - Grouped by Doctor */}
+                {(() => {
+                  // Group fees by doctor name and role
+                  const groupedFees = doctorsFees.reduce((acc: any, fee: any) => {
+                    const key = `${fee.doctorName || 'Unknown'}_${fee.doctorRole || 'Unknown'}`;
+                    if (!acc[key]) {
+                      acc[key] = {
+                        doctorName: fee.doctorName || 'Unknown',
+                        doctorRole: fee.doctorRole || 'Unknown',
+                        fees: []
+                      };
+                    }
+                    acc[key].fees.push(fee);
+                    return acc;
+                  }, {});
+
+                  const groupedArray = Object.values(groupedFees);
+
+                  return groupedArray.length > 0 ? (
+                    <div className="space-y-2">
+                      <Label className="text-base font-semibold">Existing Doctor Fees in Database</Label>
+                      <div className="border rounded-md overflow-hidden max-h-64 overflow-y-auto bg-gray-50 dark:bg-gray-900">
+                        {groupedArray.map((group: any, groupIndex: number) => (
+                          <div key={groupIndex} className="border-b last:border-b-0">
+                            <div className="bg-gray-200 dark:bg-gray-700 px-3 py-2 font-semibold text-sm sticky top-0">
+                              {group.doctorName} ({group.doctorRole})
+                            </div>
+                            <table className="w-full">
+                              <thead className="bg-gray-100 dark:bg-gray-800">
+                                <tr>
+                                  <th className="text-left p-2 text-sm font-medium">Service Name</th>
+                                  <th className="text-left p-2 text-sm font-medium">Code</th>
+                                  <th className="text-left p-2 text-sm font-medium">Category</th>
+                                  <th className="text-left p-2 text-sm font-medium">Price (£)</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {group.fees.map((fee: any) => (
+                                  <tr key={fee.id} className="border-t">
+                                    <td className="p-2 text-sm">{fee.serviceName}</td>
+                                    <td className="p-2 text-sm">{fee.serviceCode || '-'}</td>
+                                    <td className="p-2 text-sm">{fee.category || '-'}</td>
+                                    <td className="p-2 text-sm">{fee.basePrice}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2 relative">
                     <Label htmlFor="bulkDoctorRole">Role <span className="text-red-500">*</span></Label>
@@ -2120,11 +2488,25 @@ function PricingManagementDashboard() {
                   </div>
                 </div>
 
+                {/* Default Doctor Fee Button */}
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleAddDefaultDoctorFees}
+                    disabled={isAddingDefaultFees}
+                    className="w-full sm:w-auto"
+                  >
+                    {isAddingDefaultFees ? "Adding..." : "Default Doctor Fee"}
+                  </Button>
+                </div>
+
+                {/* Add Custom Doctor Fees (Editable) */}
                 <div className="space-y-2">
-                  <Label>Services</Label>
-                  <div className="border rounded-md overflow-hidden">
+                  <Label className="text-base font-semibold">Add Custom Doctor Fee</Label>
+                  <div className="border rounded-md overflow-hidden max-h-96 overflow-y-auto">
                     <table className="w-full">
-                      <thead className="bg-gray-50 dark:bg-gray-800">
+                      <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0">
                         <tr>
                           <th className="text-left p-2 text-sm font-medium">Service Name *</th>
                           <th className="text-left p-2 text-sm font-medium">Service Code</th>
@@ -3024,6 +3406,68 @@ function PricingManagementDashboard() {
         </DialogContent>
       </Dialog>
 
+      {/* Default Doctor Fees Success Modal */}
+      <Dialog open={showDefaultFeesSuccessModal} onOpenChange={setShowDefaultFeesSuccessModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center justify-center mb-4">
+              <div className="h-16 w-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center">
+                <CheckCircle className="h-10 w-10 text-green-600 dark:text-green-500" />
+              </div>
+            </div>
+            <DialogTitle className="text-center text-xl">{defaultFeesSuccessMessage.title}</DialogTitle>
+          </DialogHeader>
+          <div className="text-center py-4">
+            <p className="text-muted-foreground">
+              {defaultFeesSuccessMessage.description}
+            </p>
+          </div>
+          <DialogFooter className="sm:justify-center">
+            <Button onClick={() => setShowDefaultFeesSuccessModal(false)} className="w-full sm:w-auto">
+              OK
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Duplicate Service Names Dialog */}
+      <Dialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Service Name Already Exists</DialogTitle>
+            <DialogDescription>
+              The following service name(s) already exist in the database:
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {duplicateServiceNames.map((name, index) => (
+                <div key={index} className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+                  <p className="font-medium text-sm">
+                    <span className="text-yellow-800 dark:text-yellow-200">"{name}"</span> already exists in the database
+                  </p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+              Would you like to skip these and add only the new service names?
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setShowDuplicateDialog(false);
+              setDuplicateServiceNames([]);
+              setIsSaving(false);
+            }}>
+              Cancel
+            </Button>
+            <Button onClick={handleSkipAndAddOthers} disabled={isSaving}>
+              {isSaving ? 'Adding...' : 'Skip & Add Others'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showAddTreatmentDialog} onOpenChange={setShowAddTreatmentDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -3468,6 +3912,10 @@ export default function BillingPage() {
   const [clinicHeader, setClinicHeader] = useState<any>(null);
   const [clinicFooter, setClinicFooter] = useState<any>(null);
   const [savedInvoiceIds, setSavedInvoiceIds] = useState<Set<number>>(new Set());
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [pdfViewerUrl, setPdfViewerUrl] = useState<string | null>(null);
+  const [selectedInvoiceForPdf, setSelectedInvoiceForPdf] = useState<Invoice | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
   
   // Insurance claims workflow states
   const [showSubmitClaimDialog, setShowSubmitClaimDialog] = useState(false);
@@ -3961,16 +4409,49 @@ export default function BillingPage() {
         doc.setFillColor(79, 70, 229);
         doc.rect(0, 0, pageWidth, 40, 'F');
         
+        let logoX = margin;
+        let textX = margin;
+        const logoSize = 25;
+        
+        // Add logo if available
+        if (clinicHeader?.logoBase64) {
+          try {
+            const logoPosition = clinicHeader?.logoPosition || 'left';
+            const logoData = clinicHeader.logoBase64.includes(',') 
+              ? clinicHeader.logoBase64 
+              : `data:image/png;base64,${clinicHeader.logoBase64}`;
+            
+            if (logoPosition === 'left') {
+              // Logo on left
+              doc.addImage(logoData, 'PNG', logoX, 7, logoSize, logoSize);
+              textX = logoX + logoSize + 10;
+            } else if (logoPosition === 'center') {
+              // Logo centered
+              const centerX = (pageWidth - logoSize) / 2;
+              doc.addImage(logoData, 'PNG', centerX, 7, logoSize, logoSize);
+              textX = margin;
+            } else {
+              // Logo on right
+              logoX = pageWidth - margin - logoSize - 100;
+              doc.addImage(logoData, 'PNG', logoX, 7, logoSize, logoSize);
+              textX = margin;
+            }
+          } catch (error) {
+            console.error('Error adding logo to invoice PDF:', error);
+            // Continue without logo if there's an error
+          }
+        }
+        
         // Clinic name
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(24);
         doc.setFont('helvetica', 'bold');
-        doc.text(clinicHeader?.clinicName || 'nhjn', margin, 18);
+        doc.text(clinicHeader?.clinicName || 'nhjn', textX, 18);
         
         // Tagline
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
-        doc.text(clinicHeader?.tagline || 'Excellence in Healthcare', margin, 28);
+        doc.text(clinicHeader?.tagline || 'Excellence in Healthcare', textX, 28);
         
         // INVOICE text on right
         doc.setFontSize(32);
@@ -4131,7 +4612,7 @@ export default function BillingPage() {
 
       toast({
         title: "Success",
-        description: `Invoice saved successfully`,
+        description: `File successfully saved`,
       });
 
     } catch (error) {
@@ -4141,6 +4622,54 @@ export default function BillingPage() {
         description: "Failed to save invoice. Please try again.",
         variant: "destructive"
       });
+    }
+  };
+
+  const handleOpenSavedInvoicePdf = async (invoice: Invoice) => {
+    try {
+      setPdfLoading(true);
+      setSelectedInvoiceForPdf(invoice);
+      
+      // Build the PDF path: uploads/Invoices/{organization_id}/{patient_id}/{invoice_number}.pdf
+      const organizationId = invoice.organizationId || user?.organizationId;
+      const patientId = invoice.patientId;
+      const invoiceNumber = invoice.invoiceNumber || invoice.id.toString();
+      const pdfPath = `/uploads/Invoices/${organizationId}/${patientId}/${invoiceNumber}.pdf`;
+      
+      console.log('📄 Opening saved invoice PDF from:', pdfPath);
+      
+      // Fetch the PDF file
+      const response = await fetch(pdfPath, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          toast({
+            title: "PDF not found",
+            description: "The saved invoice PDF could not be found. Please save the invoice first.",
+            variant: "destructive"
+          });
+          return;
+        }
+        throw new Error(`Failed to load PDF: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      setPdfViewerUrl(blobUrl);
+      setShowPdfViewer(true);
+    } catch (error) {
+      console.error('❌ Failed to open saved invoice PDF:', error);
+      toast({
+        title: "Error",
+        description: "Failed to open saved invoice PDF. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setPdfLoading(false);
     }
   };
 
@@ -4938,10 +5467,22 @@ export default function BillingPage() {
   const doctorsFeesForReports: any[] = doctorsFeesForReportsData ?? [];
   const doctorsFees: any[] = doctorsFeesForReports;
   
-  // Fetch users and roles for Custom Reports filters
+  // Fetch users and roles for Custom Reports filters and provider info
   const { data: users = [] } = useQuery({
     queryKey: ["/api/users"],
-    enabled: isAdmin && activeTab === "custom-reports",
+    enabled: (isAdmin && activeTab === "custom-reports") || activeTab === "invoices",
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const subdomain = localStorage.getItem('user_subdomain') || 'demo';
+      const response = await fetch('/api/users', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Subdomain': subdomain
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch users');
+      return response.json();
+    },
     select: (data: any) => data || []
   });
 
@@ -5852,38 +6393,42 @@ export default function BillingPage() {
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          <Select value={statusFilter} onValueChange={setStatusFilter}>
-                            <SelectTrigger className="w-40" data-testid="select-status-filter">
-                              <SelectValue placeholder="Filter by status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="all">All Status</SelectItem>
-                              <SelectItem value="draft">Draft</SelectItem>
-                              <SelectItem value="sent">Sent</SelectItem>
-                              <SelectItem value="paid">Paid</SelectItem>
-                              <SelectItem value="overdue">Overdue</SelectItem>
-                              <SelectItem value="cancelled">Cancelled</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          {user?.role !== 'patient' && (
+                            <Select value={statusFilter} onValueChange={setStatusFilter}>
+                              <SelectTrigger className="w-40" data-testid="select-status-filter">
+                                <SelectValue placeholder="Filter by status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All Status</SelectItem>
+                                <SelectItem value="draft">Draft</SelectItem>
+                                <SelectItem value="sent">Sent</SelectItem>
+                                <SelectItem value="paid">Paid</SelectItem>
+                                <SelectItem value="unpaid">Unpaid</SelectItem>
+                                <SelectItem value="overdue">Overdue</SelectItem>
+                                <SelectItem value="cancelled">Cancelled</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
 
-                          <Popover open={invoiceSearchOpen} onOpenChange={setInvoiceSearchOpen}>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="outline"
-                                role="combobox"
-                                aria-expanded={invoiceSearchOpen}
-                                className="w-64 justify-between"
-                                data-testid="select-invoice-filter"
-                              >
-                                {invoiceIdFilter === "all" 
-                                  ? "Filter by Invoice Number..." 
-                                  : displayInvoices?.find((inv: any) => 
-                                      String(inv.invoiceNumber || inv.id) === invoiceIdFilter
-                                    )?.invoiceNumber || invoiceIdFilter
-                                }
-                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                              </Button>
-                            </PopoverTrigger>
+                          {user?.role !== 'patient' && (
+                            <Popover open={invoiceSearchOpen} onOpenChange={setInvoiceSearchOpen}>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  role="combobox"
+                                  aria-expanded={invoiceSearchOpen}
+                                  className="w-64 justify-between"
+                                  data-testid="select-invoice-filter"
+                                >
+                                  {invoiceIdFilter === "all" 
+                                    ? "Filter by Invoice Number..." 
+                                    : displayInvoices?.find((inv: any) => 
+                                        String(inv.invoiceNumber || inv.id) === invoiceIdFilter
+                                      )?.invoiceNumber || invoiceIdFilter
+                                  }
+                                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                </Button>
+                              </PopoverTrigger>
                             <PopoverContent className="w-64 p-0">
                               <Command>
                                 <CommandInput 
@@ -5940,6 +6485,7 @@ export default function BillingPage() {
                               </Command>
                             </PopoverContent>
                           </Popover>
+                          )}
 
                           {canShowNewInvoiceButton && (
                             <Button onClick={() => setShowNewInvoice(true)} className="ml-auto flex items-center gap-2">
@@ -5990,17 +6536,19 @@ export default function BillingPage() {
                             </>
                           )}
 
-                          <div className="flex flex-col gap-1">
-                            <Label htmlFor="service-date-from" className="text-xs text-gray-600 dark:text-gray-400">Service Date From</Label>
-                            <Input
-                              id="service-date-from"
-                              type="date"
-                              value={serviceDateFrom}
-                              onChange={(e) => setServiceDateFrom(e.target.value)}
-                              className="h-9 text-sm w-44"
-                              data-testid="input-service-date-from"
-                            />
-                          </div>
+                          {user?.role !== 'patient' && (
+                            <div className="flex flex-col gap-1">
+                              <Label htmlFor="service-date-from" className="text-xs text-gray-600 dark:text-gray-400">Service Date From</Label>
+                              <Input
+                                id="service-date-from"
+                                type="date"
+                                value={serviceDateFrom}
+                                onChange={(e) => setServiceDateFrom(e.target.value)}
+                                className="h-9 text-sm w-44"
+                                data-testid="input-service-date-from"
+                              />
+                            </div>
+                          )}
 
                           {(serviceDateFrom || invoiceIdFilter !== "all" || (user?.role === 'doctor' && (insuranceProviderFilter !== 'all' || paymentMethodFilter !== 'all' || universalSearch))) && (
                             <Button
@@ -6093,6 +6641,7 @@ export default function BillingPage() {
                             <tr>
                               <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Invoice No.</th>
                               <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Patient Name</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Provider/Doctor</th>
                               <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Payment Method</th>
                               <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service Type</th>
                               <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service ID</th>
@@ -6124,6 +6673,26 @@ export default function BillingPage() {
                                   {invoice.invoiceNumber || invoice.id}
                                 </td>
                                 <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{invoice.patientName}</td>
+                                <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">
+                                  {(() => {
+                                    const invoiceWithProvider = invoice as any;
+                                    if (invoiceWithProvider.providerName) {
+                                      return (
+                                        <div className="flex flex-col">
+                                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                                            {invoiceWithProvider.providerName}
+                                          </span>
+                                          {invoiceWithProvider.providerRole && (
+                                            <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                                              {invoiceWithProvider.providerRole}
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    }
+                                    return <span className="text-gray-400">-</span>;
+                                  })()}
+                                </td>
                                 <td className="px-4 py-4 text-sm">
                                   <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700">
                                     {invoice.paymentMethod || 'N/A'}
@@ -6167,14 +6736,54 @@ export default function BillingPage() {
                                     <Button variant="ghost" size="sm" onClick={() => handleViewInvoice(invoice)} data-testid="button-view-invoice" title="View">
                                       <Eye className="h-4 w-4" />
                                     </Button>
+                                    {isPatient && (
+                                      <>
+                                        {savedInvoiceIds.has(invoice.id) && (
+                                          <Button 
+                                            variant="ghost" 
+                                            size="sm" 
+                                            onClick={() => handleOpenSavedInvoicePdf(invoice)} 
+                                            data-testid="button-open-saved-invoice-pdf-patient" 
+                                            title="Open Invoice PDF"
+                                            className="text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
+                                          >
+                                            <FileText className="h-4 w-4" />
+                                          </Button>
+                                        )}
+                                        <Button 
+                                          variant="ghost" 
+                                          size="sm" 
+                                          onClick={() => handleSaveInvoice(invoice.id.toString())} 
+                                          data-testid="button-save-invoice-patient" 
+                                          title="Save Invoice"
+                                          className="text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                        >
+                                          <FileText className="h-4 w-4" />
+                                        </Button>
+                                      </>
+                                    )}
                                     {savedInvoiceIds.has(invoice.id) && (
                                       <>
+                                        {!isPatient && (
+                                          <Button 
+                                            variant="ghost" 
+                                            size="sm" 
+                                            onClick={() => handleOpenSavedInvoicePdf(invoice)} 
+                                            data-testid="button-open-saved-invoice-pdf" 
+                                            title="Open Saved PDF"
+                                            className="text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
+                                          >
+                                            <FileText className="h-4 w-4" />
+                                          </Button>
+                                        )}
                                         <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoice(invoice.id.toString())} data-testid="button-download-invoice" title="Download">
                                           <Download className="h-4 w-4" />
                                         </Button>
-                                        <Button variant="ghost" size="sm" onClick={() => handleSendInvoice(invoice.id)} data-testid="button-send-invoice" title="Send">
-                                          <Send className="h-4 w-4" />
-                                        </Button>
+                                        {!isPatient && (
+                                          <Button variant="ghost" size="sm" onClick={() => handleSendInvoice(invoice.id)} data-testid="button-send-invoice" title="Send">
+                                            <Send className="h-4 w-4" />
+                                          </Button>
+                                        )}
                                       </>
                                     )}
                                     {!isAdmin && invoice.status !== 'draft' && invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
@@ -6326,10 +6935,50 @@ export default function BillingPage() {
                               <Button variant="outline" size="sm" onClick={() => handleViewInvoice(invoice)} data-testid="button-view-invoice">
                                 <Eye className="h-4 w-4" />
                               </Button>
+                              {isPatient && (
+                                <>
+                                  {savedInvoiceIds.has(invoice.id) && (
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      onClick={() => handleOpenSavedInvoicePdf(invoice)} 
+                                      data-testid="button-open-saved-invoice-pdf-patient-grid" 
+                                      title="Open Invoice PDF"
+                                      className="text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
+                                    >
+                                      <FileText className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    onClick={() => handleSaveInvoice(invoice.id.toString())} 
+                                    data-testid="button-save-invoice-patient-grid" 
+                                    title="Save Invoice"
+                                    className="text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                  >
+                                    <FileText className="h-4 w-4" />
+                                  </Button>
+                                </>
+                              )}
                               {savedInvoiceIds.has(invoice.id) && (
-                                <Button variant="outline" size="sm" onClick={() => handleDownloadInvoice(invoice.id.toString())} data-testid="button-download-invoice">
-                                  <Download className="h-4 w-4" />
-                                </Button>
+                                <>
+                                  {!isPatient && (
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      onClick={() => handleOpenSavedInvoicePdf(invoice)} 
+                                      data-testid="button-open-saved-invoice-pdf-grid" 
+                                      title="Open Saved PDF"
+                                      className="text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
+                                    >
+                                      <FileText className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                  <Button variant="outline" size="sm" onClick={() => handleDownloadInvoice(invoice.id.toString())} data-testid="button-download-invoice">
+                                    <Download className="h-4 w-4" />
+                                  </Button>
+                                </>
                               )}
                               {!isAdmin && invoice.status !== 'draft' && invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
                                 <Button 
@@ -6394,6 +7043,7 @@ export default function BillingPage() {
                                 <SelectItem value="draft">Draft</SelectItem>
                                 <SelectItem value="sent">Sent</SelectItem>
                                 <SelectItem value="paid">Paid</SelectItem>
+                                <SelectItem value="unpaid">Unpaid</SelectItem>
                                 <SelectItem value="overdue">Overdue</SelectItem>
                                 <SelectItem value="cancelled">Cancelled</SelectItem>
                               </SelectContent>
@@ -6612,6 +7262,16 @@ export default function BillingPage() {
                                       </Button>
                                       {savedInvoiceIds.has(invoice.id) && (
                                         <>
+                                          <Button 
+                                            variant="ghost" 
+                                            size="sm" 
+                                            onClick={() => handleOpenSavedInvoicePdf(invoice)} 
+                                            data-testid="button-open-saved-invoice-pdf-doctor-table" 
+                                            title="Open Saved PDF"
+                                            className="text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
+                                          >
+                                            <FileText className="h-4 w-4" />
+                                          </Button>
                                           <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoice(invoice.id.toString())} title="Download">
                                             <Download className="h-4 w-4" />
                                           </Button>
@@ -6747,6 +7407,16 @@ export default function BillingPage() {
                                 </Button>
                                 {savedInvoiceIds.has(invoice.id) && (
                                   <>
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      onClick={() => handleOpenSavedInvoicePdf(invoice)} 
+                                      data-testid="button-open-saved-invoice-pdf-doctor" 
+                                      title="Open Saved PDF"
+                                      className="text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
+                                    >
+                                      <FileText className="h-4 w-4" />
+                                    </Button>
                                     <Button variant="outline" size="sm" onClick={() => handleDownloadInvoice(invoice.id.toString())}>
                                       <Download className="h-4 w-4" />
                                     </Button>
@@ -7802,12 +8472,12 @@ export default function BillingPage() {
 
       {/* New Invoice Dialog */}
       <Dialog open={showNewInvoice} onOpenChange={setShowNewInvoice}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>Create New Invoice</DialogTitle>
           </DialogHeader>
           
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto flex-1 pr-2 min-h-0">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="patient">Patient</Label>
@@ -7815,7 +8485,12 @@ export default function BillingPage() {
                   <SelectTrigger>
                     <SelectValue placeholder={patientsLoading ? "Loading patients..." : "Select patient"} />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent 
+                    className="max-h-[180px] overflow-y-auto"
+                    position="popper"
+                    sideOffset={4}
+                    align="start"
+                  >
                     {patientsLoading ? (
                       <SelectItem value="loading" disabled>Loading...</SelectItem>
                     ) : patients && patients.length > 0 ? (
@@ -7856,14 +8531,16 @@ export default function BillingPage() {
             {/* Doctor Name Field */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="doctor-name">Doctor</Label>
+                <Label htmlFor="doctor-name">
+                  {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'Doctor'}
+                </Label>
                 {isDoctor ? (
                   <div className="h-10 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm">
-                    {user?.firstName} {user?.lastName}
+                    Hassan Mehmood
                   </div>
                 ) : (
                   <div className="h-10 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm">
-                    {user?.firstName} {user?.lastName}
+                    Hassan Mehmood
                   </div>
                 )}
               </div>
@@ -7899,7 +8576,12 @@ export default function BillingPage() {
                       <SelectTrigger>
                         <SelectValue placeholder="Select service type" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent 
+                        className="max-h-[180px] overflow-y-auto"
+                        position="popper"
+                        sideOffset={4}
+                        align="start"
+                      >
                         {Object.entries(SERVICE_TYPE_LABELS).map(([value, label]) => (
                           <SelectItem key={value} value={value}>
                             {label}
@@ -7909,7 +8591,20 @@ export default function BillingPage() {
                     </Select>
                   </div>
                   <div className="flex items-end justify-end">
-                    <Button size="sm" variant="outline" onClick={handleAddService}>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => {
+                        // Auto-select "other" service type when Add Service is clicked
+                        if (selectedServiceType !== "other") {
+                          setSelectedServiceType("other");
+                          setServiceSelectionError("");
+                        } else {
+                          // If already on "other", try to add the service
+                          handleAddService();
+                        }
+                      }}
+                    >
                       <Plus className="h-4 w-4 mr-2" />
                       Add Service
                     </Button>
@@ -7923,16 +8618,29 @@ export default function BillingPage() {
                       <SelectTrigger>
                         <SelectValue placeholder={patientAppointmentsLoading ? "Loading appointments..." : "Select appointment"} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent 
+                        className="max-h-[180px] overflow-y-auto overflow-x-hidden"
+                        position="popper"
+                        sideOffset={4}
+                        align="start"
+                        style={{ width: 'var(--radix-select-trigger-width)', maxWidth: 'var(--radix-select-trigger-width)' }}
+                      >
                         {patientAppointmentsLoading ? (
                           <SelectItem value="loading" disabled>Loading...</SelectItem>
                         ) : patientAppointments.length > 0 ? (
-                          patientAppointments.map((appointment: any) => (
-                            <SelectItem key={appointment.id} value={String(appointment.id)}>
-                              {appointment.appointmentId || `APT-${appointment.id}`} - {appointment.title || "Consultation"} (
-                              {format(new Date(appointment.scheduledAt || appointment.createdAt || Date.now()), "dd MMM yyyy")})
-                            </SelectItem>
-                          ))
+                          patientAppointments.map((appointment: any) => {
+                            const appointmentText = `${appointment.appointmentId || `APT-${appointment.id}`} - ${appointment.title || "Consultation"} (${format(new Date(appointment.scheduledAt || appointment.createdAt || Date.now()), "dd MMM yyyy")})`;
+                            return (
+                              <SelectItem 
+                                key={appointment.id} 
+                                value={String(appointment.id)}
+                                className="[&>*]:truncate [&>*]:block [&>*]:overflow-hidden [&>*]:text-ellipsis [&>*]:whitespace-nowrap max-w-full"
+                                title={appointmentText}
+                              >
+                                {appointmentText}
+                              </SelectItem>
+                            );
+                          })
                         ) : (
                           <SelectItem value="none" disabled>No appointments found</SelectItem>
                         )}
@@ -7948,15 +8656,29 @@ export default function BillingPage() {
                       <SelectTrigger>
                         <SelectValue placeholder={patientLabResultsLoading ? "Loading lab results..." : "Select lab result"} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent 
+                        className="max-h-[180px] overflow-y-auto overflow-x-hidden"
+                        position="popper"
+                        sideOffset={4}
+                        align="start"
+                        style={{ width: 'var(--radix-select-trigger-width)', maxWidth: 'var(--radix-select-trigger-width)' }}
+                      >
                         {patientLabResultsLoading ? (
                           <SelectItem value="loading" disabled>Loading...</SelectItem>
                         ) : patientLabResults.length > 0 ? (
-                          patientLabResults.map((result: any) => (
-                            <SelectItem key={result.id} value={String(result.id)}>
-                              {result.testId || `LR-${result.id}`} - {result.testName} ({result.status})
-                            </SelectItem>
-                          ))
+                          patientLabResults.map((result: any) => {
+                            const fullText = `${result.testId || `LR-${result.id}`} - ${result.testName} (${result.status})`;
+                            return (
+                              <SelectItem 
+                                key={result.id} 
+                                value={String(result.id)}
+                                className="[&>*]:truncate [&>*]:block [&>*]:overflow-hidden [&>*]:text-ellipsis [&>*]:whitespace-nowrap max-w-full"
+                                title={fullText}
+                              >
+                                {fullText}
+                              </SelectItem>
+                            );
+                          })
                         ) : (
                           <SelectItem value="none" disabled>No lab results found</SelectItem>
                         )}
@@ -7972,15 +8694,29 @@ export default function BillingPage() {
                       <SelectTrigger>
                         <SelectValue placeholder={patientImagingLoading ? "Loading imaging..." : "Select imaging study"} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent 
+                        className="max-h-[180px] overflow-y-auto overflow-x-hidden"
+                        position="popper"
+                        sideOffset={4}
+                        align="start"
+                        style={{ width: 'var(--radix-select-trigger-width)', maxWidth: 'var(--radix-select-trigger-width)' }}
+                      >
                         {patientImagingLoading ? (
                           <SelectItem value="loading" disabled>Loading...</SelectItem>
                         ) : patientImaging.length > 0 ? (
-                          patientImaging.map((study: any) => (
-                            <SelectItem key={study.id} value={String(study.id)}>
-                              {study.studyType || "Imaging"} - {study.imageId || `IMG-${study.id}`}
-                            </SelectItem>
-                          ))
+                          patientImaging.map((study: any) => {
+                            const imagingText = `${study.studyType || "Imaging"} - ${study.imageId || `IMG-${study.id}`}`;
+                            return (
+                              <SelectItem 
+                                key={study.id} 
+                                value={String(study.id)}
+                                className="[&>*]:truncate [&>*]:block [&>*]:overflow-hidden [&>*]:text-ellipsis [&>*]:whitespace-nowrap max-w-full"
+                                title={imagingText}
+                              >
+                                {imagingText}
+                              </SelectItem>
+                            );
+                          })
                         ) : (
                           <SelectItem value="none" disabled>No imaging records found</SelectItem>
                         )}
@@ -8033,7 +8769,7 @@ export default function BillingPage() {
 
                 <div>
                   {lineItems.length > 0 ? (
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto max-h-[300px] overflow-y-auto border rounded-md">
                       <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-800">
                           <tr>
@@ -8106,7 +8842,12 @@ export default function BillingPage() {
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent 
+                    className="max-h-[180px] overflow-y-auto"
+                    position="popper"
+                    sideOffset={4}
+                    align="start"
+                  >
                     <SelectItem value="Cash">Cash</SelectItem>
                     <SelectItem value="Online Payment">Online Payment</SelectItem>
                     <SelectItem value="Insurance">Insurance</SelectItem>
@@ -8181,7 +8922,12 @@ export default function BillingPage() {
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent 
+                      className="max-h-[180px] overflow-y-auto"
+                      position="popper"
+                      sideOffset={4}
+                      align="start"
+                    >
                       <SelectItem value="pending">Pending</SelectItem>
                       <SelectItem value="partial">Partial Paid</SelectItem>
                       <SelectItem value="paid">Paid</SelectItem>
@@ -8225,7 +8971,7 @@ export default function BillingPage() {
             </div>
           </div>
 
-          <DialogFooter className="flex gap-2">
+          <DialogFooter className="flex gap-2 flex-shrink-0 border-t pt-4 mt-4">
             <Button variant="outline" onClick={() => setShowNewInvoice(false)}>
               Cancel
             </Button>
@@ -8514,6 +9260,79 @@ export default function BillingPage() {
               Send Invoice
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* PDF Viewer Dialog */}
+      <Dialog 
+        open={showPdfViewer} 
+        onOpenChange={(open) => {
+          if (!open) {
+            // Clean up blob URL when closing
+            if (pdfViewerUrl && pdfViewerUrl.startsWith('blob:')) {
+              URL.revokeObjectURL(pdfViewerUrl);
+            }
+            setPdfViewerUrl(null);
+            setSelectedInvoiceForPdf(null);
+          }
+          setShowPdfViewer(open);
+        }}
+      >
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col p-0" onInteractOutside={(e) => e.preventDefault()}>
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <DialogTitle>
+              Invoice PDF: {selectedInvoiceForPdf?.invoiceNumber || selectedInvoiceForPdf?.id || 'Invoice'}.pdf
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-hidden px-6 pb-4" style={{ minHeight: '600px', height: 'calc(90vh - 120px)' }}>
+            {pdfLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                <span className="ml-2 text-sm text-gray-600">Loading PDF...</span>
+              </div>
+            ) : pdfViewerUrl ? (
+              <iframe 
+                src={pdfViewerUrl} 
+                className="w-full h-full border rounded" 
+                title="Invoice PDF" 
+                style={{ minHeight: '600px' }}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-sm text-gray-500">No PDF available</p>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 px-6 pb-6 pt-4 border-t">
+            <Button variant="outline" onClick={() => {
+              if (pdfViewerUrl && pdfViewerUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(pdfViewerUrl);
+              }
+              setShowPdfViewer(false);
+              setPdfViewerUrl(null);
+              setSelectedInvoiceForPdf(null);
+            }}>
+              Close
+            </Button>
+            {pdfViewerUrl && (
+              <>
+                <Button variant="outline" onClick={() => {
+                  const link = document.createElement('a');
+                  link.href = pdfViewerUrl;
+                  link.download = `invoice-${selectedInvoiceForPdf?.invoiceNumber || selectedInvoiceForPdf?.id || 'invoice'}.pdf`;
+                  link.click();
+                }}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  window.open(pdfViewerUrl, '_blank');
+                }}>
+                  Open in New Tab
+                </Button>
+              </>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 

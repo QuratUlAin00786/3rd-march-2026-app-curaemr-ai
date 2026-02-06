@@ -683,6 +683,12 @@ export default function MessagingPage() {
       console.log('🔥 DIRECT FETCH COMPLETED:', data.length, 'messages');
       console.log('🔥 MESSAGE IDS:', data.map((m: any) => m.id));
       setMessages(data);
+      
+      // Refresh conversations list to update unread counts after marking messages as read
+      // Use a small delay to ensure the backend has processed the read status
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/messaging/conversations'] });
+      }, 500);
     } catch (error) {
       console.error('Error fetching messages:', error);
       setMessages([]);
@@ -907,9 +913,23 @@ export default function MessagingPage() {
     },
     onError: (error: any) => {
       console.error('Message sending failed:', error);
+      // Extract a cleaner error message
+      let errorMessage = error.message || "Failed to send message. Please check your configuration and try again.";
+      
+      // Remove redundant "Failed to send SMS:" prefix if present
+      if (errorMessage.includes("Failed to send SMS:")) {
+        errorMessage = errorMessage.replace("Failed to send SMS:", "").trim();
+      }
+      if (errorMessage.includes("Failed to send WhatsApp:")) {
+        errorMessage = errorMessage.replace("Failed to send WhatsApp:", "").trim();
+      }
+      if (errorMessage.includes("Failed to send Voice:")) {
+        errorMessage = errorMessage.replace("Failed to send Voice:", "").trim();
+      }
+      
       toast({
         title: "Message Failed",
-        description: error.message || "Failed to send message. Please check your configuration and try again.",
+        description: errorMessage,
         variant: "destructive"
       });
     }
@@ -2793,9 +2813,9 @@ export default function MessagingPage() {
 
 
   return (
-    <div>
+    <div className="h-screen flex flex-col overflow-hidden">
       {/* Top row: Header + Theme Toggle */}
-      <div className="flex items-center justify-between mr-6 bg-white px-2 py-1 rounded">
+      <div className="flex items-center justify-between mr-6 bg-white px-2 py-1 rounded flex-shrink-0">
         <Header
           title="Messaging Center"
           subtitle="Secure communication with patients and staff"
@@ -2808,7 +2828,7 @@ export default function MessagingPage() {
       </div>
 
       {/* Healthcare Quick Actions */}
-      <div className="flex items-center gap-4 mb-4 px-6 flex-wrap">
+      <div className="flex items-center gap-4 mb-2 px-6 flex-wrap flex-shrink-0">
             <Button 
               variant="outline" 
               size="sm"
@@ -3292,6 +3312,9 @@ export default function MessagingPage() {
                         }}
                         className={validationErrors.phoneNumber ? "border-red-500" : ""}
                       />
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Sample: +44 7123 456789 (UK) or +1 555 123 4567 (US)
+                      </p>
                       {validationErrors.phoneNumber && (
                         <p className="text-sm text-red-500">{validationErrors.phoneNumber}</p>
                       )}
@@ -3337,19 +3360,19 @@ export default function MessagingPage() {
         </div>
 
       {/* Messaging Content */}
-      <div className="flex-1 overflow-auto p-6">
-      <Tabs defaultValue="conversations" className="w-full">
-        <TabsList className="w-full grid grid-cols-4">
+      <div className="flex-1 overflow-hidden h-[calc(100vh-180px)] p-[30px]">
+      <Tabs defaultValue="conversations" className="w-full h-full flex flex-col">
+        <TabsList className="w-full grid grid-cols-4 flex-shrink-0">
           <TabsTrigger value="conversations">Conversations</TabsTrigger>
           <TabsTrigger value="sms">SMS</TabsTrigger>
           <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
           <TabsTrigger value="templates">Announcement</TabsTrigger>
         </TabsList>
-        <TabsContent value="conversations" className="space-y-6">
-          <div className="grid grid-cols-12 gap-6 h-[700px]">
+        <TabsContent value="conversations" className="flex-1 overflow-hidden mt-4">
+          <div className="grid grid-cols-12 gap-4 h-full">
             {/* Conversations List */}
-            <div className="col-span-4 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg">
-              <div className="p-4 border-b border-gray-200 dark:border-slate-600">
+            <div className="col-span-4 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col overflow-hidden">
+              <div className="p-3 border-b border-gray-200 dark:border-slate-600 flex-shrink-0">
                 <div className="flex items-center gap-4 mb-4">
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 h-4 w-4" />
@@ -3375,121 +3398,124 @@ export default function MessagingPage() {
                 </Select>
               </div>
 
-              <ScrollArea className="h-[550px]">
-                <div className="p-2">
-                  {/* New Conversation Option */}
-                  {/* Show existing conversations first */}
-                  {filteredConversations && filteredConversations.length > 0 && (
-                    <div className="mb-4">
-                      <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 px-1">📩 Click conversation below to send messages:</h3>
-                      {filteredConversations.map((conversation: Conversation) => (
-                        <div
-                          key={conversation.id}
-                          className={`p-4 rounded-xl cursor-pointer mb-3 transition-all duration-200 border-2 shadow-sm ${
-                            selectedConversation === conversation.id
-                              ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800 shadow-md'
-                              : 'hover:bg-green-50 dark:hover:bg-green-900/30 border-green-300 dark:border-green-700 hover:border-green-500 dark:hover:border-green-500 bg-white dark:bg-slate-700 hover:shadow-md'
-                          }`}
-                          onClick={() => {
-                            console.log('🔥 CONVERSATION SELECTED:', conversation.id);
-                            console.log('🔥 Setting selectedConversation to:', conversation.id);
-                            setSelectedConversation(conversation.id);
-                          }}
-                        >
-                          <div className="flex items-start gap-4 relative">
-                            <div className="relative flex-shrink-0">
-                              <Avatar className="h-12 w-12 border-2 border-white dark:border-slate-600 shadow-sm">
-                                <AvatarFallback className="bg-green-500 text-white text-lg font-semibold">
-                                  {String(getOtherParticipant(conversation)?.name || 'U').charAt(0).toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
-                              {conversation.unreadCount > 0 && (
-                                <Badge variant="destructive" className="absolute -top-2 -right-2 text-xs min-w-[22px] h-6 flex items-center justify-center p-1 shadow-sm">
-                                  {conversation.unreadCount}
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between mb-2">
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-semibold text-base text-gray-900 dark:text-gray-100 truncate leading-tight">
-                                    {(() => {
-                                      const otherParticipant = getOtherParticipant(conversation);
-                                      if (otherParticipant?.name && otherParticipant.name !== 'undefined') {
-                                        return otherParticipant.name;
-                                      }
-                                      if (otherParticipant?.id && otherParticipant.id !== 'undefined') {
-                                        return `User ${otherParticipant.id}`;
-                                      }
-                                      return 'Unknown User';
-                                    })()}
-                                  </h4>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <Badge variant="secondary" className="text-xs px-2 py-1">
-                                      {getOtherParticipant(conversation)?.role || 'user'}
-                                    </Badge>
-                                    <span className="text-xs text-gray-400 dark:text-gray-500">
-                                      {conversation.lastMessage?.timestamp ? new Date(conversation.lastMessage.timestamp).toLocaleDateString() : ''}
-                                    </span>
-                                  </div>
-                                </div>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 w-8 p-0 ml-3 text-red-600 border-red-300 hover:text-white hover:bg-red-600 hover:border-red-600 dark:text-red-400 dark:border-red-600 dark:hover:bg-red-700 dark:hover:text-white flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (window.confirm(`Delete conversation with ${getOtherParticipant(conversation)?.name || 'Unknown User'}? This action cannot be undone.`)) {
-                                      handleDeleteConversation(conversation.id);
-                                    }
-                                  }}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                <ScrollArea className="flex-1 min-h-0">
+                  <div className="p-[30px]">
+                    {/* New Conversation Option */}
+                    {/* Show existing conversations first */}
+                    {filteredConversations && filteredConversations.length > 0 && (
+                      <div className="mb-4">
+                        <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 px-1">📩 Click conversation below to send messages:</h3>
+                        {filteredConversations.map((conversation: Conversation) => (
+                          <div
+                            key={conversation.id}
+                            className={`p-4 rounded-xl cursor-pointer mb-3 transition-all duration-200 border-2 shadow-sm ${
+                              selectedConversation === conversation.id
+                                ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800 shadow-md'
+                                : 'hover:bg-green-50 dark:hover:bg-green-900/30 border-green-300 dark:border-green-700 hover:border-green-500 dark:hover:border-green-500 bg-white dark:bg-slate-700 hover:shadow-md'
+                            }`}
+                            onClick={() => {
+                              console.log('🔥 CONVERSATION SELECTED:', conversation.id);
+                              console.log('🔥 Setting selectedConversation to:', conversation.id);
+                              setSelectedConversation(conversation.id);
+                            }}
+                          >
+                            <div className="flex items-start gap-4 relative">
+                              <div className="relative flex-shrink-0">
+                                <Avatar className="h-12 w-12 border-2 border-white dark:border-slate-600 shadow-sm">
+                                  <AvatarFallback className="bg-green-500 text-white text-lg font-semibold">
+                                    {String(getOtherParticipant(conversation)?.name || 'U').charAt(0).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                                {conversation.unreadCount > 0 && (
+                                  <Badge variant="destructive" className="absolute -top-2 -right-2 text-xs min-w-[22px] h-6 flex items-center justify-center p-1 shadow-sm">
+                                    {conversation.unreadCount}
+                                  </Badge>
+                                )}
                               </div>
-                              <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-2 leading-relaxed">
-                                {conversation.lastMessage?.content || "No messages yet"}
-                              </p>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="font-semibold text-base text-gray-900 dark:text-gray-100 truncate leading-tight">
+                                      {(() => {
+                                        const otherParticipant = getOtherParticipant(conversation);
+                                        if (otherParticipant?.name && otherParticipant.name !== 'undefined') {
+                                          return otherParticipant.name;
+                                        }
+                                        if (otherParticipant?.id && otherParticipant.id !== 'undefined') {
+                                          return `User ${otherParticipant.id}`;
+                                        }
+                                        return 'Unknown User';
+                                      })()}
+                                    </h4>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <Badge variant="secondary" className="text-xs px-2 py-1">
+                                        {getOtherParticipant(conversation)?.role || 'user'}
+                                      </Badge>
+                                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                                        {conversation.lastMessage?.timestamp ? new Date(conversation.lastMessage.timestamp).toLocaleDateString() : ''}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 ml-3 text-red-600 border-red-300 hover:text-white hover:bg-red-600 hover:border-red-600 dark:text-red-400 dark:border-red-600 dark:hover:bg-red-700 dark:hover:text-white flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (window.confirm(`Delete conversation with ${getOtherParticipant(conversation)?.name || 'Unknown User'}? This action cannot be undone.`)) {
+                                        handleDeleteConversation(conversation.id);
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                                <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-2 leading-relaxed">
+                                  {conversation.lastMessage?.content || "No messages yet"}
+                                </p>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )}
 
-                  <div className="mt-6 pt-4 border-t border-gray-200 dark:border-slate-600">
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 px-1">Or create new conversation:</p>
-                    <div
-                      className="p-2 rounded-lg cursor-pointer transition-colors border border-dashed border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-25 dark:hover:bg-slate-700"
-                      onClick={() => setShowNewMessage(true)}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="h-6 w-6 rounded-full bg-gray-100 dark:bg-slate-600 flex items-center justify-center">
-                          <Plus className="h-3 w-3 text-gray-500 dark:text-gray-400" />
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-600 dark:text-gray-300">New Message</p>
-                        </div>
+                    {(!filteredConversations || filteredConversations.length === 0) && (
+                      <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                        <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No existing conversations found</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+
+                {/* Fixed bottom section - excluded from scroll */}
+                <div className="p-[30px] pt-4 border-t border-gray-200 dark:border-slate-600 flex-shrink-0 bg-white dark:bg-slate-800">
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 px-1">Or create new conversation:</p>
+                  <div
+                    className="p-2 rounded-lg cursor-pointer transition-colors border border-dashed border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-25 dark:hover:bg-slate-700"
+                    onClick={() => setShowNewMessage(true)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="h-6 w-6 rounded-full bg-gray-100 dark:bg-slate-600 flex items-center justify-center">
+                        <Plus className="h-3 w-3 text-gray-500 dark:text-gray-400" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-600 dark:text-gray-300">New Message</p>
                       </div>
                     </div>
                   </div>
-
-                  {(!filteredConversations || filteredConversations.length === 0) && (
-                    <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                      <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>No existing conversations found</p>
-                    </div>
-                  )}
                 </div>
-              </ScrollArea>
+              </div>
             </div>
 
             {/* Message Thread */}
-            <div className="col-span-8 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col">
+            <div className="col-span-8 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col overflow-hidden">
               {selectedConversation ? (
                 <>
                   {/* Message Header */}
-                  <div className="p-4 border-b border-gray-200 dark:border-slate-600 flex items-center justify-between">
+                  <div className="p-3 border-b border-gray-200 dark:border-slate-600 flex items-center justify-between flex-shrink-0">
                     <div className="flex items-center gap-3">
                       <Avatar className="h-10 w-10">
                         <AvatarFallback>
@@ -3550,8 +3576,8 @@ export default function MessagingPage() {
                   </div>
 
                   {/* Messages */}
-                  <ScrollArea className="flex-1 p-4">
-                    <div className="space-y-4">
+                  <ScrollArea className="flex-1 overflow-y-auto">
+                    <div className="space-y-4 p-4">
                       {(() => {
                         console.log('🔥 RENDERING MESSAGES - Count:', messages.length);
                         console.log('🔥 RENDERING MESSAGES - Data:', JSON.stringify(messages, null, 2));
@@ -3583,14 +3609,49 @@ export default function MessagingPage() {
                                 <div className="bg-blue-50 dark:bg-slate-700 rounded-lg p-3 border border-blue-200">
                                   <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{message.content}</p>
                                   {message.attachments && message.attachments.length > 0 && (
-                                    <div className="mt-2 space-y-1">
-                                      {message.attachments.map((attachment) => (
-                                        <div key={attachment.id} className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                                          <Paperclip className="h-3 w-3" />
-                                          <span>{attachment.name}</span>
-                                          <span className="text-gray-500 dark:text-gray-400">({(attachment.size / 1024).toFixed(1)} KB)</span>
-                                        </div>
-                                      ))}
+                                    <div className="mt-2 space-y-2">
+                                      {message.attachments.map((attachment) => {
+                                        const isImage = attachment.type?.startsWith('image/') || 
+                                                       /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(attachment.name || '');
+                                        return (
+                                          <div key={attachment.id} className="space-y-1">
+                                            {isImage && attachment.url ? (
+                                              <div className="overflow-hidden rounded-md border border-gray-300 dark:border-slate-600 max-w-full">
+                                                <img 
+                                                  src={attachment.url} 
+                                                  alt={attachment.name || 'Attachment'} 
+                                                  className="max-w-full h-auto max-h-[400px] object-contain w-full block"
+                                                  style={{ 
+                                                    maxWidth: '100%', 
+                                                    width: '100%',
+                                                    height: 'auto',
+                                                    display: 'block',
+                                                    objectFit: 'contain'
+                                                  }}
+                                                  onError={(e) => {
+                                                    // Hide image and show fallback
+                                                    const target = e.target as HTMLImageElement;
+                                                    target.style.display = 'none';
+                                                  }}
+                                                />
+                                              </div>
+                                            ) : (
+                                              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                                                <Paperclip className="h-3 w-3" />
+                                                <a 
+                                                  href={attachment.url} 
+                                                  target="_blank" 
+                                                  rel="noopener noreferrer"
+                                                  className="hover:underline break-words"
+                                                >
+                                                  {attachment.name}
+                                                </a>
+                                                <span className="text-gray-500 dark:text-gray-400 whitespace-nowrap">({(attachment.size / 1024).toFixed(1)} KB)</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                 </div>
@@ -3710,7 +3771,7 @@ export default function MessagingPage() {
                   </ScrollArea>
 
                   {/* Message Composer */}
-                  <div className="p-4 border-t border-gray-200 dark:border-slate-600 bg-blue-50 dark:bg-slate-700">
+                  <div className="p-3 border-t border-gray-200 dark:border-slate-600 bg-blue-50 dark:bg-slate-700 flex-shrink-0">
                     <div className="text-sm font-medium text-blue-700 dark:text-blue-300 mb-2">
                       💬 Reply to this conversation
                     </div>

@@ -1578,7 +1578,10 @@ export default function ClinicalDecisionSupport() {
                               {labResult.doctorName}
                             </td>
                             <td className="p-3 text-sm">
-                              {format(new Date(labResult.testDate), 'MMM dd, yyyy')}
+                              {labResult.testDate ? (() => {
+                                const date = new Date(labResult.testDate);
+                                return isNaN(date.getTime()) ? 'Invalid Date' : format(date, 'MMM dd, yyyy');
+                              })() : 'N/A'}
                             </td>
                             <td className="p-3 text-sm">
                               {labResult.criticalValues ? (
@@ -1656,7 +1659,10 @@ export default function ClinicalDecisionSupport() {
                               <span className="font-medium">Doctor:</span> {selectedLabResult.doctorName}
                             </div>
                             <div className="col-span-2">
-                              <span className="font-medium">Test Date:</span> {format(new Date(selectedLabResult.testDate), 'MMM dd, yyyy')}
+                              <span className="font-medium">Test Date:</span> {selectedLabResult.testDate ? (() => {
+                                const date = new Date(selectedLabResult.testDate);
+                                return isNaN(date.getTime()) ? 'Invalid Date' : format(date, 'MMM dd, yyyy');
+                              })() : 'N/A'}
                             </div>
                           </div>
       <Dialog open={showCreateInsightSuccess} onOpenChange={setShowCreateInsightSuccess}>

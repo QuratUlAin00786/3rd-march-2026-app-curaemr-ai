@@ -718,6 +718,7 @@ export default function LabResultsPage() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signature, setSignature] = useState<string>("");
   const [signatureSaved, setSignatureSaved] = useState(false);
+  const [hideTabs, setHideTabs] = useState(true);
   const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
   const [showRequiredSignatureDialog, setShowRequiredSignatureDialog] = useState(false);
   const [pendingPdfSave, setPendingPdfSave] = useState<{ resultId: number } | null>(null);
@@ -2793,6 +2794,11 @@ Report generated from Cura EMR System`;
   }, [showESignDialog, selectedResult?.id]);
 
   const saveSignature = async () => {
+    // Hide tabs immediately when Apply Advanced E-Signature is clicked (for nurse/admin/doctor roles)
+    if (user?.role === 'nurse' || user?.role === 'admin' || user?.role === 'doctor') {
+      setHideTabs(true);
+    }
+
     if (!canvasRef.current || !selectedResult) return;
 
     const canvas = canvasRef.current;
@@ -3110,32 +3116,6 @@ Report generated from Cura EMR System`;
     }
   };
 
-  if (isLoading) {
-    return (
-      <>
-        <Header
-          title="Lab Results"
-          subtitle="View and manage laboratory test results"
-        />
-        <div className="flex-1 overflow-auto p-6">
-          <div className="space-y-6">
-            {[1, 2, 3].map((i) => (
-              <Card key={i}>
-                <CardContent className="p-6">
-                  <div className="animate-pulse space-y-4">
-                    <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-                    <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-                    <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </>
-    );
-  }
-
   // Check if any report is generated
   const hasGeneratedReport = filteredResults.some((result: any) => result.labReportGenerated === true);
 
@@ -3366,7 +3346,80 @@ Report generated from Cura EMR System`;
 
           {/* Lab Results List */}
           <div className="space-y-4">
-            {filteredResults.length === 0 ? (
+            {isLoading ? (
+              /* Loading State - Show skeleton for table */
+              viewMode === "list" ? (
+                <Card className="w-full max-w-full overflow-hidden">
+                  <CardContent className="p-0 w-full max-w-full">
+                    <div className="w-full max-w-full overflow-hidden">
+                      <table className="w-full" style={{ tableLayout: 'fixed', width: '100%' }}>
+                        <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                          <tr>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
+                              Test ID
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '10%' }}>
+                              Patient Name
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '12%' }}>
+                              Test Type
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                              Ordered
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
+                              Priority
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                              Sample
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                              Report
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
+                              Test Status
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                              Status
+                            </th>
+                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-gray-700">
+                          {[1, 2, 3, 4, 5].map((i) => (
+                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((j) => (
+                                <td key={j} className="px-2 py-2">
+                                  <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded animate-pulse"></div>
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                /* Loading State - Show skeleton for cards */
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[1, 2, 3, 4, 5, 6].map((i) => (
+                    <Card key={i} className="bg-white dark:bg-slate-800 border dark:border-slate-600">
+                      <CardContent className="p-6">
+                        <div className="animate-pulse space-y-4">
+                          <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-3/4"></div>
+                          <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/2"></div>
+                          <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-2/3"></div>
+                          <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/3"></div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )
+            ) : filteredResults.length === 0 ? (
               <Card>
                 <CardContent className="p-12 text-center">
                   <FileText className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
@@ -3424,7 +3477,7 @@ Report generated from Cura EMR System`;
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
                             signed?
                           </th>
-                          {activeTab !== "generated" && (
+                          {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
                           <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
                               Create/Invoice/Sign
                           </th>
@@ -3782,7 +3835,7 @@ Report generated from Cura EMR System`;
                                 )}
                               </div>
                             </td>
-                            {activeTab !== "generated" && (
+                            {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
                             <td className="px-2 py-2 text-xs">
                               <div className="flex items-center gap-1 justify-center">
                                 {(activeTab === "request" || activeTab === "generated") && user?.role !== 'patient' && (
@@ -3829,6 +3882,7 @@ Report generated from Cura EMR System`;
                                         size="sm"
                                         onClick={() => {
                                           setSelectedResult(result);
+                                          setHideTabs(true);
                                           setShowESignDialog(true);
                                         }}
                                         className="h-6 w-6 p-0"
@@ -4375,6 +4429,7 @@ Report generated from Cura EMR System`;
                               size="sm"
                               onClick={() => {
                                 setSelectedResult(result);
+                                setHideTabs(true);
                                 setShowESignDialog(true);
                               }}
                               className="text-xs sm:text-sm px-2 sm:px-3"
@@ -5276,7 +5331,7 @@ Report generated from Cura EMR System`;
 
       {/* Summary Dialog */}
       <Dialog open={showSummaryDialog} onOpenChange={setShowSummaryDialog}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-medical-blue">Order Summary</DialogTitle>
           </DialogHeader>
@@ -5338,6 +5393,79 @@ Report generated from Cura EMR System`;
                       return patient ? `${patient.firstName} ${patient.lastName}` : '';
                     })();
 
+                  // For nurses, create invoice with status "unpaid" instead of processing payment
+                  if (user?.role === 'nurse') {
+                    try {
+                      const patient = patients.find((p: any) => p.id === pendingOrderData?.patientId);
+                      const invoicePayload = {
+                        patientId: patient?.patientId || '',
+                        patientName: patientName,
+                        nhsNumber: patient?.nhsNumber || '',
+                        dateOfService: invoiceData.serviceDate,
+                        invoiceDate: invoiceData.invoiceDate,
+                        dueDate: invoiceData.dueDate,
+                        status: 'unpaid',
+                        invoiceType: 'payment',
+                        subtotal: invoiceData.totalAmount.toString(),
+                        tax: '0',
+                        discount: '0',
+                        totalAmount: invoiceData.totalAmount.toString(),
+                        paidAmount: '0',
+                        items: invoiceData.items.map((item: any) => {
+                          const unitPrice = parseFloat(item.unitPrice) || 0;
+                          const quantity = item.quantity || 1;
+                          return {
+                            code: item.code,
+                            description: item.description,
+                            quantity: quantity,
+                            unitPrice: unitPrice,
+                            total: unitPrice * quantity
+                          };
+                        }),
+                        insuranceProvider: invoiceData.insuranceProvider,
+                        notes: invoiceData.notes,
+                        paymentMethod: invoiceData.paymentMethod,
+                        serviceType: 'lab_result',
+                        serviceId: pendingOrderData?.testId
+                      };
+
+                      const response = await apiRequest("POST", "/api/invoices", invoicePayload);
+                      
+                      if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || "Failed to create invoice");
+                      }
+
+                      // Update Lab_Request_Generated to true
+                      if (pendingOrderData?.testId) {
+                        try {
+                          await apiRequest("PATCH", `/api/lab-results/${pendingOrderData.testId}`, {
+                            labRequestGenerated: true
+                          });
+                        } catch (error) {
+                          console.error("Failed to update Lab_Request_Generated:", error);
+                        }
+                      }
+
+                      toast({
+                        title: "Invoice Created",
+                        description: "Invoice created successfully with unpaid status.",
+                      });
+
+                      setShowSummaryDialog(false);
+                      queryClient.invalidateQueries({ queryKey: ["/api/lab-results"] });
+                      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+                    } catch (error) {
+                      console.error("Error creating invoice:", error);
+                      toast({
+                        title: "Creation Failed",
+                        description: error instanceof Error ? error.message : "Failed to create invoice. Please try again.",
+                        variant: "destructive",
+                      });
+                    }
+                    return;
+                  }
+
                   if (invoiceData.paymentMethod === 'cash') {
                     // Handle cash payment
                     createCashPaymentMutation.mutate({
@@ -5380,7 +5508,7 @@ Report generated from Cura EMR System`;
                         dateOfService: invoiceData.serviceDate,
                         invoiceDate: invoiceData.invoiceDate,
                         dueDate: invoiceData.dueDate,
-                        status: 'draft',
+                        status: user?.role === 'nurse' ? 'unpaid' : 'draft',
                         invoiceType: 'payment',
                         subtotal: invoiceData.totalAmount.toString(),
                         tax: '0',
@@ -5497,7 +5625,7 @@ Report generated from Cura EMR System`;
                 disabled={createCashPaymentMutation.isPending || createStripePaymentMutation.isPending}
                 className="flex-1 bg-medical-blue hover:bg-blue-700"
               >
-                {createCashPaymentMutation.isPending || createStripePaymentMutation.isPending ? "Processing..." : "Confirm & Pay"}
+                {createCashPaymentMutation.isPending || createStripePaymentMutation.isPending ? "Processing..." : "Confirm"}
               </Button>
             </div>
           </div>
@@ -8589,6 +8717,7 @@ Report generated from Cura EMR System`;
                 setShowRequiredSignatureDialog(false);
                 if (selectedResult) {
                   setPendingPdfSave({ resultId: selectedResult.id });
+                  setHideTabs(true);
                   setShowESignDialog(true);
                 }
               }}
@@ -8602,9 +8731,12 @@ Report generated from Cura EMR System`;
       {/* Advanced E-Signature Dialog */}
       <Dialog open={showESignDialog} onOpenChange={(open) => {
         setShowESignDialog(open);
-        if (!open && pendingPdfSave) {
-          // If dialog is closed without saving signature, clear pending save
-          setPendingPdfSave(null);
+        if (!open) {
+          if (pendingPdfSave) {
+            // If dialog is closed without saving signature, clear pending save
+            setPendingPdfSave(null);
+          }
+          setHideTabs(false); // Reset hideTabs when dialog closes
         }
       }}>
         <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
@@ -8616,12 +8748,14 @@ Report generated from Cura EMR System`;
           </DialogHeader>
 
           <Tabs defaultValue="signature" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="signature">Signature</TabsTrigger>
-              <TabsTrigger value="authentication">Authentication</TabsTrigger>
-              <TabsTrigger value="verification">Verification</TabsTrigger>
-              <TabsTrigger value="compliance">Compliance</TabsTrigger>
-            </TabsList>
+            {!hideTabs && (
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="signature">Signature</TabsTrigger>
+                <TabsTrigger value="authentication">Authentication</TabsTrigger>
+                <TabsTrigger value="verification">Verification</TabsTrigger>
+                <TabsTrigger value="compliance">Compliance</TabsTrigger>
+              </TabsList>
+            )}
 
             {/* Signature Tab */}
             <TabsContent value="signature" className="space-y-4">
@@ -8782,6 +8916,7 @@ Report generated from Cura EMR System`;
             </TabsContent>
 
             {/* Authentication Tab */}
+            {!hideTabs && (
             <TabsContent value="authentication" className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card>
@@ -8884,8 +9019,10 @@ Report generated from Cura EMR System`;
                 </Card>
               </div>
             </TabsContent>
+            )}
 
             {/* Verification Tab */}
+            {!hideTabs && (
             <TabsContent value="verification" className="space-y-4">
               <Card>
                 <CardHeader>
@@ -8965,8 +9102,10 @@ Report generated from Cura EMR System`;
                 </CardContent>
               </Card>
             </TabsContent>
+            )}
 
             {/* Compliance Tab */}
+            {!hideTabs && (
             <TabsContent value="compliance" className="space-y-4">
               <Card>
                 <CardHeader>
@@ -9097,6 +9236,7 @@ Report generated from Cura EMR System`;
                 </CardContent>
               </Card>
             </TabsContent>
+            )}
 
             {/* Footer Buttons */}
             <div className="flex justify-between pt-4 border-t">

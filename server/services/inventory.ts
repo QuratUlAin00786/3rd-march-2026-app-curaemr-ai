@@ -1674,6 +1674,24 @@ Cura Healthcare Team
    */
   async selectBatchesFEFO(itemId: number, organizationId: number, requiredQuantity: number) {
     const availableBatches = await this.getAvailableBatchesFEFO(itemId, organizationId);
+    
+    // Get item details to check currentStock and batchTracking
+    const [itemDetails] = await db
+      .select({
+        currentStock: inventoryItems.currentStock,
+        batchTracking: inventoryItems.batchTracking,
+        purchasePrice: inventoryItems.purchasePrice
+      })
+      .from(inventoryItems)
+      .where(and(
+        eq(inventoryItems.id, itemId),
+        eq(inventoryItems.organizationId, organizationId)
+      ));
+
+    if (!itemDetails) {
+      throw new Error(`Item ${itemId} not found`);
+    }
+
     const allocations: Array<{
       batchId: number;
       batchNumber: string | null;
@@ -1683,11 +1701,13 @@ Cura Healthcare Team
     }> = [];
     
     let remainingQty = requiredQuantity;
+    let totalAvailableFromBatches = 0;
     
     for (const batch of availableBatches) {
       if (remainingQty <= 0) break;
       
       const allocateQty = Math.min(remainingQty, batch.remainingQuantity);
+      totalAvailableFromBatches += batch.remainingQuantity;
       allocations.push({
         batchId: batch.id,
         batchNumber: batch.batchNumber,
@@ -1700,7 +1720,12 @@ Cura Healthcare Team
     }
     
     if (remainingQty > 0) {
-      throw new Error(`Insufficient stock. Available: ${requiredQuantity - remainingQty}, Requested: ${requiredQuantity}`);
+      // Calculate actual available stock (from batches or currentStock)
+      const actualAvailable = availableBatches.length > 0 
+        ? totalAvailableFromBatches 
+        : (itemDetails.currentStock || 0);
+      
+      throw new Error(`Insufficient stock available. Only ${actualAvailable} unit(s) available, but ${requiredQuantity} unit(s) requested.`);
     }
     
     return allocations;
@@ -1773,11 +1798,53 @@ Cura Healthcare Team
         }
 
         // Select batches using FEFO
-        const batchAllocations = await this.selectBatchesFEFO(
+        // First check if we have available batches
+        const availableBatches = await this.getAvailableBatchesFEFO(
           item.itemId, 
-          saleData.organizationId, 
-          item.quantity
+          saleData.organizationId
         );
+        
+        let batchAllocations;
+        // If no batches exist but item has sufficient stock, create a default batch within transaction
+        if (availableBatches.length === 0) {
+          // Check if we have sufficient currentStock to create a default batch
+          const currentStock = itemDetails.currentStock || 0;
+          if (currentStock >= item.quantity) {
+            const defaultBatchNumber = `DEFAULT-${item.itemId}-${Date.now()}`;
+            const [defaultBatch] = await tx
+              .insert(inventoryBatches)
+              .values({
+                organizationId: saleData.organizationId,
+                itemId: item.itemId,
+                batchNumber: defaultBatchNumber,
+                quantity: currentStock,
+                remainingQuantity: currentStock,
+                purchasePrice: itemDetails.purchasePrice || '0.00',
+                receivedDate: new Date(),
+                status: 'active',
+                isExpired: false
+              })
+              .returning();
+            
+            batchAllocations = [{
+              batchId: defaultBatch.id,
+              batchNumber: defaultBatch.batchNumber,
+              quantity: item.quantity,
+              expiryDate: null,
+              costPrice: itemDetails.purchasePrice || '0.00'
+            }];
+          } else {
+            // No batches and insufficient currentStock - throw error with actual stock
+            throw new Error(`Insufficient stock available. Only ${currentStock} unit(s) available, but ${item.quantity} unit(s) requested.`);
+          }
+        } else {
+          // We have batches, use FEFO selection
+          batchAllocations = await this.selectBatchesFEFO(
+            item.itemId, 
+            saleData.organizationId, 
+            item.quantity
+          );
+        }
 
         // Create sale item entries for each batch allocation
         for (const allocation of batchAllocations) {
@@ -2561,6 +2628,7 @@ Cura Healthcare Team
       const basicQuery = `
         SELECT id, organization_id as "organizationId", return_number as "returnNumber", 
                return_type as "returnType", return_date as "returnDate",
+               original_sale_id as "originalSaleId", original_invoice_number as "originalInvoiceNumber",
                total_amount as "totalAmount", total_amount as "netRefundAmount",
                settlement_type as "settlementType", return_reason as "returnReason",
                status, created_at as "createdAt"

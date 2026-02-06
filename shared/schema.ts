@@ -121,7 +121,7 @@ export const saasInvoices = pgTable("saas_invoices", {
   invoiceNumber: varchar("invoice_number", { length: 50 }).notNull().unique(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).notNull().default("GBP"),
-  status: varchar("status", { length: 20 }).notNull().default("draft"), // draft, sent, paid, overdue, cancelled
+  status: varchar("status", { length: 20 }).notNull().default("draft"), // draft, sent, paid, overdue, cancelled, unpaid
   issueDate: timestamp("issue_date").notNull(),
   dueDate: timestamp("due_date").notNull(),
   paidDate: timestamp("paid_date"),
@@ -497,7 +497,7 @@ export const invoices = pgTable("invoices", {
   dateOfService: timestamp("date_of_service").notNull(),
   invoiceDate: timestamp("invoice_date").notNull(),
   dueDate: timestamp("due_date").notNull(),
-  status: varchar("status", { length: 20 }).notNull().default("draft"), // draft, sent, paid, overdue, cancelled
+  status: varchar("status", { length: 20 }).notNull().default("draft"), // draft, sent, paid, overdue, cancelled, unpaid
   invoiceType: varchar("invoice_type", { length: 50 }).notNull().default("payment"), // payment, insurance_claim
   paymentMethod: varchar("payment_method", { length: 50 }), // cash, card, stripe, paypal
   insuranceProvider: varchar("insurance_provider", { length: 100 }), // NHS, Bupa, AXA, etc.

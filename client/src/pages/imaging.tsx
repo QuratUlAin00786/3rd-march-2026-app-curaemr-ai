@@ -392,6 +392,7 @@ export default function ImagingPage() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signature, setSignature] = useState<string>("");
   const [signatureSaved, setSignatureSaved] = useState(false);
+  const [hideTabs, setHideTabs] = useState(true);
   const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const [signaturePreview, setSignaturePreview] = useState<string | null>(null);
@@ -721,6 +722,17 @@ export default function ImagingPage() {
     };
     return mapped;
   }, [medicalImages, selectedStudyId]);
+
+  // Auto-populate role and user for nurse/doctor when upload dialog opens
+  useEffect(() => {
+    if (showUploadDialog && (user?.role === 'nurse' || user?.role === 'doctor')) {
+      setUploadFormData((prev) => ({
+        ...prev,
+        selectedRole: user.role,
+        selectedUserId: user.id?.toString() || "",
+      }));
+    }
+  }, [showUploadDialog, user?.role, user?.id]);
 
   // Check if report file exists on the server
   useEffect(() => {
@@ -1681,6 +1693,7 @@ export default function ImagingPage() {
 
     // If signature exists, allow editing/re-signing - open e-signature dialog directly
     setESignStudy(study);
+    setHideTabs(true);
     setShowESignDialog(true);
   };
 
@@ -2683,6 +2696,11 @@ export default function ImagingPage() {
   };
 
   const saveSignature = async () => {
+    // Hide tabs immediately when Apply Advanced E-Signature is clicked (for nurse/admin/doctor roles)
+    if (user?.role === 'nurse' || user?.role === 'admin' || user?.role === 'doctor') {
+      setHideTabs(true);
+    }
+
     if (!canvasRef.current || !eSignStudy || isSavingSignature) return;
 
     const canvas = canvasRef.current;
@@ -3022,27 +3040,6 @@ export default function ImagingPage() {
     }
   };
 
-  if (imagesLoading) {
-    return (
-      <div className="space-y-6">
-        {[1, 2, 3].map((i) => (
-          <Card
-            key={i}
-            className="bg-white dark:bg-slate-800 border dark:border-slate-600"
-          >
-            <CardContent className="p-6">
-              <div className="animate-pulse space-y-4">
-                <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/4"></div>
-                <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-3/4"></div>
-                <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/2"></div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
-  }
-
   return (
     <>
       <Header
@@ -3315,7 +3312,65 @@ export default function ImagingPage() {
 
           {/* Imaging Studies List */}
           <div className="space-y-4">
-            {viewMode === "list" ? (
+            {imagesLoading ? (
+              /* Loading State - Show skeleton for table */
+              <Card className="w-full max-w-full overflow-hidden">
+                <CardContent className="p-0 w-full max-w-full">
+                  <div className="w-full max-w-full overflow-hidden">
+                    <table className="w-full" style={{ tableLayout: 'fixed', width: '100%' }}>
+                      <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                        <tr>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                            Image ID
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '9%' }}>
+                            Patient Name
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '9%' }}>
+                            Provider Name
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
+                            Study Type
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
+                            Modality
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                            Body Part
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
+                            File Name
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
+                            Radiologist
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '5%' }}>
+                            Priority
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
+                            Status
+                          </th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-gray-700">
+                        {[1, 2, 3, 4, 5].map((i) => (
+                          <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((j) => (
+                              <td key={j} className="px-2 py-2">
+                                <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded animate-pulse"></div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : viewMode === "list" ? (
               filteredStudies.length > 0 && (
                 /* List View - Table Format */
                 <Card className="w-full max-w-full overflow-hidden">
@@ -3459,8 +3514,8 @@ export default function ImagingPage() {
                               </div>
                             </td>
                             <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
-                              {activeTab === "order-study" ? (
-                                // Order Study tab: no link, just display text
+                              {activeTab === "order-study" || activeTab === "generate-report" ? (
+                                // Order Study and Generate Report tabs: no link, just display text
                                 <div className="truncate" title={study.bodyPart || "N/A"}>
                                   {study.bodyPart || "N/A"}
                                 </div>
@@ -4158,6 +4213,22 @@ export default function ImagingPage() {
                 </CardContent>
               </Card>
               )
+            ) : imagesLoading ? (
+              /* Loading State - Show skeleton for cards */
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <Card key={i} className="bg-white dark:bg-slate-800 border dark:border-slate-600">
+                    <CardContent className="p-6">
+                      <div className="animate-pulse space-y-4">
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-3/4"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/2"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-2/3"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/3"></div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             ) : (
               filteredStudies.map((study: any) => (
               <Card
@@ -5143,7 +5214,7 @@ export default function ImagingPage() {
             )}
           </div>
 
-          {filteredStudies.length === 0 && (
+          {!imagesLoading && filteredStudies.length === 0 && (
             <div className="text-center py-12 text-gray-500 dark:text-gray-400">
               <FileImage className="h-12 w-12 mx-auto mb-4 text-gray-300 dark:text-gray-500" />
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
@@ -7018,133 +7089,151 @@ export default function ImagingPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                 <Label htmlFor="select-role">Select Role *</Label>
-                <Popover open={roleDropdownOpen} onOpenChange={setRoleDropdownOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={roleDropdownOpen}
-                      className="w-full justify-between"
-                    >
-                      {uploadFormData.selectedRole || "Select role..."}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-full p-0">
-                    <Command>
-                      <CommandInput placeholder="Search role..." />
-                      <CommandEmpty>No role found.</CommandEmpty>
-                      <CommandGroup>
-                        {[
-                          "aesthetician",
-                          "dentist",
-                          "dental_nurse",
-                          "doctor",
-                          "lab_technician",
-                          "nurse",
-                          "optician",
-                          "other",
-                          "paramedic",
-                          "pharmacist",
-                          "phlebotomist",
-                          "physiotherapist",
-                          "receptionist",
-                          "sample_taker"
-                        ].sort().map((role) => (
-                          <CommandItem
-                            key={role}
-                            value={role}
-                            onSelect={(currentValue) => {
-                              setUploadFormData({ 
-                                ...uploadFormData, 
-                                selectedRole: currentValue,
-                                selectedUserId: "" // Reset user when role changes
-                              });
-                              setRoleDropdownOpen(false);
-                            }}
-                          >
-                            <CheckIcon
-                              className={`mr-2 h-4 w-4 ${
-                                uploadFormData.selectedRole === role ? "opacity-100" : "opacity-0"
-                              }`}
-                            />
-                            {formatRoleLabel(role)}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                {(user?.role === 'nurse' || user?.role === 'doctor') ? (
+                  <div className="flex items-center gap-3 px-3 py-2 border rounded-md bg-gray-50 dark:bg-slate-700">
+                    <User className="h-4 w-4 text-blue-600" />
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {formatRoleLabel(user.role)}
+                    </span>
+                  </div>
+                ) : (
+                  <Popover open={roleDropdownOpen} onOpenChange={setRoleDropdownOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={roleDropdownOpen}
+                        className="w-full justify-between"
+                      >
+                        {uploadFormData.selectedRole || "Select role..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-full p-0">
+                      <Command>
+                        <CommandInput placeholder="Search role..." />
+                        <CommandEmpty>No role found.</CommandEmpty>
+                        <CommandGroup>
+                          {[
+                            "aesthetician",
+                            "dentist",
+                            "dental_nurse",
+                            "doctor",
+                            "lab_technician",
+                            "nurse",
+                            "optician",
+                            "other",
+                            "paramedic",
+                            "pharmacist",
+                            "phlebotomist",
+                            "physiotherapist",
+                            "receptionist",
+                            "sample_taker"
+                          ].sort().map((role) => (
+                            <CommandItem
+                              key={role}
+                              value={role}
+                              onSelect={(currentValue) => {
+                                setUploadFormData({ 
+                                  ...uploadFormData, 
+                                  selectedRole: currentValue,
+                                  selectedUserId: "" // Reset user when role changes
+                                });
+                                setRoleDropdownOpen(false);
+                              }}
+                            >
+                              <CheckIcon
+                                className={`mr-2 h-4 w-4 ${
+                                  uploadFormData.selectedRole === role ? "opacity-100" : "opacity-0"
+                                }`}
+                              />
+                              {formatRoleLabel(role)}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
                 </div>
 
                 <div>
                 <Label htmlFor="select-user">Name *</Label>
-                <Popover open={userDropdownOpen} onOpenChange={setUserDropdownOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={userDropdownOpen}
-                      className="w-full justify-between"
-                      disabled={!uploadFormData.selectedRole}
-                    >
-                      {uploadFormData.selectedUserId
-                        ? usersByRole.find(
-                            (u: any) => u.id.toString() === uploadFormData.selectedUserId
-                          )
-                          ? `${
-                              usersByRole.find(
-                                (u: any) => u.id.toString() === uploadFormData.selectedUserId
-                              )?.firstName
-                            } ${
-                              usersByRole.find(
-                                (u: any) => u.id.toString() === uploadFormData.selectedUserId
-                              )?.lastName
-                            }`
-                          : "Select user"
-                        : usersByRoleLoading
-                        ? "Loading users..."
-                        : "Select user"}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[400px] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Search users..." />
-                      <CommandEmpty>No user found.</CommandEmpty>
-                      <CommandGroup className="max-h-64 overflow-auto">
-                        {usersByRoleLoading ? (
-                          <CommandItem disabled>Loading users...</CommandItem>
-                        ) : usersByRole.length > 0 ? (
-                          usersByRole.map((userItem: any) => (
-                            <CommandItem
-                              key={userItem.id}
-                              value={`${userItem.firstName} ${userItem.lastName} ${userItem.email}`}
-                              onSelect={() => {
-                                setUploadFormData((prev) => ({
-                                  ...prev,
-                                  selectedUserId: userItem.id.toString(),
-                                }));
-                                setUserDropdownOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={`mr-2 h-4 w-4 ${
-                                  uploadFormData.selectedUserId === userItem.id.toString()
-                                    ? "opacity-100"
-                                    : "opacity-0"
-                                }`}
-                              />
-                              {userItem.firstName} {userItem.lastName} ({userItem.email})
-                            </CommandItem>
-                          ))
-                        ) : (
-                          <CommandItem disabled>No users found for this role</CommandItem>
-                        )}
-                      </CommandGroup>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                {(user?.role === 'nurse' || user?.role === 'doctor') ? (
+                  <div className="flex items-center gap-3 px-3 py-2 border rounded-md bg-gray-50 dark:bg-slate-700">
+                    <User className="h-4 w-4 text-blue-600" />
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {user.firstName} {user.lastName}
+                    </span>
+                  </div>
+                ) : (
+                  <Popover open={userDropdownOpen} onOpenChange={setUserDropdownOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={userDropdownOpen}
+                        className="w-full justify-between"
+                        disabled={!uploadFormData.selectedRole}
+                      >
+                        {uploadFormData.selectedUserId
+                          ? usersByRole.find(
+                              (u: any) => u.id.toString() === uploadFormData.selectedUserId
+                            )
+                            ? `${
+                                usersByRole.find(
+                                  (u: any) => u.id.toString() === uploadFormData.selectedUserId
+                                )?.firstName
+                              } ${
+                                usersByRole.find(
+                                  (u: any) => u.id.toString() === uploadFormData.selectedUserId
+                                )?.lastName
+                              }`
+                            : "Select user"
+                          : usersByRoleLoading
+                          ? "Loading users..."
+                          : "Select user"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[400px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search users..." />
+                        <CommandEmpty>No user found.</CommandEmpty>
+                        <CommandGroup className="max-h-64 overflow-auto">
+                          {usersByRoleLoading ? (
+                            <CommandItem disabled>Loading users...</CommandItem>
+                          ) : usersByRole.length > 0 ? (
+                            usersByRole.map((userItem: any) => (
+                              <CommandItem
+                                key={userItem.id}
+                                value={`${userItem.firstName} ${userItem.lastName} ${userItem.email}`}
+                                onSelect={() => {
+                                  setUploadFormData((prev) => ({
+                                    ...prev,
+                                    selectedUserId: userItem.id.toString(),
+                                  }));
+                                  setUserDropdownOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${
+                                    uploadFormData.selectedUserId === userItem.id.toString()
+                                      ? "opacity-100"
+                                      : "opacity-0"
+                                  }`}
+                                />
+                                {userItem.firstName} {userItem.lastName} ({userItem.email})
+                              </CommandItem>
+                            ))
+                          ) : (
+                            <CommandItem disabled>No users found for this role</CommandItem>
+                          )}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
                   </div>
                 </div>
 
@@ -8791,6 +8880,8 @@ export default function ImagingPage() {
             <Button
               onClick={() => {
                 setShowSignFirstDialog(false);
+                // Hide tabs before opening the advanced e-signature dialog
+                setHideTabs(true);
                 // Open the advanced e-signature dialog
                 if (pendingPrescriptionStudy) {
                   setESignStudy(pendingPrescriptionStudy);
@@ -8803,14 +8894,21 @@ export default function ImagingPage() {
               }}
               className="bg-medical-blue hover:bg-blue-700"
             >
-              OK
+              Ready to Sign
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
       {/* Advanced E-Signature Dialog */}
-      <Dialog open={showESignDialog} onOpenChange={setShowESignDialog}>
+      <Dialog open={showESignDialog} onOpenChange={(open) => {
+        setShowESignDialog(open);
+        if (open) {
+          setHideTabs(true); // Hide tabs when dialog opens
+        } else {
+          setHideTabs(false); // Reset hideTabs when dialog closes
+        }
+      }}>
         <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
@@ -8820,12 +8918,14 @@ export default function ImagingPage() {
           </DialogHeader>
 
           <Tabs defaultValue="signature" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="signature">Signature</TabsTrigger>
-              <TabsTrigger value="authentication">Authentication</TabsTrigger>
-              <TabsTrigger value="verification">Verification</TabsTrigger>
-              <TabsTrigger value="compliance">Compliance</TabsTrigger>
-            </TabsList>
+            {!hideTabs && (
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="signature">Signature</TabsTrigger>
+                <TabsTrigger value="authentication">Authentication</TabsTrigger>
+                <TabsTrigger value="verification">Verification</TabsTrigger>
+                <TabsTrigger value="compliance">Compliance</TabsTrigger>
+              </TabsList>
+            )}
 
             {/* Signature Tab */}
             <TabsContent value="signature" className="space-y-4">
@@ -9017,6 +9117,7 @@ export default function ImagingPage() {
             </TabsContent>
 
             {/* Authentication Tab */}
+            {!hideTabs && (
             <TabsContent value="authentication" className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card>
@@ -9080,8 +9181,10 @@ export default function ImagingPage() {
                 </Card>
               </div>
             </TabsContent>
+            )}
 
             {/* Verification Tab */}
+            {!hideTabs && (
             <TabsContent value="verification" className="space-y-4">
               <Card>
                 <CardHeader>
@@ -9094,8 +9197,10 @@ export default function ImagingPage() {
                 </CardContent>
               </Card>
             </TabsContent>
+            )}
 
             {/* Compliance Tab */}
+            {!hideTabs && (
             <TabsContent value="compliance" className="space-y-4">
               <Card>
                 <CardHeader>
@@ -9108,6 +9213,7 @@ export default function ImagingPage() {
                 </CardContent>
               </Card>
             </TabsContent>
+            )}
           </Tabs>
         </DialogContent>
       </Dialog>

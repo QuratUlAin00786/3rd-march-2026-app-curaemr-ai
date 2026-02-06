@@ -102,6 +102,8 @@ export default function QuickBooks() {
   const queryClient = useQueryClient();
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState<QuickBooksConnection | null>(null);
+  const [errorModalOpen, setErrorModalOpen] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string>("");
 
   // Listen for QuickBooks OAuth popup message
   useEffect(() => {
@@ -163,15 +165,34 @@ export default function QuickBooks() {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      const res = await fetch('/api/quickbooks/connection/active', {
-        credentials: 'include',
-        headers
-      });
-      if (!res.ok) {
-        if (res.status === 404) return null;
-        throw new Error(`${res.status}: ${await res.text()}`);
+      try {
+        const res = await fetch('/api/quickbooks/connection/active', {
+          credentials: 'include',
+          headers
+        });
+        if (!res.ok) {
+          if (res.status === 404) return null;
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await res.json();
+            throw new Error(errorData.error || errorData.message || 'QuickBooks connection issue please fix');
+          } else {
+            throw new Error('QuickBooks connection issue please fix');
+          }
+        }
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          return await res.json();
+        } else {
+          throw new Error('QuickBooks connection issue please fix');
+        }
+      } catch (error: any) {
+        // Handle JSON parsing errors
+        if (error.message && error.message.includes('JSON')) {
+          throw new Error('QuickBooks connection issue please fix');
+        }
+        throw error;
       }
-      return res.json();
     },
     retry: false,
     refetchInterval: 30000,
@@ -189,11 +210,18 @@ export default function QuickBooks() {
     
     if (activeConnectionError) {
       console.error('[QB DEBUG] Full error object:', activeConnectionError);
-      toast({
-        title: "Connection Error",
-        description: activeConnectionError?.message || "Failed to fetch QuickBooks connection",
-        variant: "destructive",
-      });
+      // Check if error message contains JSON parsing errors or technical details
+      let userFriendlyMessage = activeConnectionError?.message || "QuickBooks connection issue please fix";
+      
+      // Replace technical JSON parsing errors with user-friendly message
+      if (userFriendlyMessage.includes('JSON') || 
+          userFriendlyMessage.includes('<!DOCTYPE') || 
+          userFriendlyMessage.includes('Unexpected token')) {
+        userFriendlyMessage = "QuickBooks connection issue please fix";
+      }
+      
+      setErrorMessage(userFriendlyMessage);
+      setErrorModalOpen(true);
     }
   }, [activeConnection, activeConnectionLoading, activeConnectionError]);
 
@@ -255,34 +283,71 @@ export default function QuickBooks() {
   // Connect to QuickBooks mutation - opens popup window
   const connectMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest('GET', '/api/quickbooks/auth/url');
-      const response = await res.json();
-      console.log('[QB FRONTEND] Received OAuth URL response:', response);
-      if (response.url) {
-        console.log('[QB FRONTEND] Opening OAuth popup window:', response.url);
-        // Open popup window for OAuth - avoids CSP iframe blocking
-        const width = 600;
-        const height = 700;
-        const left = window.screenX + (window.outerWidth - width) / 2;
-        const top = window.screenY + (window.outerHeight - height) / 2;
-        window.open(
-          response.url,
-          'quickbooks-oauth',
-          `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
-        );
-      } else {
-        console.error('[QB FRONTEND] No URL in response!');
-        throw new Error('No OAuth URL received');
+      try {
+        const res = await apiRequest('GET', '/api/quickbooks/auth/url');
+        
+        // Check if response is ok before parsing JSON
+        if (!res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await res.json();
+            throw new Error(errorData.error || errorData.message || 'QuickBooks connection issue please fix');
+          } else {
+            throw new Error('QuickBooks connection issue please fix');
+          }
+        }
+        
+        let response;
+        try {
+          response = await res.json();
+        } catch (jsonError: any) {
+          // Handle JSON parsing errors
+          if (jsonError.message && jsonError.message.includes('JSON')) {
+            throw new Error('QuickBooks connection issue please fix');
+          }
+          throw jsonError;
+        }
+        
+        console.log('[QB FRONTEND] Received OAuth URL response:', response);
+        if (response.url) {
+          console.log('[QB FRONTEND] Opening OAuth popup window:', response.url);
+          // Open popup window for OAuth - avoids CSP iframe blocking
+          const width = 600;
+          const height = 700;
+          const left = window.screenX + (window.outerWidth - width) / 2;
+          const top = window.screenY + (window.outerHeight - height) / 2;
+          window.open(
+            response.url,
+            'quickbooks-oauth',
+            `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+          );
+        } else {
+          console.error('[QB FRONTEND] No URL in response!');
+          throw new Error('QuickBooks connection issue please fix');
+        }
+        return response;
+      } catch (error: any) {
+        // Handle JSON parsing errors
+        if (error.message && (error.message.includes('JSON') || error.message.includes('<!DOCTYPE') || error.message.includes('Unexpected token'))) {
+          throw new Error('QuickBooks connection issue please fix');
+        }
+        throw error;
       }
-      return response;
     },
     onError: (error: any) => {
       console.error('[QB FRONTEND] Error getting OAuth URL:', error);
-      toast({
-        title: "Connection Failed",
-        description: error.message || "Failed to initiate QuickBooks connection",
-        variant: "destructive",
-      });
+      // Check if error message contains JSON parsing errors or technical details
+      let userFriendlyMessage = error.message || "QuickBooks connection issue please fix";
+      
+      // Replace technical JSON parsing errors with user-friendly message
+      if (userFriendlyMessage.includes('JSON') || 
+          userFriendlyMessage.includes('<!DOCTYPE') || 
+          userFriendlyMessage.includes('Unexpected token')) {
+        userFriendlyMessage = "QuickBooks connection issue please fix";
+      }
+      
+      setErrorMessage(userFriendlyMessage);
+      setErrorModalOpen(true);
     },
   });
 
@@ -1157,6 +1222,26 @@ export default function QuickBooks() {
       </div>
 
       <SettingsDialog />
+
+      {/* Connection Error Modal */}
+      <Dialog open={errorModalOpen} onOpenChange={setErrorModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 dark:text-red-400 flex items-center gap-2">
+              <AlertCircle className="h-5 w-5" />
+              Connection Error
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-gray-700 dark:text-gray-300">{errorMessage}</p>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={() => setErrorModalOpen(false)} variant="destructive">
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

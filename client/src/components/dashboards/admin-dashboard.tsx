@@ -304,7 +304,7 @@ export function AdminDashboard() {
     {
       title: "Today's Appointments", 
       value: isLoading ? "--" : (stats?.todayAppointments?.toString() || "0"),
-      description: isLoading ? "Loading..." : `${stats?.todayAppointments || 0} scheduled today`,
+      description: isLoading ? "Loading..." : `${stats?.todayAppointments || 0} scheduled today${stats?.todayCancelledAppointments ? ` • ${stats.todayCancelledAppointments} cancelled today` : ''}`,
       icon: Calendar,
       href: `/${subdomain}/appointments`,
       color: "text-green-500"

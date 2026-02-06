@@ -2860,6 +2860,145 @@ The Cura EMR Team`,
   // Headers already set by earlier middleware at line 724
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
+  // Pricing routes with tenantMiddleware - MUST be before global authMiddleware to ensure tenantMiddleware runs first
+  app.get("/api/pricing/imaging", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+
+      // Fetch all active imaging pricing for this organization
+      const pricing = await db
+        .select()
+        .from(imagingPricing)
+        .where(
+          and(
+            eq(imagingPricing.organizationId, organizationId),
+            eq(imagingPricing.isActive, true)
+          )
+        )
+        .orderBy(imagingPricing.imagingType);
+
+      res.json(pricing);
+    } catch (error) {
+      console.error("Error fetching imaging pricing:", error);
+      res.status(500).json({ error: "Failed to fetch imaging pricing" });
+    }
+  });
+
+  // Check for duplicate imaging services
+  app.post("/api/pricing/imaging/check-duplicates", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const { imagingTypes } = req.body;
+      
+      if (!Array.isArray(imagingTypes) || imagingTypes.length === 0) {
+        return res.status(400).json({ error: "imagingTypes must be a non-empty array" });
+      }
+
+      const organizationId = req.tenant.id;
+
+      // Query for existing imaging types (case-insensitive)
+      const existingImaging = await db
+        .select({ imagingType: imagingPricing.imagingType })
+        .from(imagingPricing)
+        .where(
+          and(
+            eq(imagingPricing.organizationId, organizationId)
+          )
+        );
+
+      // Get existing imaging type names (case-insensitive)
+      const existingTypes = existingImaging.map(img => img.imagingType?.toLowerCase()).filter(Boolean);
+      
+      // Find duplicates (case-insensitive comparison)
+      const duplicates = imagingTypes.filter((type: string) => 
+        existingTypes.includes(type.toLowerCase())
+      );
+
+      res.json({ duplicates });
+    } catch (error) {
+      console.error("Error checking for duplicate imaging:", error);
+      res.status(500).json({ error: "Failed to check for duplicates" });
+    }
+  });
+
+  app.post("/api/pricing/imaging", tenantMiddleware, authMiddleware, requireRole(["admin", "doctor", "nurse", "receptionist", "pharmacist"]), async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant || !req.user) {
+        return res.status(401).json({ error: "Organization or user not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const userId = req.user.id;
+
+      // Validate required fields
+      if (!req.body.imagingType) {
+        return res.status(400).json({ error: "Imaging type is required" });
+      }
+
+      if (req.body.basePrice === undefined || req.body.basePrice === null) {
+        return res.status(400).json({ error: "Base price is required" });
+      }
+
+      // Convert basePrice to string if it's a number (decimal fields need strings)
+      const basePrice = typeof req.body.basePrice === 'number' 
+        ? req.body.basePrice.toFixed(2) 
+        : String(req.body.basePrice);
+
+      // Prepare imaging pricing data with proper type conversions
+      const pricingData: any = {
+        organizationId,
+        createdBy: userId,
+        imagingType: req.body.imagingType,
+        basePrice: basePrice,
+        isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+        currency: req.body.currency || "GBP",
+        version: req.body.version || 1
+      };
+
+      // Add optional fields only if provided
+      if (req.body.imagingCode) {
+        pricingData.imagingCode = req.body.imagingCode;
+      }
+      if (req.body.modality) {
+        pricingData.modality = req.body.modality;
+      }
+      if (req.body.bodyPart) {
+        pricingData.bodyPart = req.body.bodyPart;
+      }
+      if (req.body.category) {
+        pricingData.category = req.body.category;
+      }
+      if (req.body.notes) {
+        pricingData.notes = req.body.notes;
+      }
+
+      // Validate request body with schema
+      const validatedData = schema.insertImagingPricingSchema.parse(pricingData);
+
+      // Insert the imaging pricing
+      const [newPricing] = await db
+        .insert(imagingPricing)
+        .values(validatedData)
+        .returning();
+
+      console.log(`[IMAGING PRICING] Created imaging pricing ${newPricing.id} for organization ${organizationId}`);
+      res.status(201).json(newPricing);
+    } catch (error) {
+      console.error("Error creating imaging pricing:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create imaging pricing", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   // Prescription PDF endpoint - MUST be before global authMiddleware to ensure tenantMiddleware runs first
   app.get("/api/prescriptions/:prescriptionId/pdf", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
     try {
@@ -2901,13 +3040,54 @@ The Cura EMR Team`,
 
       // Verify user can access (must be the owner, patient who owns the prescription, or admin/doctor/nurse)
       const isOwner = req.user.id === prescription.prescriptionCreatedBy;
-      const patientId = typeof prescription.patientId === 'string' ? parseInt(prescription.patientId) : prescription.patientId;
-      const isPatientOwner = req.user.role === 'patient' && req.user.id === patientId;
       const isStaff = ['admin', 'doctor', 'nurse'].includes(req.user.role || '');
+      
+      // Check if patient user can access this prescription
+      let isPatientOwner = false;
+      if (req.user.role === 'patient') {
+        const prescriptionPatientId = typeof prescription.patientId === 'string' ? parseInt(prescription.patientId) : prescription.patientId;
+        console.log(`[VIEW-PRESCRIPTION-PDF] Checking patient access - user: ${req.user.id}, prescription patientId: ${prescriptionPatientId}`);
+        
+        if (!isNaN(prescriptionPatientId)) {
+          // First, try to get the patient record associated with the logged-in user
+          const userPatient = await storage.getPatientByUserId(req.user.id, organizationId);
+          
+          if (userPatient && userPatient.id === prescriptionPatientId) {
+            // User's patient record ID matches the prescription's patientId
+            isPatientOwner = true;
+            console.log(`[VIEW-PRESCRIPTION-PDF] Patient access granted - user's patient record ID (${userPatient.id}) matches prescription patientId (${prescriptionPatientId})`);
+          } else {
+            // Fallback: Get the prescription's patient record and check if userId matches or email matches
+            const prescriptionPatient = await storage.getPatient(prescriptionPatientId, organizationId);
+            
+            if (prescriptionPatient) {
+              // Check both userId and user_id fields
+              const patientUserId = (prescriptionPatient as any).userId || (prescriptionPatient as any).user_id;
+              console.log(`[VIEW-PRESCRIPTION-PDF] Prescription patient record found - patient.userId/user_id: ${patientUserId}, req.user.id: ${req.user.id}, patient.email: ${prescriptionPatient.email}, user.email: ${req.user.email}`);
+              
+              if (patientUserId === req.user.id) {
+                isPatientOwner = true;
+                console.log(`[VIEW-PRESCRIPTION-PDF] Patient access granted - patient.userId (${patientUserId}) matches req.user.id (${req.user.id})`);
+              } else {
+                // Check if patient email matches user email
+                const userEmail = req.user.email?.toLowerCase()?.trim();
+                const patientEmail = prescriptionPatient.email?.toLowerCase()?.trim();
+                if (userEmail && patientEmail && userEmail === patientEmail) {
+                  isPatientOwner = true;
+                  console.log(`[VIEW-PRESCRIPTION-PDF] Patient access granted via email match - user email: ${userEmail}, patient email: ${patientEmail}`);
+                }
+              }
+            } else {
+              console.error(`[VIEW-PRESCRIPTION-PDF] Patient record not found for patientId: ${prescriptionPatientId}, organizationId: ${organizationId}`);
+            }
+          }
+        }
+      }
+      
       const canAccess = isOwner || isPatientOwner || isStaff;
 
       if (!canAccess) {
-        console.error(`[VIEW-PRESCRIPTION-PDF] Access denied - user: ${req.user.id}, creator: ${prescription.prescriptionCreatedBy}, patientId: ${prescription.patientId}, role: ${req.user.role}`);
+        console.error(`[VIEW-PRESCRIPTION-PDF] Access denied - user: ${req.user.id}, creator: ${prescription.prescriptionCreatedBy}, patientId: ${prescription.patientId}, role: ${req.user.role}, isPatientOwner: ${isPatientOwner}`);
         return res.status(403).json({ error: "Access denied" });
       }
 
@@ -3068,7 +3248,7 @@ The Cura EMR Team`,
   });
 
   // Dashboard routes
-  app.get("/api/dashboard/stats", async (req: TenantRequest, res) => {
+  app.get("/api/dashboard/stats", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
     try {
       const stats = await storage.getDashboardStats(req.tenant!.id);
       res.json(stats);
@@ -5296,7 +5476,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   });
 
   // Real-time appointment updates via Server-Sent Events
-  app.get("/api/appointments/stream", authMiddleware, async (req: TenantRequest, res) => {
+  app.get("/api/appointments/stream", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
     console.log(`[SSE] New appointment stream connection for org ${req.tenant!.id}, user ${req.user!.id}`);
     
     // Set up SSE headers
@@ -5860,22 +6040,20 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   // Check for duplicate doctor fee
   app.get("/api/pricing/doctors-fees/check-duplicate", authMiddleware, async (req: TenantRequest, res) => {
     try {
-      const doctorRole = req.query.doctorRole as string;
-      const doctorId = parseInt(req.query.doctorId as string);
+      const serviceName = req.query.serviceName as string;
       
-      if (!doctorRole || isNaN(doctorId)) {
-        return res.status(400).json({ error: "Invalid parameters" });
+      if (!serviceName) {
+        return res.status(400).json({ error: "Service name is required" });
       }
 
-      // Query the doctors_fee table for this combination
+      // Query the doctors_fee table for existing service name (case-insensitive)
       const existingFees = await db
         .select()
         .from(schema.doctorsFee)
         .where(
           and(
             eq(schema.doctorsFee.organizationId, req.tenant!.id),
-            eq(schema.doctorsFee.doctorRole, doctorRole),
-            eq(schema.doctorsFee.doctorId, doctorId)
+            sql`LOWER(${schema.doctorsFee.serviceName}) = LOWER(${serviceName})`
           )
         )
         .limit(1);
@@ -5887,70 +6065,42 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     }
   });
 
+  // Check multiple service names for duplicates
+  app.post("/api/pricing/doctors-fees/check-duplicates", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const { serviceNames } = req.body;
+      
+      if (!Array.isArray(serviceNames) || serviceNames.length === 0) {
+        return res.status(400).json({ error: "Service names array is required" });
+      }
+
+      // Query the doctors_fee table for existing service names (case-insensitive)
+      // Use raw SQL query for case-insensitive comparison
+      const lowerServiceNames = serviceNames.map(name => name.toLowerCase());
+      const placeholders = lowerServiceNames.map((_, i) => `$${i + 2}`).join(', ');
+      const query = `
+        SELECT LOWER(service_name) as service_name
+        FROM doctors_fee
+        WHERE organization_id = $1
+        AND LOWER(service_name) IN (${placeholders})
+      `;
+      
+      const values = [req.tenant!.id, ...lowerServiceNames];
+      const result = await pool.query(query, values);
+
+      const existingNames = result.rows.map(row => row.service_name);
+      const duplicates = serviceNames.filter(name => 
+        existingNames.includes(name.toLowerCase())
+      );
+
+      res.json({ duplicates });
+    } catch (error) {
+      console.error("Error checking for duplicate doctor fees:", error);
+      res.status(500).json({ error: "Failed to check for duplicates" });
+    }
+  });
+
   // Get imaging pricing
-  app.get("/api/pricing/imaging", authMiddleware, async (req: TenantRequest, res) => {
-    try {
-      if (!req.tenant) {
-        return res.status(401).json({ error: "Organization not found" });
-      }
-
-      const organizationId = req.tenant.id;
-
-      // Fetch all active imaging pricing for this organization
-      const pricing = await db
-        .select()
-        .from(imagingPricing)
-        .where(
-          and(
-            eq(imagingPricing.organizationId, organizationId),
-            eq(imagingPricing.isActive, true)
-          )
-        )
-        .orderBy(imagingPricing.imagingType);
-
-      res.json(pricing);
-    } catch (error) {
-      console.error("Error fetching imaging pricing:", error);
-      res.status(500).json({ error: "Failed to fetch imaging pricing" });
-    }
-  });
-
-  // Create imaging pricing
-  app.post("/api/pricing/imaging", authMiddleware, async (req: TenantRequest, res) => {
-    try {
-      if (!req.tenant || !req.user) {
-        return res.status(401).json({ error: "Organization or user not found" });
-      }
-
-      const organizationId = req.tenant.id;
-      const userId = req.user.id;
-
-      // Validate request body
-      const pricingData = schema.insertImagingPricingSchema.parse({
-        ...req.body,
-        organizationId,
-        createdBy: userId,
-        isActive: req.body.isActive !== undefined ? req.body.isActive : true,
-        currency: req.body.currency || "GBP",
-        version: req.body.version || 1
-      });
-
-      // Insert the imaging pricing
-      const [newPricing] = await db
-        .insert(imagingPricing)
-        .values(pricingData)
-        .returning();
-
-      console.log(`[IMAGING PRICING] Created imaging pricing ${newPricing.id} for organization ${organizationId}`);
-      res.status(201).json(newPricing);
-    } catch (error) {
-      console.error("Error creating imaging pricing:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid request data", details: error.errors });
-      }
-      res.status(500).json({ error: "Failed to create imaging pricing", details: error instanceof Error ? error.message : String(error) });
-    }
-  });
 
   // Get doctors fees pricing
   app.get("/api/pricing/doctors-fees", authMiddleware, async (req: TenantRequest, res) => {
@@ -5981,7 +6131,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   });
 
   // Create doctors fee
-  app.post("/api/pricing/doctors-fees", authMiddleware, async (req: TenantRequest, res) => {
+  app.post("/api/pricing/doctors-fees", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
     try {
       if (!req.tenant || !req.user) {
         return res.status(401).json({ error: "Organization or user not found" });
@@ -5990,20 +6140,58 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const organizationId = req.tenant.id;
       const userId = req.user.id;
 
-      // Validate request body
-      const feeData = schema.insertDoctorsFeeSchema.parse({
-        ...req.body,
+      // Validate required fields
+      if (!req.body.serviceName) {
+        return res.status(400).json({ error: "Service name is required" });
+      }
+
+      if (req.body.basePrice === undefined || req.body.basePrice === null) {
+        return res.status(400).json({ error: "Base price is required" });
+      }
+
+      // Convert basePrice to string if it's a number (decimal fields need strings)
+      const basePrice = typeof req.body.basePrice === 'number' 
+        ? req.body.basePrice.toFixed(2) 
+        : String(req.body.basePrice);
+
+      // Prepare fee data with proper type conversions
+      const feeData: any = {
         organizationId,
         createdBy: userId,
+        serviceName: req.body.serviceName,
+        basePrice: basePrice,
         isActive: req.body.isActive !== undefined ? req.body.isActive : true,
         currency: req.body.currency || "GBP",
         version: req.body.version || 1
-      });
+      };
+
+      // Add optional fields only if they are provided
+      if (req.body.serviceCode !== undefined && req.body.serviceCode !== null && req.body.serviceCode !== '') {
+        feeData.serviceCode = req.body.serviceCode;
+      }
+      if (req.body.category !== undefined && req.body.category !== null && req.body.category !== '') {
+        feeData.category = req.body.category;
+      }
+      if (req.body.doctorId !== undefined && req.body.doctorId !== null) {
+        feeData.doctorId = req.body.doctorId;
+      }
+      if (req.body.doctorName !== undefined && req.body.doctorName !== null && req.body.doctorName !== '') {
+        feeData.doctorName = req.body.doctorName;
+      }
+      if (req.body.doctorRole !== undefined && req.body.doctorRole !== null && req.body.doctorRole !== '') {
+        feeData.doctorRole = req.body.doctorRole;
+      }
+      if (req.body.notes !== undefined && req.body.notes !== null && req.body.notes !== '') {
+        feeData.notes = req.body.notes;
+      }
+
+      // Validate request body with schema
+      const validatedData = schema.insertDoctorsFeeSchema.parse(feeData);
 
       // Insert the doctors fee
       const [newFee] = await db
         .insert(schema.doctorsFee)
-        .values(feeData)
+        .values(validatedData)
         .returning();
 
       console.log(`[DOCTORS FEES] Created doctors fee ${newFee.id} for organization ${organizationId}`);
@@ -6011,9 +6199,19 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("Error creating doctors fee:", error);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+        console.error("Validation errors:", JSON.stringify(error.errors, null, 2));
+        return res.status(400).json({ 
+          error: "Invalid request data", 
+          details: error.errors.map(err => ({
+            path: err.path.join('.'),
+            message: err.message
+          }))
+        });
       }
-      res.status(500).json({ error: "Failed to create doctors fee", details: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ 
+        error: "Failed to create doctors fee", 
+        details: error instanceof Error ? error.message : String(error) 
+      });
     }
   });
 
@@ -10799,9 +10997,22 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         
         // Ensure workflow fields are included (provide both camelCase and snake_case for compatibility)
         // IMPORTANT: Set workflow fields AFTER spread to ensure they're not overwritten
+        
+        // For nurse/doctor roles in Request Report tab, show invoice status instead of payment method
+        // If invoice exists, show its status (e.g., "unpaid", "paid", "draft")
+        // If no invoice exists, show "unpaid" status
+        let paymentMethodDisplay = null;
+        if (req.user?.role === 'nurse' || req.user?.role === 'doctor') {
+          // For nurse/doctor, show invoice status instead of payment method
+          paymentMethodDisplay = invoice?.status || 'unpaid';
+        } else {
+          // For other roles, show payment method as before
+          paymentMethodDisplay = invoice?.paymentMethod || null;
+        }
+        
         const result = {
           ...labResult,
-          paymentMethod: invoice?.paymentMethod || null,
+          paymentMethod: paymentMethodDisplay,
           insuranceProvider: invoice?.insuranceProvider || null,
           // Explicitly set both naming conventions with guaranteed boolean values
           // These come AFTER the spread to ensure they override any undefined values
@@ -13889,8 +14100,21 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         'Expires': '0'
       });
       
-      const messages = await storage.getMessages(req.params.conversationId, req.tenant!.id);
-      console.log(`🔍 API GET MESSAGES - Returning ${messages.length} messages for conversation ${req.params.conversationId}`);
+      const conversationId = req.params.conversationId;
+      const userId = req.user?.id;
+      
+      // Mark messages as read when user opens the conversation
+      if (userId) {
+        try {
+          await storage.markConversationMessagesAsRead(conversationId, userId, req.tenant!.id);
+        } catch (markReadError) {
+          console.error("Error marking messages as read:", markReadError);
+          // Continue even if marking as read fails
+        }
+      }
+      
+      const messages = await storage.getMessages(conversationId, req.tenant!.id);
+      console.log(`🔍 API GET MESSAGES - Returning ${messages.length} messages for conversation ${conversationId}`);
       res.json(messages);
     } catch (error) {
       console.error("Error fetching messages:", error);
@@ -26155,8 +26379,142 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         }
       }
       
-      console.log(`✅ Found ${invoices.length} invoices`);
-      res.json(invoices);
+      // Enrich invoices with provider/doctor information
+      const enrichedInvoices = await Promise.all(invoices.map(async (invoice: any) => {
+        // Get provider info from invoice items
+        let providerName = null;
+        let providerRole = null;
+        
+        if (invoice.items && invoice.items.length > 0) {
+          const firstItem = invoice.items[0];
+          if (firstItem?.serviceType && firstItem?.serviceId) {
+            try {
+              const serviceId = firstItem.serviceId;
+              const serviceIdNum = Number(serviceId);
+              const isNumericId = !isNaN(serviceIdNum);
+              
+              if (firstItem.serviceType === 'appointments') {
+                let appointment: any[] = [];
+                
+                // Try matching by numeric ID first
+                if (isNumericId) {
+                  appointment = await db
+                    .select({ providerId: schema.appointments.providerId })
+                    .from(schema.appointments)
+                    .where(eq(schema.appointments.id, serviceIdNum))
+                    .limit(1);
+                }
+                
+                // If not found, try matching by appointmentId string
+                if (appointment.length === 0 && typeof serviceId === 'string') {
+                  appointment = await db
+                    .select({ providerId: schema.appointments.providerId })
+                    .from(schema.appointments)
+                    .where(eq(schema.appointments.appointmentId, serviceId))
+                    .limit(1);
+                }
+                
+                if (appointment[0]?.providerId) {
+                  const provider = await db
+                    .select({ firstName: schema.users.firstName, lastName: schema.users.lastName, role: schema.users.role })
+                    .from(schema.users)
+                    .where(eq(schema.users.id, appointment[0].providerId))
+                    .limit(1);
+                  
+                  if (provider[0]) {
+                    providerName = `${provider[0].firstName} ${provider[0].lastName}`;
+                    providerRole = provider[0].role;
+                  }
+                }
+              } else if (firstItem.serviceType === 'labResults') {
+                let labResult: any[] = [];
+                
+                // Try matching by numeric ID first
+                if (isNumericId) {
+                  labResult = await db
+                    .select({ orderedBy: schema.labResults.orderedBy })
+                    .from(schema.labResults)
+                    .where(eq(schema.labResults.id, serviceIdNum))
+                    .limit(1);
+                }
+                
+                // If not found, try matching by testId string
+                if (labResult.length === 0 && typeof serviceId === 'string') {
+                  labResult = await db
+                    .select({ orderedBy: schema.labResults.orderedBy })
+                    .from(schema.labResults)
+                    .where(eq(schema.labResults.testId, serviceId))
+                    .limit(1);
+                }
+                
+                if (labResult[0]?.orderedBy) {
+                  const provider = await db
+                    .select({ firstName: schema.users.firstName, lastName: schema.users.lastName, role: schema.users.role })
+                    .from(schema.users)
+                    .where(eq(schema.users.id, labResult[0].orderedBy))
+                    .limit(1);
+                  
+                  if (provider[0]) {
+                    providerName = `${provider[0].firstName} ${provider[0].lastName}`;
+                    providerRole = provider[0].role;
+                  }
+                }
+              } else if (firstItem.serviceType === 'imaging') {
+                let imagingRecord: any[] = [];
+                
+                // Try matching by numeric ID first
+                if (isNumericId) {
+                  imagingRecord = await db
+                    .select({ uploadedBy: schema.medicalImages.uploadedBy, radiologist: schema.medicalImages.radiologist })
+                    .from(schema.medicalImages)
+                    .where(eq(schema.medicalImages.id, serviceIdNum))
+                    .limit(1);
+                }
+                
+                // If not found, try matching by imageId string
+                if (imagingRecord.length === 0 && typeof serviceId === 'string') {
+                  imagingRecord = await db
+                    .select({ uploadedBy: schema.medicalImages.uploadedBy, radiologist: schema.medicalImages.radiologist })
+                    .from(schema.medicalImages)
+                    .where(eq(schema.medicalImages.imageId, serviceId))
+                    .limit(1);
+                }
+                
+                if (imagingRecord[0]) {
+                  const providerId = imagingRecord[0].uploadedBy;
+                  if (providerId) {
+                    const provider = await db
+                      .select({ firstName: schema.users.firstName, lastName: schema.users.lastName, role: schema.users.role })
+                      .from(schema.users)
+                      .where(eq(schema.users.id, providerId))
+                      .limit(1);
+                    
+                    if (provider[0]) {
+                      providerName = `${provider[0].firstName} ${provider[0].lastName}`;
+                      providerRole = provider[0].role;
+                    }
+                  } else if (imagingRecord[0].radiologist) {
+                    // Use radiologist name if available
+                    providerName = imagingRecord[0].radiologist;
+                    providerRole = 'radiologist';
+                  }
+                }
+              }
+            } catch (error) {
+              console.error(`Error fetching provider info for invoice ${invoice.id}:`, error);
+            }
+          }
+        }
+        
+        return {
+          ...invoice,
+          providerName,
+          providerRole
+        };
+      }));
+      
+      console.log(`✅ Found ${enrichedInvoices.length} invoices`);
+      res.json(enrichedInvoices);
     } catch (error) {
       console.error("Invoices fetch error:", error);
       res.status(500).json({ error: "Failed to fetch invoices" });
@@ -27185,7 +27543,7 @@ Cura EMR Team
   });
 
   // Save invoice PDF to server
-  app.post("/api/billing/save-invoice-pdf", requireRole(["admin", "doctor", "nurse", "receptionist"]), async (req: TenantRequest, res) => {
+  app.post("/api/billing/save-invoice-pdf", requireRole(["admin", "doctor", "nurse", "receptionist", "patient"]), async (req: TenantRequest, res) => {
     try {
       const { invoiceNumber, patientId, pdfData } = req.body;
       
@@ -29370,13 +29728,32 @@ Cura EMR Team
       const blackColor = rgb(0, 0, 0);
       const greenColor = rgb(0, 0.6, 0);
       
+      // Helper function to draw a checkmark shape (WinAnsi-compatible alternative to ✓)
+      const drawCheckmark = (pageToDraw: typeof page, x: number, y: number, size: number = 8) => {
+        const checkmarkSize = size * 0.5;
+        const thickness = Math.max(1.2, size * 0.12);
+        // Draw checkmark: short vertical line, then diagonal line
+        pageToDraw.drawLine({
+          start: { x: x, y: y },
+          end: { x: x + checkmarkSize * 0.25, y: y - checkmarkSize * 0.4 },
+          thickness: thickness,
+          color: greenColor,
+        });
+        pageToDraw.drawLine({
+          start: { x: x + checkmarkSize * 0.25, y: y - checkmarkSize * 0.4 },
+          end: { x: x + checkmarkSize, y: y + checkmarkSize * 0.3 },
+          thickness: thickness,
+          color: greenColor,
+        });
+      };
+      
       // Helper function to add header to any page
-      const addHeaderToPage = async (pageToAddHeader: typeof page) => {
+      const addHeaderToPage = async (pageToAddHeader: typeof page, startY?: number) => {
         const headerHeight = 100;
         const logoX = 40;
         const logoWidth = 80;
         const logoHeight = 80;
-        let headerY = height - 40;
+        let headerY = startY !== undefined ? startY : height - 40;
         
         // Embed logo from clinic_headers if available
         if (clinicHeader?.logoBase64) {
@@ -29536,50 +29913,74 @@ Cura EMR Team
         }
       };
       
-      // Add header from database at the very top of the first page
-      await addHeaderToPage(page);
+      // Add prescription header section at the very top: CURA HEALTH EMR, Prescription #, and COMPLETED status
+      const headerTopY = height - 20;
+      const leftMargin = 40;
+      const rightMargin = width - 40;
       
-      // Position tracker (account for header height - header takes ~100 points)
-      let yPosition = height - 120;
-      
-      // Generate prescription ID
-      const prescriptionId = `RX-${medicalImage.imageId}ORDERORDER`;
-      const currentDateTime = formatDateTime(null); // Current date/time
-      
-      // Top header row: Date/Time (left), Prescription ID (center), ACTIVE (right)
-      page.drawText(currentDateTime, {
-        x: 40,
-        y: yPosition,
-        size: 10,
-        font,
-        color: blackColor
-      });
-      
-      // Prescription ID in center
-      const prescriptionIdWidth = boldFont.widthOfTextAtSize(prescriptionId, 10);
-      page.drawText(prescriptionId, {
-        x: width / 2 - prescriptionIdWidth / 2,
-        y: yPosition,
-        size: 10,
-        font: boldFont,
-        color: blackColor
-      });
-      
-      // ACTIVE status on right
-      const activeWidth = boldFont.widthOfTextAtSize('ACTIVE', 10);
-      page.drawText('ACTIVE', {
-        x: width - 40 - activeWidth,
-        y: yPosition,
-        size: 10,
-        font: boldFont,
-        color: greenColor
-      });
-      
-      yPosition -= 30;
-      
-      // Main title: CURA HEALTH EMR (centered)
-      const titleWidth = boldFont.widthOfTextAtSize('CURA HEALTH EMR', 18);
+      // CURA HEALTH EMR (top left, bold)
       page.drawText('CURA HEALTH EMR', {
+        x: leftMargin,
+        y: headerTopY,
+        size: 14,
+        font: boldFont,
+        color: blackColor
+      });
+      
+      // Generate prescription number from imageId (format: RX-{timestamp}-{random})
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substr(2, 4);
+      const prescriptionNumber = medicalImage.imageId 
+        ? `RX-${medicalImage.imageId.replace(/[^0-9]/g, '').substring(0, 13)}-${randomSuffix}`
+        : `RX-${timestamp}-${randomSuffix}`;
+      
+      // Prescription # below CURA HEALTH EMR
+      page.drawText(`Prescription #: ${prescriptionNumber}`, {
+        x: leftMargin,
+        y: headerTopY - 16,
+        size: 9,
+        font,
+        color: darkGray
+      });
+      
+      // COMPLETED status badge (top right, green background)
+      const statusText = 'COMPLETED';
+      const statusTextWidth = boldFont.widthOfTextAtSize(statusText, 10);
+      const statusBoxWidth = statusTextWidth + 12;
+      const statusBoxHeight = 18;
+      const statusX = rightMargin - statusBoxWidth;
+      const statusY = headerTopY - 2;
+      
+      // Draw green background rectangle
+      page.drawRectangle({
+        x: statusX,
+        y: statusY - statusBoxHeight,
+        width: statusBoxWidth,
+        height: statusBoxHeight,
+        color: greenColor,
+      });
+      
+      // Draw status text (white on green)
+      page.drawText(statusText, {
+        x: statusX + 6,
+        y: statusY - 13,
+        size: 10,
+        font: boldFont,
+        color: rgb(1, 1, 1) // White
+      });
+      
+      // Add header from database below the prescription header (start at height - 60 to leave space for prescription header)
+      await addHeaderToPage(page, height - 60);
+      
+      // Position tracker (account for prescription header ~40 points + clinic header ~100 points)
+      let yPosition = height - 160;
+      
+      // Add one line space after headers
+      yPosition -= 20;
+      
+      // Main title: RADIOLOGY / IMAGING ORDER (centered)
+      const titleWidth = boldFont.widthOfTextAtSize('RADIOLOGY / IMAGING ORDER', 18);
+      page.drawText('RADIOLOGY / IMAGING ORDER', {
         x: width / 2 - titleWidth / 2,
         y: yPosition,
         size: 18,
@@ -29587,147 +29988,27 @@ Cura EMR Team
         color: blackColor
       });
       
-      yPosition -= 25;
-      
-      // Prescription ID repeated below title (centered)
-      const prescriptionIdText = `Prescription #: ${prescriptionId}`;
-      const prescriptionIdWidth2 = font.widthOfTextAtSize(prescriptionIdText, 10);
-      page.drawText(prescriptionIdText, {
-        x: width / 2 - prescriptionIdWidth2 / 2,
-        y: yPosition,
-        size: 10,
-        font,
-        color: blackColor
-      });
-      
+      // Add one line space after title
       yPosition -= 50;
-      
-      // Header section with logo/icon on left and clinic details on right - centered on page
-      const headerStartY = yPosition;
-      let headerY = headerStartY;
-      
-      // Logo/Icon dimensions
-      const logoSize = 60; // Logo size in points
-      const logoSpacing = 15; // Space between logo and text
-      
-      // Calculate header content width (logo + spacing + text)
-      const headerContentWidth = logoSize + logoSpacing + 200; // Approximate text width
-      const headerStartX = width / 2 - headerContentWidth / 2; // Center the entire header block
-      
-      // Draw logo/icon on the left side if available
-      let logoX = headerStartX;
-      if (clinicHeader?.logoBase64) {
-        try {
-          // Remove data URL prefix if present
-          const base64Data = clinicHeader.logoBase64.includes(',') 
-            ? clinicHeader.logoBase64.split(',')[1] 
-            : clinicHeader.logoBase64;
-          const logoBuffer = Buffer.from(base64Data, 'base64');
-          
-          // Try to embed logo as PNG first, then JPEG
-          let logoImage;
-          try {
-            logoImage = await pdfDoc.embedPng(logoBuffer);
-          } catch {
-            try {
-              logoImage = await pdfDoc.embedJpg(logoBuffer);
-            } catch (error) {
-              console.error('Failed to embed logo:', error);
-            }
-          }
-          
-          if (logoImage) {
-            const logoDims = logoImage.scale(1);
-            const logoScale = Math.min(logoSize / logoDims.width, logoSize / logoDims.height);
-            const logoWidth = logoDims.width * logoScale;
-            const logoHeight = logoDims.height * logoScale;
-            
-            // Draw logo - adjust Y position to align with text
-            const logoY = headerY - logoHeight;
-            page.drawImage(logoImage, {
-              x: logoX,
-              y: logoY,
-              width: logoWidth,
-              height: logoHeight,
-            });
-          }
-        } catch (error) {
-          console.error('Error processing logo:', error);
-        }
-      }
-      
-      // Clinic details on the right side of logo
-      const clinicDetailsX = logoX + logoSize + logoSpacing;
-      let clinicDetailsY = headerY;
-      
-      const orgName = safeFormat(clinicHeader?.clinicName || organization?.name || organization?.brandName || 'CURA HEALTH EMR');
-      page.drawText(orgName, {
-        x: clinicDetailsX,
-        y: clinicDetailsY,
-        size: 12,
-        font: boldFont,
-        color: blackColor
-      });
-      clinicDetailsY -= 15;
-      
-      const orgAddress = safeFormat(clinicHeader?.address || '');
-      if (orgAddress !== 'N/A') {
-        page.drawText(orgAddress, {
-          x: clinicDetailsX,
-          y: clinicDetailsY,
-          size: 9,
-          font,
-          color: blackColor
-        });
-        clinicDetailsY -= 12;
-      }
-      
-      const orgPhone = safeFormat(clinicHeader?.phone || '');
-      if (orgPhone !== 'N/A') {
-        page.drawText(orgPhone, {
-          x: clinicDetailsX,
-          y: clinicDetailsY,
-          size: 9,
-          font,
-          color: blackColor
-        });
-        clinicDetailsY -= 12;
-      }
-      
-      const orgEmail = safeFormat(clinicHeader?.email || '');
-      if (orgEmail !== 'N/A') {
-        page.drawText(orgEmail, {
-          x: clinicDetailsX,
-          y: clinicDetailsY,
-          size: 9,
-          font,
-          color: blackColor
-        });
-        clinicDetailsY -= 12;
-      }
-      
-      const orgWebsite = safeFormat(clinicHeader?.website || '');
-      if (orgWebsite !== 'N/A') {
-        page.drawText(orgWebsite, {
-          x: clinicDetailsX,
-          y: clinicDetailsY,
-          size: 9,
-          font,
-          color: blackColor
-        });
-        clinicDetailsY -= 12;
-      }
-      
-      // Update yPosition to be below the header section
-      yPosition = Math.min(clinicDetailsY, headerY - logoSize) - 30;
       
       // Patient Information in two columns
       const leftColumnX = 40;
       const rightColumnX = width / 2 + 20;
       const sectionsStartY = yPosition;
       
+      // Add "Patient Details" heading before patient information
+      page.drawText('Patient Details', {
+        x: leftColumnX,
+        y: sectionsStartY,
+        size: 12,
+        font: boldFont,
+        color: blackColor
+      });
+      
+      yPosition = sectionsStartY - 20; // Add spacing after heading
+      
       // Left column: Name, Address, Gender, Weight
-      let leftY = sectionsStartY;
+      let leftY = yPosition;
       const patientName = safeFormat(`${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'N/A');
       page.drawText(`Name: ${patientName}`, { x: leftColumnX, y: leftY, size: 10, font });
       leftY -= 15;
@@ -29745,7 +30026,7 @@ Cura EMR Team
       page.drawText(`Weight: ${weightDisplay}`, { x: leftColumnX, y: leftY, size: 10, font });
       
       // Right column: DOB, Age, Sex, Date
-      let rightY = sectionsStartY;
+      let rightY = yPosition;
       const dob = formatDate(patient.dateOfBirth);
       page.drawText(`DOB: ${dob}`, { x: rightColumnX, y: rightY, size: 10, font });
       rightY -= 15;
@@ -29760,8 +30041,15 @@ Cura EMR Team
       page.drawText(`Sex: ${sex}`, { x: rightColumnX, y: rightY, size: 10, font });
       rightY -= 15;
       
+      // Date field (normal black text, no checkmark)
       const reportDate = formatDate(medicalImage.performedAt || medicalImage.scheduledAt || medicalImage.createdAt || new Date());
-      page.drawText(`Date: ${reportDate}`, { x: rightColumnX, y: rightY, size: 10, font });
+      page.drawText(`Date: ${reportDate}`, { 
+        x: rightColumnX, 
+        y: rightY, 
+        size: 10, 
+        font,
+        color: blackColor
+      });
       
       // Calculate the lowest point of the two columns
       const lowestY = Math.min(leftY, rightY);
@@ -29920,14 +30208,17 @@ Cura EMR Team
             
             yPosition -= signatureBoxHeight + 10; // Update position after signature box
             
-            // Add signature datetime after the signature box
+            // Add signature datetime after the signature box (green with checkmark - drawing checkmark shape for WinAnsi compatibility)
             const signatureDateTime = formatDateTime(medicalImage.signatureDate || new Date());
+            const checkmarkX = leftColumnX;
+            const checkmarkY = yPosition + 2; // Slightly adjust Y position for checkmark
+            drawCheckmark(page, checkmarkX, checkmarkY, 8);
             page.drawText(signatureDateTime, {
-              x: leftColumnX,
+              x: leftColumnX + 10, // Add space after checkmark
               y: yPosition,
               size: 8,
               font,
-              color: darkGray
+              color: greenColor
             });
             yPosition -= 15;
           } else {
@@ -30008,14 +30299,17 @@ Cura EMR Team
       }
       
       // Add header and footer to all pages if available
+      // Note: First page already has prescription header and clinic header added above
       const pageCount = pdfDoc.getPageCount();
-      for (let i = 0; i < pageCount; i++) {
+      for (let i = 1; i < pageCount; i++) {
         const currentPage = pdfDoc.getPage(i);
-        // Add header to each page
+        // Add header to additional pages (starting at default position)
         await addHeaderToPage(currentPage);
         // Add footer to each page
         addFooterToPage(currentPage);
       }
+      // Add footer to first page
+      addFooterToPage(page);
       
       // Save PDF
       const fileName = `PRESCRIPTION_${medicalImage.imageId}_${Date.now()}.pdf`;

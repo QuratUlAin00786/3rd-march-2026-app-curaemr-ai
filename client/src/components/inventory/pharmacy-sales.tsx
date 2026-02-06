@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -15,6 +15,8 @@ import {
   User,
   Phone,
   FileText,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
 import { FeedbackModal } from "@/components/ui/feedback-modal";
 import {
@@ -49,11 +51,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 interface InventoryItem {
   id: number;
@@ -125,6 +130,28 @@ interface SaleDetails extends Sale {
   payments?: SalePayment[];
 }
 
+interface Prescription {
+  id: string;
+  patientId: string;
+  patientName: string;
+  providerId: string;
+  providerName: string;
+  prescriptionNumber?: string;
+  medications: Array<{
+    name: string;
+    dosage: string;
+    frequency: string;
+    duration: string;
+    quantity: number;
+    refills: number;
+    instructions: string;
+    genericAllowed: boolean;
+  }>;
+  diagnosis: string;
+  status: "active" | "completed" | "cancelled" | "pending" | "signed";
+  prescribedAt: string;
+}
+
 interface SaleCreatePayload {
   saleType: 'walk_in' | 'prescription';
   customerName?: string;
@@ -161,10 +188,12 @@ export default function PharmacySales() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [openItemCombobox, setOpenItemCombobox] = useState(false);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [notes, setNotes] = useState('');
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [discountAmount, setDiscountAmount] = useState(0);
+  const [selectedPrescriptionId, setSelectedPrescriptionId] = useState<string | null>(null);
   
   const [feedbackModal, setFeedbackModal] = useState<{
     isOpen: boolean;
@@ -195,6 +224,26 @@ export default function PharmacySales() {
     queryKey: ['/api/inventory/sales'],
   });
 
+  // Fetch prescriptions when sale type is prescription
+  const { data: prescriptions = [] } = useQuery<Prescription[]>({
+    queryKey: ['/api/prescriptions'],
+    enabled: saleType === 'prescription' && showPOSDialog,
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/prescriptions');
+      return response.json();
+    },
+  });
+
+  // Get selected prescription from the list
+  const selectedPrescription = prescriptions.find(p => p.id === selectedPrescriptionId);
+
+  // Auto-fill customer name when prescription is selected
+  useEffect(() => {
+    if (selectedPrescription && saleType === 'prescription') {
+      setCustomerName(selectedPrescription.patientName);
+    }
+  }, [selectedPrescription, saleType]);
+
   const { data: saleDetails } = useQuery<SaleDetails>({
     queryKey: ['/api/inventory/sales', selectedSale?.id],
     enabled: !!selectedSale?.id,
@@ -215,6 +264,15 @@ export default function PharmacySales() {
       return;
     }
     setSaleType(newType);
+    // Reset prescription selection when changing sale type
+    if (newType === 'walk_in') {
+      setSelectedPrescriptionId(null);
+      setCustomerName('');
+    }
+  };
+
+  const handlePrescriptionSelect = (prescriptionId: string) => {
+    setSelectedPrescriptionId(prescriptionId);
   };
 
   const createSaleMutation = useMutation({
@@ -234,12 +292,78 @@ export default function PharmacySales() {
         data?.saleNumber ? `Sale #${data.saleNumber}` : undefined
       );
     },
-    onError: (error: Error) => {
+    onError: (error: any) => {
+      let errorMessage = "There was an error processing your sale.";
+      let errorDetails = error.message || "Unknown error";
+      
+      // Parse error message for user-friendly display
+      try {
+        // Check if error message contains JSON
+        if (error.message && error.message.includes('{')) {
+          const jsonMatch = error.message.match(/\{.*\}/);
+          if (jsonMatch) {
+            const errorData = JSON.parse(jsonMatch[0]);
+            if (errorData.error) {
+              errorDetails = errorData.error;
+              
+              // Handle "Insufficient stock" error with user-friendly message
+              if (errorData.error.includes("Insufficient stock")) {
+                // Try to parse new format: "Only X unit(s) available, but Y unit(s) requested."
+                let stockMatch = errorData.error.match(/Only (\d+) unit\(s\) available, but (\d+) unit\(s\) requested/);
+                // Fallback to old format: "Available: X, Requested: Y"
+                if (!stockMatch) {
+                  stockMatch = errorData.error.match(/Available: (\d+), Requested: (\d+)/);
+                }
+                if (stockMatch) {
+                  const available = stockMatch[1];
+                  const requested = stockMatch[2];
+                  errorMessage = `Insufficient stock available. Only ${available} unit(s) available, but ${requested} unit(s) requested.`;
+                  errorDetails = `Please reduce the quantity or select a different item.`;
+                } else {
+                  // Use the error message as-is if it already contains the formatted message
+                  if (errorData.error.includes("Only") && errorData.error.includes("unit(s) available")) {
+                    errorMessage = errorData.error;
+                    errorDetails = `Please reduce the quantity or select a different item.`;
+                  } else {
+                    errorMessage = "Insufficient stock available for one or more items in your cart.";
+                    errorDetails = "Please check the stock levels and adjust quantities accordingly.";
+                  }
+                }
+              } else {
+                errorMessage = errorData.error;
+              }
+            }
+          }
+        } else if (error.message && error.message.includes("Insufficient stock")) {
+          // Try to parse the error message directly
+          let stockMatch = error.message.match(/Only (\d+) unit\(s\) available, but (\d+) unit\(s\) requested/);
+          if (!stockMatch) {
+            stockMatch = error.message.match(/Available: (\d+), Requested: (\d+)/);
+          }
+          if (stockMatch) {
+            const available = stockMatch[1];
+            const requested = stockMatch[2];
+            errorMessage = `Insufficient stock available. Only ${available} unit(s) available, but ${requested} unit(s) requested.`;
+            errorDetails = `Please reduce the quantity or select a different item.`;
+          } else if (error.message.includes("Only") && error.message.includes("unit(s) available")) {
+            // Use the error message as-is if it's already formatted
+            errorMessage = error.message;
+            errorDetails = `Please reduce the quantity or select a different item.`;
+          } else {
+            errorMessage = "Insufficient stock available for one or more items in your cart.";
+            errorDetails = "Please check the stock levels and adjust quantities accordingly.";
+          }
+        }
+      } catch (parseError) {
+        // If parsing fails, use the original error message
+        console.error("Error parsing error message:", parseError);
+      }
+      
       showFeedback(
         "error",
         "Sale Failed",
-        "There was an error processing your sale.",
-        error.message
+        errorMessage,
+        errorDetails
       );
     },
   });
@@ -275,15 +399,19 @@ export default function PharmacySales() {
     setCustomerName('');
     setCustomerPhone('');
     setSearchQuery('');
+    setOpenItemCombobox(false);
     setPayments([]);
     setNotes('');
     setDiscountType('percentage');
     setDiscountAmount(0);
+    setSelectedPrescriptionId(null);
   };
 
+  // Filter items - show all items with stock > 0, optionally filtered by search query
   const filteredItems = items.filter(item =>
     item.currentStock > 0 &&
-    (item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (!searchQuery || 
+     item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
      item.sku.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
@@ -377,6 +505,7 @@ export default function PharmacySales() {
       saleType,
       customerName: customerName || undefined,
       customerPhone: customerPhone || undefined,
+      prescriptionId: selectedPrescriptionId ? parseInt(selectedPrescriptionId) : undefined,
       items: cart.map(c => ({
         itemId: c.itemId,
         quantity: c.quantity,
@@ -521,6 +650,47 @@ export default function PharmacySales() {
                 </div>
               </div>
 
+              {saleType === 'prescription' && (
+                <div>
+                  <Label>Select Prescription</Label>
+                  <Select
+                    value={selectedPrescriptionId || ''}
+                    onValueChange={handlePrescriptionSelect}
+                  >
+                    <SelectTrigger data-testid="select-prescription">
+                      <SelectValue placeholder="Select a prescription" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {prescriptions
+                        .filter(p => p.status === 'active' || p.status === 'signed')
+                        .map((prescription) => (
+                          <SelectItem key={prescription.id} value={prescription.id}>
+                            {prescription.prescriptionNumber || `RX-${prescription.id}`} - {prescription.patientName}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedPrescription && (
+                    <div className="mt-3 p-3 bg-muted rounded-md">
+                      <div className="text-sm font-medium mb-2">Prescription Details</div>
+                      <div className="text-xs space-y-1">
+                        <div><strong>Patient:</strong> {selectedPrescription.patientName}</div>
+                        <div><strong>Provider:</strong> {selectedPrescription.providerName}</div>
+                        <div><strong>Diagnosis:</strong> {selectedPrescription.diagnosis || 'N/A'}</div>
+                        <div><strong>Medications:</strong></div>
+                        <ul className="ml-4 list-disc">
+                          {selectedPrescription.medications.map((med, idx) => (
+                            <li key={idx}>
+                              {med.name} - {med.dosage} ({med.frequency}) - Qty: {med.quantity}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="flex items-center gap-1">
@@ -530,7 +700,8 @@ export default function PharmacySales() {
                   <Input
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="Optional"
+                    placeholder={saleType === 'prescription' ? "Auto-filled from prescription" : "Optional"}
+                    disabled={saleType === 'prescription' && !!selectedPrescription}
                     data-testid="input-customer-name"
                   />
                 </div>
@@ -550,40 +721,63 @@ export default function PharmacySales() {
 
               <div>
                 <Label>Search Items</Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-                  <Input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search by name or SKU..."
-                    className="pl-10"
-                    data-testid="input-search-items"
-                  />
-                </div>
-                {searchQuery && (
-                  <div className="mt-2 border rounded-md max-h-48 overflow-y-auto">
-                    {filteredItems.length === 0 ? (
-                      <div className="p-3 text-muted-foreground text-center">No items found</div>
-                    ) : (
-                      filteredItems.slice(0, 10).map((item) => (
-                        <div
-                          key={item.id}
-                          className="p-3 hover-elevate cursor-pointer border-b last:border-b-0 flex justify-between items-center"
-                          onClick={() => addToCart(item)}
-                          data-testid={`item-search-result-${item.id}`}
-                        >
-                          <div>
-                            <div className="font-medium">{item.name}</div>
-                            <div className="text-sm text-muted-foreground">
-                              SKU: {item.sku} | Stock: {item.currentStock}
-                            </div>
-                          </div>
-                          <div className="font-medium">${parseFloat(item.salePrice).toFixed(2)}</div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
+                <Popover open={openItemCombobox} onOpenChange={setOpenItemCombobox}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={openItemCombobox}
+                      className="w-full justify-between"
+                      data-testid="button-select-item"
+                    >
+                      <span className="text-muted-foreground">
+                        {searchQuery ? `Searching: ${searchQuery}` : "Select or search items..."}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command>
+                      <CommandInput 
+                        placeholder="Search by name or SKU..." 
+                        value={searchQuery}
+                        onValueChange={setSearchQuery}
+                      />
+                      <CommandList>
+                        <CommandEmpty>No items found.</CommandEmpty>
+                        <CommandGroup>
+                          {filteredItems.map((item) => (
+                            <CommandItem
+                              key={item.id}
+                              value={`${item.name} ${item.sku}`}
+                              onSelect={() => {
+                                addToCart(item);
+                                setSearchQuery('');
+                                setOpenItemCombobox(false);
+                              }}
+                              className="cursor-pointer"
+                              data-testid={`item-search-result-${item.id}`}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  cart.some(c => c.itemId === item.id) ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              <div className="flex-1">
+                                <div className="font-medium">{item.name}</div>
+                                <div className="text-sm text-muted-foreground">
+                                  SKU: {item.sku} | Stock: {item.currentStock}
+                                </div>
+                              </div>
+                              <div className="font-medium ml-2">${parseFloat(item.salePrice).toFixed(2)}</div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div>

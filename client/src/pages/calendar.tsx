@@ -5408,6 +5408,25 @@ const getAppointmentTypeLabel = (appointment: any): string => {
 
                         // Create invoice data
                         const amount = parseFloat(invoiceForm.amount);
+                        const isCashPayment = invoiceForm.paymentMethod === "Cash";
+                        const isStripePayment = invoiceForm.paymentMethod === "Online Payment" || 
+                                                 invoiceForm.paymentMethod?.toLowerCase().includes("stripe");
+                        const paidAmount = isCashPayment ? invoiceForm.amount : "0";
+                        
+                        // Set invoice status based on payment method:
+                        // - Cash payments: "paid" (since paidAmount equals totalAmount)
+                        // - Stripe/Online payments (pending/not paid): "unpaid" status
+                        // - Other methods: "sent"
+                        let invoiceStatus: string;
+                        if (isCashPayment && parseFloat(paidAmount) === amount) {
+                          invoiceStatus = "paid";
+                        } else if (isStripePayment && parseFloat(paidAmount) === 0) {
+                          // Stripe payment is pending/not paid yet - use "unpaid" status
+                          invoiceStatus = "unpaid";
+                        } else {
+                          invoiceStatus = "sent";
+                        }
+                        
                         const invoiceData = {
                           patientId: patient.patientId || patient.id?.toString(),
                           patientName: `${patient.firstName} ${patient.lastName}`,
@@ -5415,14 +5434,14 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                           dateOfService: invoiceForm.serviceDate,
                           invoiceDate: invoiceForm.invoiceDate,
                           dueDate: invoiceForm.dueDate,
-                          status: "sent",
+                          status: invoiceStatus,
                           invoiceType: "payment",
                           paymentMethod: invoiceForm.paymentMethod,
                           subtotal: invoiceForm.amount,
                           tax: "0",
                           discount: "0",
                           totalAmount: invoiceForm.amount,
-                          paidAmount: invoiceForm.paymentMethod === "Cash" ? invoiceForm.amount : "0",
+                          paidAmount: paidAmount,
                           items: [{
                             code: invoiceForm.serviceCode,
                             description: invoiceForm.serviceDescription,
@@ -5455,14 +5474,14 @@ const getAppointmentTypeLabel = (appointment: any): string => {
 
         {/* Stripe Payment Dialog */}
         <Dialog open={!!stripeClientSecret} onOpenChange={(open) => !open && setStripeClientSecret("")}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md max-h-[550px] flex flex-col">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <CreditCard className="h-5 w-5" />
                 Complete Payment
               </DialogTitle>
             </DialogHeader>
-            <div className="py-4">
+            <div className="py-4 overflow-y-auto flex-1" style={{ maxHeight: '550px' }}>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
                 Please complete your payment to confirm your appointment booking.
               </p>

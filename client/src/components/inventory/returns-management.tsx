@@ -59,6 +59,7 @@ interface Return {
   id: number;
   returnNumber: string;
   returnType: string;
+  originalSaleId: number | null;
   originalInvoiceNumber: string | null;
   customerName: string | null;
   totalAmount: string;
@@ -190,6 +191,11 @@ export default function ReturnsManagement() {
   const { data: selectedSaleDetails } = useQuery<Sale>({
     queryKey: ['/api/inventory/sales', selectedSaleId],
     enabled: !!selectedSaleId,
+    queryFn: async ({ queryKey }) => {
+      const [, saleId] = queryKey;
+      const response = await apiRequest("GET", `/api/inventory/sales/${saleId}`);
+      return response.json();
+    },
   });
 
   const { data: returnDetails } = useQuery<ReturnDetails>({
@@ -376,7 +382,17 @@ export default function ReturnsManagement() {
     }
   };
 
-  const completedSales = sales.filter(s => s.status === 'completed');
+  // Get list of sale IDs that have already been returned
+  const returnedSaleIds = new Set(
+    returns
+      .filter(r => r.returnType === 'sales_return' && r.originalSaleId !== null)
+      .map(r => r.originalSaleId as number)
+  );
+
+  // Filter completed sales to exclude those that have already been returned
+  const completedSales = sales.filter(
+    s => s.status === 'completed' && !returnedSaleIds.has(s.id)
+  );
 
   return (
     <div className="space-y-6">
@@ -587,30 +603,38 @@ export default function ReturnsManagement() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(selectedSaleDetails as any).items?.map((item: SaleItem) => {
-                          const maxReturnable = item.quantity - (item.returnedQuantity || 0);
-                          const isAdded = returnItems.some(i => i.originalSaleItemId === item.id);
-                          return (
-                            <TableRow key={item.id}>
-                              <TableCell>{item.itemName}</TableCell>
-                              <TableCell className="font-mono text-sm">{item.batchNumber || '-'}</TableCell>
-                              <TableCell className="text-right">{item.quantity}</TableCell>
-                              <TableCell className="text-right">{item.returnedQuantity || 0}</TableCell>
-                              <TableCell className="text-right">{maxReturnable}</TableCell>
-                              <TableCell>
-                                <Button
-                                  size="sm"
-                                  variant={isAdded ? "secondary" : "outline"}
-                                  onClick={() => handleAddReturnItem(item)}
-                                  disabled={maxReturnable <= 0 || isAdded}
-                                  data-testid={`button-add-return-item-${item.id}`}
-                                >
-                                  {isAdded ? 'Added' : 'Add'}
-                                </Button>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
+                        {selectedSaleDetails.items && selectedSaleDetails.items.length > 0 ? (
+                          selectedSaleDetails.items.map((item: SaleItem) => {
+                            const maxReturnable = item.quantity - (item.returnedQuantity || 0);
+                            const isAdded = returnItems.some(i => i.originalSaleItemId === item.id);
+                            return (
+                              <TableRow key={item.id}>
+                                <TableCell>{item.itemName}</TableCell>
+                                <TableCell className="font-mono text-sm">{item.batchNumber || '-'}</TableCell>
+                                <TableCell className="text-right">{item.quantity}</TableCell>
+                                <TableCell className="text-right">{item.returnedQuantity || 0}</TableCell>
+                                <TableCell className="text-right">{maxReturnable}</TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="sm"
+                                    variant={isAdded ? "secondary" : "outline"}
+                                    onClick={() => handleAddReturnItem(item)}
+                                    disabled={maxReturnable <= 0 || isAdded}
+                                    data-testid={`button-add-return-item-${item.id}`}
+                                  >
+                                    {isAdded ? 'Added' : 'Add'}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })
+                        ) : (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                              No items found in this sale.
+                            </TableCell>
+                          </TableRow>
+                        )}
                       </TableBody>
                     </Table>
                   </div>

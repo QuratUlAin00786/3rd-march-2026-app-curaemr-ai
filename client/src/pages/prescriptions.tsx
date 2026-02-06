@@ -293,22 +293,33 @@ const getSeverityColor = (severity: string) => {
 };
 
 const getUserFullName = (user: any) => {
-  if (!user) return "";
-  const firstName = user.firstName ?? user.first_name ?? user.givenName ?? user.given_name ?? "";
-  const lastName = user.lastName ?? user.last_name ?? user.familyName ?? user.family_name ?? "";
-  return `${firstName} ${lastName}`.trim();
+  try {
+    if (!user || typeof user !== 'object') return "";
+    const firstName = (user.firstName ?? user.first_name ?? user.givenName ?? user.given_name ?? "").toString();
+    const lastName = (user.lastName ?? user.last_name ?? user.familyName ?? user.family_name ?? "").toString();
+    return `${firstName} ${lastName}`.trim();
+  } catch (error) {
+    console.error("Error getting user full name:", error);
+    return "";
+  }
 };
 
 const getDoctorLabel = (user: any) => {
-  const fullName = getUserFullName(user);
-  if (!fullName) {
-    return `Provider ${user?.id ?? "unknown"}`;
+  try {
+    if (!user) return "";
+    const fullName = getUserFullName(user);
+    if (!fullName) {
+      return `Provider ${user?.id ?? "unknown"}`;
+    }
+    const roleHint = user?.role?.toString()?.toLowerCase() || "";
+    if (roleHint.includes("doctor")) {
+      return `Dr. ${fullName}`;
+    }
+    return fullName;
+  } catch (error) {
+    console.error("Error getting doctor label:", error);
+    return user?.id ? `Provider ${user.id}` : "Unknown Provider";
   }
-  const roleHint = user?.role?.toString().toLowerCase() || "";
-  if (roleHint.includes("doctor")) {
-    return `Dr. ${fullName}`;
-  }
-  return fullName;
 };
 
 const COMMON_DIAGNOSES = [
@@ -674,6 +685,7 @@ export default function PrescriptionsPage() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signature, setSignature] = useState<string>("");
   const [signatureSaved, setSignatureSaved] = useState(false);
+  const [hideTabs, setHideTabs] = useState(false);
   const [showSignatureDetailsDialog, setShowSignatureDetailsDialog] = useState(false);
   const [selectedSignatureData, setSelectedSignatureData] = useState<any>(null);
   const [showPdfViewerDialog, setShowPdfViewerDialog] = useState(false);
@@ -2203,6 +2215,11 @@ export default function PrescriptionsPage() {
   }, [showESignDialog, selectedPrescription?.id]);
 
   const saveSignature = async () => {
+    // Hide tabs immediately when Apply Advanced E-Signature is clicked (for nurse/admin/doctor roles)
+    if (user?.role === 'nurse' || user?.role === 'admin' || user?.role === 'doctor') {
+      setHideTabs(true);
+    }
+
     if (!canvasRef.current || !selectedPrescription) return;
 
     const canvas = canvasRef.current;
@@ -2368,6 +2385,8 @@ export default function PrescriptionsPage() {
       } else {
         // If not found by ID, try to find in local state
         prescription = Array.isArray(prescriptions)
+
+        
           ? prescriptions.find((p: any) => p.id === prescriptionId || p.prescriptionNumber === prescriptionId)
           : null;
         if (prescription) {
@@ -2616,19 +2635,22 @@ export default function PrescriptionsPage() {
                 min-height: 297mm;
                 background: white;
                 margin: 0 auto;
-                padding: 15mm;
+                padding: 10mm;
                 box-shadow: 0 0 10px rgba(0,0,0,0.1);
                 position: relative;
-                overflow: hidden;
+                overflow: visible;
+                display: flex;
+                flex-direction: column;
               }
               
               .header {
                 display: flex;
                 justify-content: space-between;
                 align-items: flex-start;
-                margin-bottom: 15px;
+                margin-bottom: 10px;
                 border-bottom: 1px solid #e9ecef;
-                padding-bottom: 10px;
+                padding-bottom: 8px;
+                page-break-inside: avoid;
               }
               
               .header-left {
@@ -2660,9 +2682,10 @@ export default function PrescriptionsPage() {
               
               .provider-section {
                 text-align: center;
-                margin: 20px 0;
-                padding: 15px 0;
+                margin: 10px 0;
+                padding: 10px 0;
                 border-bottom: 1px solid #e9ecef;
+                page-break-inside: avoid;
               }
               
               .provider-title {
@@ -2682,10 +2705,11 @@ export default function PrescriptionsPage() {
               .patient-info {
                 display: flex;
                 justify-content: space-between;
-                margin: 20px 0;
+                margin: 10px 0;
                 background: #f8f9fa;
-                padding: 15px;
+                padding: 10px;
                 border-radius: 5px;
+                page-break-inside: avoid;
               }
               
               .patient-left, .patient-right {
@@ -2721,10 +2745,11 @@ export default function PrescriptionsPage() {
               }
               
               .prescription-details {
-                margin: 25px 0;
+                margin: 15px 0;
                 position: relative;
                 z-index: 2;
                 background-color: transparent; /* important: removes white box effect */
+                page-break-inside: avoid;
               }
               
               .medication-name {
@@ -2741,14 +2766,13 @@ export default function PrescriptionsPage() {
               }
               
               .diagnosis-section {
-                margin: 20px 0;
-                padding: 10px;
-               position: relative;
-
-  background-color: transparent; /* important: removes white box effect */
-                border-radius: 5px;
+                margin: 10px 0;
+                padding: 8px;
                 position: relative;
+                background-color: transparent; /* important: removes white box effect */
+                border-radius: 5px;
                 z-index: 2;
+                page-break-inside: avoid;
               }
               
               .diagnosis-label {
@@ -2758,13 +2782,13 @@ export default function PrescriptionsPage() {
               }
               
               .footer {
-                position: fixed;
-                bottom: 10mm;
-                left: 15mm;
-                right: 15mm;
-                width: calc(100% - 30mm);
+                margin-top: auto;
+                padding-top: 10px;
+                border-top: 1px solid #e9ecef;
                 background: white;
                 z-index: 10;
+                page-break-inside: avoid;
+                position: relative;
               }
               
               .signature-section {
@@ -2774,7 +2798,7 @@ export default function PrescriptionsPage() {
               .signature-label {
                 font-size: 9px;
                 color: #6c757d;
-                margin-bottom: 25px;
+                margin-bottom: 15px;
               }
               
               .substitute-section {
@@ -2836,13 +2860,30 @@ export default function PrescriptionsPage() {
               .btn-delete { color: #dc3545; }
               
               @media print {
-                body { padding: 0; background: white; }
+                body { 
+                  padding: 0; 
+                  background: white;
+                  margin: 0;
+                }
                 .prescription-container { 
                   box-shadow: none; 
                   margin: 0;
                   padding: 10mm;
+                  min-height: 277mm;
+                  height: 277mm;
+                  display: flex;
+                  flex-direction: column;
                 }
                 .action-buttons { display: none; }
+                .footer {
+                  margin-top: auto;
+                  padding-top: 10px;
+                  position: relative;
+                }
+                @page {
+                  size: A4;
+                  margin: 10mm;
+                }
               }
             </style>
           </head>
@@ -2962,7 +3003,7 @@ export default function PrescriptionsPage() {
               </div>
               
               <!-- Provider and Creator Information -->
-              <div style="margin: 15px 0; padding: 12px; background: #f8f9fa; border-radius: 5px; border-left: 3px solid #4A7DFF;">
+              <div style="margin: 10px 0; padding: 8px; background: #f8f9fa; border-radius: 5px; border-left: 3px solid #4A7DFF; page-break-inside: avoid;">
                 <div class="info-line" style="margin-bottom: 5px;">
                   <span class="info-label" style="color: #2c3e50; font-weight: bold;">Provider:</span> ${providerDisplayName}
                 </div>
@@ -2992,7 +3033,7 @@ export default function PrescriptionsPage() {
               </div>
               
               <!-- Footer -->
-              <div class="">
+              <div style="display: flex; justify-content: flex-start; align-items: flex-end; margin-top: 15px; page-break-inside: avoid;">
                 <div class="signature-section">
                   <div class="signature-label">Resident Physician<br>(Signature)</div>
                   ${
@@ -3009,9 +3050,6 @@ export default function PrescriptionsPage() {
                          })()}` : ''}</p>`
                       : ""
                   }
-                </div>
-                <div class="substitute-section">
-                  <div class="substitute-label">May Substitute</div>
                 </div>
               </div>
               
@@ -3036,11 +3074,12 @@ export default function PrescriptionsPage() {
                   🗑️ Delete
                 </button>
               </div>
-            </div>
-
-            <div class="footer">
-              <div class="pharmacy-info">
-                ${clinicFooter?.footerText || "Pharmacy: Halo Health - +44(0)121 827 5531"}
+              
+              <!-- Footer -->
+              <div class="footer">
+                <div class="pharmacy-info">
+                  ${clinicFooter?.footerText || "Pharmacy: Halo Health - +44(0)121 827 5531"}
+                </div>
               </div>
             </div>
           </body>
@@ -3237,19 +3276,25 @@ export default function PrescriptionsPage() {
       try {
         const viewUrl = `/api/prescriptions/${prescription.id}/pdf`;
         const token = localStorage.getItem("auth_token");
-        console.log("[CLIENT] Opening PDF for prescription:", prescription.id, "Token exists:", !!token);
-        const headers: Record<string, string> = {
-          "X-Tenant-Subdomain": getTenantSubdomain(),
-        };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-          console.log("[CLIENT] Authorization header set");
-        } else {
+        
+        if (!token) {
           console.error("[CLIENT] No auth token found in localStorage");
+          toast({
+            title: "Authentication Required",
+            description: "Please log in again to view this PDF.",
+            variant: "destructive",
+          });
+          return;
         }
 
+        console.log("[CLIENT] Opening PDF for prescription:", prescription.id, "Token exists: true");
+        const headers: Record<string, string> = {
+          "X-Tenant-Subdomain": getTenantSubdomain(),
+          "Authorization": `Bearer ${token}`,
+        };
+
         console.log("[CLIENT] Request URL:", buildUrl(viewUrl));
-        console.log("[CLIENT] Request headers:", { ...headers, Authorization: token ? "Bearer ***" : "missing" });
+        console.log("[CLIENT] Request headers:", { ...headers, Authorization: "Bearer ***" });
 
         const response = await fetch(buildUrl(viewUrl), {
           method: "GET",
@@ -3283,9 +3328,13 @@ export default function PrescriptionsPage() {
           }
 
           if (response.status === 403) {
+            // For patient users, provide more helpful error message
+            const isPatient = user?.role === 'patient';
             toast({
               title: "Access denied",
-              description: errorMessage || "You do not have permission to view this PDF.",
+              description: isPatient 
+                ? "Unable to access PDF. Please ensure you are logged in and have permission to view this prescription."
+                : errorMessage || "You do not have permission to view this PDF.",
               variant: "destructive",
             });
             return;
@@ -3317,10 +3366,12 @@ export default function PrescriptionsPage() {
         setShowPdfViewerDialog(true);
       } catch (error) {
         console.error("Error viewing PDF:", error);
+        const isPatient = user?.role === 'patient';
         toast({
           title: "Error",
-          description:
-            "Failed to open PDF due to a network or server error. Please try again or log in again if the problem persists.",
+          description: isPatient
+            ? "Failed to open PDF. Please ensure you are logged in and try again."
+            : "Failed to open PDF due to a network or server error. Please try again or log in again if the problem persists.",
           variant: "destructive",
         });
       }
@@ -3758,15 +3809,20 @@ export default function PrescriptionsPage() {
       if (!Array.isArray(allUsers) || allUsers.length === 0) return [];
       const options = allUsers
         .filter((userItem: any) => {
-          if (!userItem || !userItem.role) return false;
-          const role = userItem.role?.toString().toLowerCase() || "";
-          return isDoctorLike(role) || role === "doctor";
+          try {
+            if (!userItem || !userItem.role) return false;
+            const role = userItem.role?.toString()?.toLowerCase() || "";
+            return isDoctorLike(role) || role === "doctor";
+          } catch (error) {
+            console.error("Error filtering doctor option:", error);
+            return false;
+          }
         })
         .map((userItem: any) => {
           try {
             if (!userItem || !userItem.id) return null;
             const name = getDoctorLabel(userItem);
-            if (!name) return null;
+            if (!name || typeof name !== 'string') return null;
             return {
               id: userItem.id,
               name: name,
@@ -3780,9 +3836,16 @@ export default function PrescriptionsPage() {
       const unique = Array.from(
         new Map(options.map((entry: any) => [entry.name, entry])).values(),
       );
-      return unique.sort((a, b) =>
-        (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }),
-      );
+      return unique.sort((a, b) => {
+        try {
+          const nameA = (a?.name || "").toString();
+          const nameB = (b?.name || "").toString();
+          return nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+        } catch (error) {
+          console.error("Error sorting doctor options:", error);
+          return 0;
+        }
+      });
     } catch (error) {
       console.error("Error computing doctorOptions:", error);
       return [];
@@ -3809,9 +3872,16 @@ export default function PrescriptionsPage() {
         .filter((name): name is string => name !== null && name !== undefined && typeof name === 'string' && name.trim() !== '');
       
       const uniqueNames = Array.from(new Set(names));
-      return uniqueNames.sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" }),
-      );
+      return uniqueNames.sort((a, b) => {
+        try {
+          const nameA = (a || "").toString();
+          const nameB = (b || "").toString();
+          return nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+        } catch (error) {
+          console.error("Error sorting patient names:", error);
+          return 0;
+        }
+      });
     } catch (error) {
       console.error("Error computing patientOptions:", error);
       return [];
@@ -3992,32 +4062,6 @@ export default function PrescriptionsPage() {
     }
     return Array.isArray(prescriptions) ? prescriptions : [];
   }, [isFilterActive, filteredPrescriptions, prescriptions]);
-
-  if (isLoading) {
-    return (
-      <>
-        <Header
-          title="Prescriptions"
-          subtitle="Manage patient prescriptions and medications"
-        />
-        <div className="flex-1 overflow-auto p-6">
-          <div className="space-y-6">
-            {[1, 2, 3].map((i) => (
-              <Card key={i}>
-                <CardContent className="p-6">
-                  <div className="animate-pulse space-y-4">
-                    <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-                    <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-                    <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </>
-    );
-  }
 
   return (
     <>
@@ -4395,7 +4439,22 @@ export default function PrescriptionsPage() {
 
           {/* Prescriptions List */}
           <div className="space-y-4 bg-gray-50 dark:bg-gray-900 rounded-xl p-4">
-            {filteredPrescriptions.length === 0 ? (
+            {isLoading ? (
+              /* Loading State - Show skeleton for prescriptions */
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <Card key={i} className="bg-white dark:bg-slate-800 border dark:border-slate-600">
+                    <CardContent className="p-6">
+                      <div className="animate-pulse space-y-4">
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/4"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/2"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-3/4"></div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : filteredPrescriptions.length === 0 ? (
               <Card>
                 <CardContent className="p-12 text-center">
                   <Pill className="h-12 w-12 text-gray-400 mx-auto mb-4" />
@@ -5141,36 +5200,39 @@ export default function PrescriptionsPage() {
                         </Button>
                       </div>
                     )}
-                    <div className="flex flex-1 max-w-xs flex-col gap-1">
-                      <Label className="text-xs uppercase tracking-wide text-gray-500">
-                        Status
-                      </Label>
-                      <select
-                        value={statusFilter}
-                        onChange={(e) => {
-                          const value = e.target.value.trim();
-                          setStatusFilter(value);
-                          if (value !== "all") {
-                            setSearchQuery("");
-                            setSearchInput("");
-                            setPrescriptionIdFilter("all");
-                            setPatientNameFilter("");
-                          }
-                        }}
-                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                      >
-                        <option value="all">All statuses</option>
-                        <option value="pending">Pending</option>
-                        <option value="active">Active</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                        <option value="signed">Signed</option>
-                      </select>
-                    </div>
-                    <div className="flex flex-1 max-w-xs flex-col gap-1">
-                      <Label className="text-xs uppercase tracking-wide text-gray-500">
-                        Patient
-                      </Label>
+                    {user?.role !== 'patient' && (
+                      <div className="flex flex-1 max-w-xs flex-col gap-1">
+                        <Label className="text-xs uppercase tracking-wide text-gray-500">
+                          Status
+                        </Label>
+                        <select
+                          value={statusFilter}
+                          onChange={(e) => {
+                            const value = e.target.value.trim();
+                            setStatusFilter(value);
+                            if (value !== "all") {
+                              setSearchQuery("");
+                              setSearchInput("");
+                              setPrescriptionIdFilter("all");
+                              setPatientNameFilter("");
+                            }
+                          }}
+                          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                        >
+                          <option value="all">All statuses</option>
+                          <option value="pending">Pending</option>
+                          <option value="active">Active</option>
+                          <option value="completed">Completed</option>
+                          <option value="cancelled">Cancelled</option>
+                          <option value="signed">Signed</option>
+                        </select>
+                      </div>
+                    )}
+                    {user?.role !== 'patient' && (
+                      <div className="flex flex-1 max-w-xs flex-col gap-1">
+                        <Label className="text-xs uppercase tracking-wide text-gray-500">
+                          Patient
+                        </Label>
                       <Popover open={patientFilterOpen} onOpenChange={setPatientFilterOpen}>
                         <PopoverTrigger asChild>
                           <Button
@@ -5256,10 +5318,12 @@ export default function PrescriptionsPage() {
                         </PopoverContent>
                       </Popover>
                     </div>
-                    <div className="flex flex-1 max-w-xs flex-col gap-1">
-                      <Label className="text-xs uppercase tracking-wide text-gray-500">
-                        Prescription #
-                      </Label>
+                    )}
+                    {user?.role !== 'patient' && (
+                      <div className="flex flex-1 max-w-xs flex-col gap-1">
+                        <Label className="text-xs uppercase tracking-wide text-gray-500">
+                          Prescription #
+                        </Label>
                       <Popover open={prescriptionIdFilterOpen} onOpenChange={setPrescriptionIdFilterOpen}>
                         <PopoverTrigger asChild>
                           <Button
@@ -5333,10 +5397,12 @@ export default function PrescriptionsPage() {
                         </PopoverContent>
                       </Popover>
                     </div>
-                    <div className="flex flex-1 max-w-xs flex-col gap-1">
-                      <Label className="text-xs uppercase tracking-wide text-gray-500">
-                        Doctor
-                      </Label>
+                    )}
+                    {user?.role !== 'patient' && (
+                      <div className="flex flex-1 max-w-xs flex-col gap-1">
+                        <Label className="text-xs uppercase tracking-wide text-gray-500">
+                          Doctor
+                        </Label>
                       <Popover open={doctorFilterOpen} onOpenChange={setDoctorFilterOpen}>
                         <PopoverTrigger asChild>
                           <Button
@@ -5345,9 +5411,20 @@ export default function PrescriptionsPage() {
                             aria-expanded={doctorFilterOpen}
                             className="w-full justify-between rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none h-auto font-normal"
                           >
-                            {doctorFilter && Array.isArray(doctorOptions) && doctorOptions.length > 0
-                              ? (doctorOptions.find((entry: any) => entry && entry.id && String(entry.id) === doctorFilter)?.name || "All doctors")
-                              : "All doctors"}
+                            {(() => {
+                              try {
+                                if (doctorFilter && Array.isArray(doctorOptions) && doctorOptions.length > 0) {
+                                  const found = doctorOptions.find((entry: any) => 
+                                    entry && entry.id && String(entry.id) === doctorFilter
+                                  );
+                                  return found?.name || "All doctors";
+                                }
+                                return "All doctors";
+                              } catch (error) {
+                                console.error("Error rendering doctor filter label:", error);
+                                return "All doctors";
+                              }
+                            })()}
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                           </Button>
                         </PopoverTrigger>
@@ -5430,8 +5507,7 @@ export default function PrescriptionsPage() {
                         </PopoverContent>
                       </Popover>
                     </div>
-                  </>
-                )}
+                    )}
                 <div className="flex items-end justify-end gap-2">
                   <Button
                     variant="ghost"
@@ -5511,10 +5587,12 @@ export default function PrescriptionsPage() {
                     </Button>
                   )}
                 </div>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
-          {displayPrescriptions.length === 0 && isFilterActive && (
+          {!isLoading && displayPrescriptions.length === 0 && isFilterActive && (
             <Card className="border border-dashed border-gray-300 bg-yellow-50 dark:bg-gray-800">
               <CardContent className="p-12 text-center">
                 <Pill className="h-12 w-12 text-gray-400 mx-auto mb-4" />
@@ -5527,7 +5605,38 @@ export default function PrescriptionsPage() {
               </CardContent>
             </Card>
           )}
-          {viewMode === "grid" ? (
+          {isLoading ? (
+            /* Loading State - Show skeleton for grid/cards */
+            viewMode === "grid" ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <Card key={i} className="bg-white dark:bg-slate-800 border dark:border-slate-600">
+                    <CardContent className="p-4">
+                      <div className="animate-pulse space-y-4">
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-3/4"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/2"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-2/3"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-1/3"></div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              /* Loading State - Show skeleton for list */
+              <div className="space-y-2">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="border-b border-gray-200 dark:border-gray-700 flex items-center gap-4 py-2 bg-white dark:bg-slate-900">
+                    <div className="flex-1 grid grid-cols-8 gap-4 items-center">
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((j) => (
+                        <div key={j} className="h-4 bg-gray-200 dark:bg-slate-600 rounded animate-pulse"></div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : viewMode === "grid" ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {displayPrescriptions.map((prescription: any) => (
                 <Card
@@ -5659,8 +5768,14 @@ export default function PrescriptionsPage() {
                       <div>Created By</div>
                     )}
                   </div>
-                  <div className="w-40 text-center">Save/Print/file</div>
-                  <div className="w-32 text-center">Sign/Share/log</div>
+                  {user?.role !== 'patient' ? (
+                    <div className="w-40 text-center">Save/Print/file</div>
+                  ) : (
+                    <div className="w-40 text-center">file</div>
+                  )}
+                  {user?.role !== 'patient' && (
+                    <div className="w-32 text-center">Sign/Share/log</div>
+                  )}
                   <div className="w-48 text-center">Actions</div>
                 </div>
               )}
@@ -5825,18 +5940,20 @@ export default function PrescriptionsPage() {
                         <Save className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
                       </Button>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-8 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePrintPrescription(prescription.id || prescription.prescriptionNumber);
-                      }}
-                      title="Print"
-                    >
-                      <Printer className="h-4 w-4" />
-                    </Button>
+                    {user?.role !== "patient" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePrintPrescription(prescription.id || prescription.prescriptionNumber);
+                        }}
+                        title="Print"
+                      >
+                        <Printer className="h-4 w-4" />
+                      </Button>
+                    )}
                     {prescription.savedPdfPath && (
                       <Button
                         variant="ghost"
@@ -5849,8 +5966,8 @@ export default function PrescriptionsPage() {
                       </Button>
                     )}
                   </div>
-                  <div className="flex items-center gap-1 w-32 justify-center">
-                    {user?.role !== "patient" && (
+                  {user?.role !== 'patient' && (
+                    <div className="flex items-center gap-1 w-32 justify-center">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -5863,47 +5980,47 @@ export default function PrescriptionsPage() {
                       >
                         <PenTool className="h-4 w-4" />
                       </Button>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => handleSendToPharmacy(prescription.id)}
-                        title="Share/Send to Pharmacy"
-                      >
-                        <Share2 className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={async () => {
-                          setSelectedPrescriptionForShareLog(prescription);
-                          // Fetch share logs for this prescription
-                          try {
-                            const response = await apiRequest(
-                              "GET",
-                              `/api/prescriptions/${prescription.id}/share-logs`
-                            );
-                            if (response.ok) {
-                              const data = await response.json();
-                              setShareLogs(data.shareLogs || []);
-                            } else {
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleSendToPharmacy(prescription.id)}
+                          title="Share/Send to Pharmacy"
+                        >
+                          <Share2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          onClick={async () => {
+                            setSelectedPrescriptionForShareLog(prescription);
+                            // Fetch share logs for this prescription
+                            try {
+                              const response = await apiRequest(
+                                "GET",
+                                `/api/prescriptions/${prescription.id}/share-logs`
+                              );
+                              if (response.ok) {
+                                const data = await response.json();
+                                setShareLogs(data.shareLogs || []);
+                              } else {
+                                setShareLogs([]);
+                              }
+                            } catch (error) {
+                              console.error("Error fetching share logs:", error);
                               setShareLogs([]);
                             }
-                          } catch (error) {
-                            console.error("Error fetching share logs:", error);
-                            setShareLogs([]);
-                          }
-                          setShowShareLogDialog(true);
-                        }}
-                        title="View Share History"
-                      >
-                        <History className="h-4 w-4" />
-                      </Button>
+                            setShowShareLogDialog(true);
+                          }}
+                          title="View Share History"
+                        >
+                          <History className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <div className="flex items-center gap-1 w-48 justify-center">
                     <Button
                       variant="ghost"
@@ -7026,7 +7143,7 @@ export default function PrescriptionsPage() {
                                 {medication.instructions}
                                 </p>
                               )}
-                            {medication.genericAllowed !== undefined && (
+                            {user?.role !== 'patient' && medication.genericAllowed !== undefined && (
                               <p>
                                 <span className="font-medium">
                                   Generic Allowed:
@@ -7299,7 +7416,7 @@ export default function PrescriptionsPage() {
                                 {medication.instructions}
                               </p>
                             )}
-                            {medication.genericAllowed !== undefined && (
+                            {user?.role !== 'patient' && medication.genericAllowed !== undefined && (
                               <p>
                                 <span className="font-medium">
                                   Generic Allowed:
@@ -7503,7 +7620,22 @@ export default function PrescriptionsPage() {
                               Provider
                             </p>
                             <p className="font-medium">
-                              Dr. {doctor.firstName} {doctor.lastName}
+                              {(() => {
+                                const fullName = `${doctor.firstName} ${doctor.lastName}`;
+                                // Check if name already starts with "Dr." or "Nurse."
+                                const alreadyHasDr = fullName.toLowerCase().startsWith("dr.");
+                                const alreadyHasNurse = fullName.toLowerCase().startsWith("nurse.");
+                                // Add "Dr." only if role is doctor and name doesn't already have it
+                                if (doctor.role === 'doctor' && !alreadyHasDr) {
+                                  return `Dr. ${fullName}`;
+                                }
+                                // Add "Nurse." for nurse role if name doesn't already have it
+                                if (doctor.role === 'nurse' && !alreadyHasNurse) {
+                                  return `Nurse. ${fullName}`;
+                                }
+                                // Return name as is if already has prefix or other role
+                                return fullName;
+                              })()}
                             </p>
                           </div>
                           {doctor.department && (
@@ -7596,7 +7728,17 @@ export default function PrescriptionsPage() {
                                 Prescribing Doctor
                               </p>
                               <p className="font-medium">
-                                Dr. {doctor.firstName} {doctor.lastName}
+                                {(() => {
+                                  const fullName = `${doctor.firstName} ${doctor.lastName}`;
+                                  // Check if name already starts with "Dr."
+                                  const alreadyHasDr = fullName.toLowerCase().startsWith("dr.");
+                                  // Add "Dr." only if role is doctor and name doesn't already have it
+                                  if (doctor.role === 'doctor' && !alreadyHasDr) {
+                                    return `Dr. ${fullName}`;
+                                  }
+                                  // For nurse role, don't add "Dr."
+                                  return fullName;
+                                })()}
                               </p>
                               {doctor.department && (
                                 <p className="text-sm text-gray-500">
@@ -8224,6 +8366,7 @@ export default function PrescriptionsPage() {
         setShowESignDialog(open);
         if (!open) {
           setPendingSavePrescriptionId(null);
+          setHideTabs(false); // Reset hideTabs when dialog closes
         }
       }}>
         <DialogContent 
@@ -8241,11 +8384,8 @@ export default function PrescriptionsPage() {
           </DialogHeader>
 
           <Tabs defaultValue="signature" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-1">
               <TabsTrigger value="signature">Signature</TabsTrigger>
-              <TabsTrigger value="authentication">Authentication</TabsTrigger>
-              <TabsTrigger value="verification">Verification</TabsTrigger>
-              <TabsTrigger value="compliance">Compliance</TabsTrigger>
             </TabsList>
 
             {/* Signature Tab */}
@@ -8417,7 +8557,8 @@ export default function PrescriptionsPage() {
               </div>
             </TabsContent>
 
-            {/* Authentication Tab */}
+            {/* Authentication Tab - Hidden */}
+            {false && (
             <TabsContent value="authentication" className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card>
@@ -8520,8 +8661,10 @@ export default function PrescriptionsPage() {
                 </Card>
               </div>
             </TabsContent>
+            )}
 
-            {/* Verification Tab */}
+            {/* Verification Tab - Hidden */}
+            {false && (
             <TabsContent value="verification" className="space-y-4">
               <Card>
                 <CardHeader>
@@ -8601,8 +8744,10 @@ export default function PrescriptionsPage() {
                 </CardContent>
               </Card>
             </TabsContent>
+            )}
 
-            {/* Compliance Tab */}
+            {/* Compliance Tab - Hidden */}
+            {false && (
             <TabsContent value="compliance" className="space-y-4">
               <Card>
                 <CardHeader>
@@ -8734,6 +8879,7 @@ export default function PrescriptionsPage() {
                 </CardContent>
               </Card>
             </TabsContent>
+            )}
           </Tabs>
 
           {/* Success Message */}

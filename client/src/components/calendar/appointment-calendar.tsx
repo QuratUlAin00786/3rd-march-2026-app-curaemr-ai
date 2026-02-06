@@ -150,7 +150,12 @@ export default function AppointmentCalendar({ onNewAppointment }: { onNewAppoint
     if (!user || !tenant) return;
 
     console.log("[Calendar SSE] Setting up real-time connection...");
-    const eventSource = new EventSource(`/api/appointments/stream`, {});
+    // EventSource doesn't support custom headers, so pass token as query parameter
+    const token = localStorage.getItem('auth_token');
+    const streamUrl = token 
+      ? `/api/appointments/stream?token=${encodeURIComponent(token)}`
+      : `/api/appointments/stream`;
+    const eventSource = new EventSource(streamUrl, {});
 
     eventSource.onopen = () => {
       console.log("[Calendar SSE] Connected to appointment stream");
@@ -212,6 +217,7 @@ export default function AppointmentCalendar({ onNewAppointment }: { onNewAppoint
   const [showValidationError, setShowValidationError] = useState(false);
   const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
   const [duplicateAppointmentDetails, setDuplicateAppointmentDetails] = useState<string>("");
+  const [duplicateAppointment, setDuplicateAppointment] = useState<any>(null);
   const [newAppointmentDate, setNewAppointmentDate] = useState<Date | undefined>(undefined);
   const [newSelectedTimeSlot, setNewSelectedTimeSlot] = useState<string>("");
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -3413,10 +3419,46 @@ Medical License: [License Number]
                       return;
                     }
                     
-                    // Check for duplicate appointments (same patient, same doctor, same date)
-                    if (appointmentsData && newAppointmentDate) {
+                    // Check for duplicate appointments (same patient, same doctor, same date) - Patient role specific
+                    if (user?.role === 'patient' && appointmentsData && newAppointmentDate && selectedProviderId) {
                       const selectedDateStr = format(newAppointmentDate, 'yyyy-MM-dd');
-                      const duplicateAppointment = appointmentsData.find((apt: any) => {
+                      
+                      // For patient users, find their patient record ID
+                      let patientDbId = newAppointmentData.patientId;
+                      if (!patientDbId && patientsData && user?.id) {
+                        const patientRecord = patientsData.find((p: any) => 
+                          p.userId === user.id || 
+                          p.email?.toLowerCase() === user.email?.toLowerCase()
+                        );
+                        if (patientRecord) {
+                          patientDbId = patientRecord.id.toString();
+                        }
+                      }
+                      
+                      if (patientDbId) {
+                        const foundDuplicateAppointment = appointmentsData.find((apt: any) => {
+                          const aptDateStr = format(new Date(apt.scheduledAt), 'yyyy-MM-dd');
+                          return (
+                            apt.patientId.toString() === patientDbId &&
+                            apt.providerId.toString() === selectedProviderId &&
+                            aptDateStr === selectedDateStr &&
+                            apt.status !== 'cancelled'
+                          );
+                        });
+                        
+                        if (foundDuplicateAppointment) {
+                          setDuplicateAppointmentDetails(`Appointment already exists. Please edit it instead of creating new appointment.`);
+                          setDuplicateAppointment(foundDuplicateAppointment);
+                          setShowDuplicateWarning(true);
+                          return;
+                        }
+                      }
+                    }
+                    
+                    // Check for duplicate appointments (same patient, same doctor, same date) - For non-patient roles
+                    if (user?.role !== 'patient' && appointmentsData && newAppointmentDate) {
+                      const selectedDateStr = format(newAppointmentDate, 'yyyy-MM-dd');
+                      const foundDuplicateAppointment = appointmentsData.find((apt: any) => {
                         const aptDateStr = format(new Date(apt.scheduledAt), 'yyyy-MM-dd');
                         return (
                           apt.patientId.toString() === newAppointmentData.patientId &&
@@ -3426,13 +3468,14 @@ Medical License: [License Number]
                         );
                       });
                       
-                      if (duplicateAppointment) {
+                      if (foundDuplicateAppointment) {
                         const doctorName = usersData?.find((u: any) => u.id.toString() === selectedProviderId);
                         const doctorFullName = doctorName ? `${doctorName.firstName} ${doctorName.lastName}` : 'the selected doctor';
                         const formattedDate = format(newAppointmentDate, 'PPP');
                         const selectedPatient = patientsData?.find((p: any) => p.id.toString() === newAppointmentData.patientId);
                         const patientFullName = selectedPatient ? `${selectedPatient.firstName} ${selectedPatient.lastName}` : 'Patient';
                         setDuplicateAppointmentDetails(`Patient ${patientFullName} already has an appointment with ${doctorFullName} on ${formattedDate}. Please select another time slot.`);
+                        setDuplicateAppointment(null);
                         setShowDuplicateWarning(true);
                         return;
                       }
@@ -3867,16 +3910,33 @@ Medical License: [License Number]
           
           <div className="py-4">
             <p className="text-gray-700">
-              You have already created an appointment with the same doctor on this date. ({duplicateAppointmentDetails}) You can choose a different time or update the existing appointment.
+              {user?.role === 'patient' 
+                ? duplicateAppointmentDetails || "Appointment already exists. Please edit it instead of creating new appointment."
+                : `You have already created an appointment with the same doctor on this date. (${duplicateAppointmentDetails}) You can choose a different time or update the existing appointment.`
+              }
             </p>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {user?.role === 'patient' && duplicateAppointment && (
+              <Button
+                variant="default"
+                onClick={() => {
+                  setShowDuplicateWarning(false);
+                  handleEditAppointment(duplicateAppointment);
+                }}
+                data-testid="button-edit-duplicate-appointment"
+              >
+                Edit Appointment
+              </Button>
+            )}
             <Button
               onClick={() => {
                 setShowDuplicateWarning(false);
+                setDuplicateAppointment(null);
               }}
               data-testid="button-duplicate-warning-ok"
+              variant={user?.role === 'patient' ? "outline" : "default"}
             >
               OK
             </Button>

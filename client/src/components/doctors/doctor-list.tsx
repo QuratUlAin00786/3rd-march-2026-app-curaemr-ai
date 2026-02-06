@@ -1887,14 +1887,14 @@ const bookingSummaryServiceInfo = useMemo(
           setCreatedInvoiceId(null);
         }
       }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[550px] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CreditCard className="h-5 w-5" />
               Complete Payment
             </DialogTitle>
           </DialogHeader>
-          <div className="py-4">
+          <div className="py-4 overflow-y-auto flex-1" style={{ maxHeight: '550px' }}>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
               Please complete your payment to confirm the appointment booking.
             </p>

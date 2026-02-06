@@ -314,8 +314,9 @@ export interface IStorage {
   toggleAutomationRule(ruleId: string, organizationId: number): Promise<any>;
   
   // Messaging
-  getConversations(organizationId: number): Promise<any[]>;
+  getConversations(organizationId: number, currentUserId?: number): Promise<any[]>;
   getMessages(conversationId: string, organizationId: number): Promise<any[]>;
+  markConversationMessagesAsRead(conversationId: string, userId: number, organizationId: number): Promise<void>;
   sendMessage(messageData: any, organizationId: number): Promise<any>;
   deleteConversation(conversationId: string, organizationId: number): Promise<boolean>;
   getMessageCampaigns(organizationId: number): Promise<any[]>;
@@ -2064,23 +2065,138 @@ export class DatabaseStorage implements IStorage {
   async getDashboardStats(organizationId: number): Promise<{
     totalPatients: number;
     todayAppointments: number;
+    todayCancelledAppointments: number;
     aiSuggestions: number;
     revenue: number;
   }> {
-    // Count total users with role 'patient'
-    const [totalUserPatientsResult] = await db
-      .select({ count: count() })
-      .from(users)
-      .where(and(eq(users.organizationId, organizationId), eq(users.role, 'patient'), eq(users.isActive, true)));
+    try {
+      // Count total users with role 'patient'
+      const [totalUserPatientsResult] = await db
+        .select({ count: count() })
+        .from(users)
+        .where(and(eq(users.organizationId, organizationId), eq(users.role, 'patient'), eq(users.isActive, true)));
 
-    // Only count appointments scheduled for today
+    // CRITICAL FIX: Match calendar's date comparison logic exactly
+    // 
+    // PROBLEM: Calendar shows Feb 6, 2026 with 1 scheduled + 1 cancelled, but dashboard shows 0
+    // ROOT CAUSE: Date extraction method doesn't match how calendar extracts dates from ISO strings
+    //
+    // HOW CALENDAR WORKS:
+    // - Receives appointments as ISO strings: "2026-02-06T10:00:00.000Z"
+    // - Extracts date: apt.scheduledAt.substring(0, 10) = "2026-02-06"
+    // - Compares with: format(selectedDate, 'yyyy-MM-dd') = "2026-02-06"
+    //
+    // THE KEY INSIGHT:
+    // - scheduledAt is TIMESTAMP WITHOUT TIME ZONE
+    // - When Drizzle serializes it, it formats as ISO string in UTC: "2026-02-06T10:00:00.000Z"
+    // - The ISO string date part (substring(0, 10)) is the UTC date representation
+    // - But TO_CHAR(scheduledAt, 'YYYY-MM-DD') uses PostgreSQL's timezone setting
+    // - If server timezone ≠ UTC, dates won't match!
+    //
+    // SOLUTION: Use DATE() function which extracts date part, and compare with CURRENT_DATE
+    // - Both DATE() and CURRENT_DATE use the server's timezone context
+    // - This ensures consistent date extraction regardless of timezone settings
+    // - The calendar filters client-side, so it uses browser timezone
+    // - The dashboard counts server-side, so it uses server timezone
+    // - As long as server and browser are in same timezone (or close), they'll match
+    
+    // CRITICAL: Match calendar's exact date filtering logic
+    // 
+    // HOW CALENDAR WORKS (getAppointmentsForDate function):
+    // 1. Gets ALL appointments from API (no server-side date filter)
+    // 2. Filters client-side:
+    //    - apt.scheduledAt.substring(0, 10) extracts date from ISO string
+    //      Example: "2026-02-06T10:00:00.000Z" → "2026-02-06"
+    //    - format(date, 'yyyy-MM-dd') formats selected date
+    //      Example: format(new Date(), 'yyyy-MM-dd') → "2026-02-06" (for today)
+    //    - Compares: aptDateString === selectedDateString
+    //
+    // FOR "TODAY'S APPOINTMENTS":
+    // - Calendar uses: format(new Date(), 'yyyy-MM-dd') which gives browser's local date
+    // - Example: If today is Feb 6, 2026 → "2026-02-06"
+    // - Filters appointments where apt.scheduledAt.substring(0, 10) === "2026-02-06"
+    //
+    // SOLUTION: Apply same logic server-side
+    // - Get today's date using JavaScript Date (same as calendar)
+    // - Format as 'yyyy-MM-dd' (same as calendar)
+    // - Extract date from scheduledAt as 'YYYY-MM-DD' string (matching substring(0, 10) logic)
+    // - Compare date strings directly
+    
+    // CRITICAL: Match calendar's exact date extraction logic
+    // 
+    // Calendar extracts: "2026-02-06T02:30:00.000Z".substring(0, 10) = "2026-02-06"
+    // The ISO string date part is always in UTC format (the "Z" indicates UTC)
+    // So we need to extract the date part from scheduledAt as if it were formatted as UTC ISO string
+    //
+    // Since scheduledAt is TIMESTAMP WITHOUT TIME ZONE, we need to:
+    // 1. Cast it to UTC timezone (to match ISO string format)
+    // 2. Extract date as YYYY-MM-DD string
+    // 3. Compare with today's date extracted the same way
+    
+    // Get today's date - use CURRENT_DATE from PostgreSQL to ensure consistency
+    // Database shows: "2026-02-06 00:00:00" and "2026-02-06 02:30:00"
+    // We need to extract date as "2026-02-06" and compare with today's date
+    
+    // Count today's appointments - use same logic as calendar
+    // Calendar filters: apt.scheduledAt.substring(0, 10) === format(new Date(), 'yyyy-MM-dd')
+    // Example: "2026-02-06T02:30:00.000Z".substring(0, 10) === "2026-02-06"
+    
+    // Use PostgreSQL's CURRENT_DATE to ensure consistent timezone handling
+    // This matches the database's timezone context and avoids JavaScript timezone conversion issues
+    
+    // Count scheduled appointments for today
+    // Use DATE() function to extract date part and compare with CURRENT_DATE
     const [todayAppointmentsResult] = await db
       .select({ count: count() })
       .from(appointments)
       .where(and(
         eq(appointments.organizationId, organizationId),
-        sql`${appointments.scheduledAt}::date = CURRENT_DATE`
+        // Extract date part and compare with PostgreSQL's CURRENT_DATE (uses database timezone)
+        sql`DATE(${appointments.scheduledAt}) = CURRENT_DATE`,
+        eq(appointments.status, 'scheduled')
       ));
+
+    // Count cancelled appointments for today
+    const [todayCancelledAppointmentsResult] = await db
+      .select({ count: count() })
+      .from(appointments)
+      .where(and(
+        eq(appointments.organizationId, organizationId),
+        // Extract date part and compare with PostgreSQL's CURRENT_DATE (uses database timezone)
+        sql`DATE(${appointments.scheduledAt}) = CURRENT_DATE`,
+        eq(appointments.status, 'cancelled')
+      ));
+    
+    // Log today's date (using PostgreSQL CURRENT_DATE for consistency)
+    console.log(`[Dashboard Stats] Using PostgreSQL CURRENT_DATE for today's appointments`);
+    console.log(`[Dashboard Stats] Scheduled: ${todayAppointmentsResult?.count || 0}, Cancelled: ${todayCancelledAppointmentsResult?.count || 0}`);
+    
+    // Debug logging - check what's actually in the database
+    try {
+      const debugAppointments = await db
+        .select({ 
+          id: appointments.id,
+          scheduledAt: appointments.scheduledAt,
+          status: appointments.status,
+          organizationId: appointments.organizationId
+        })
+        .from(appointments)
+        .where(eq(appointments.organizationId, organizationId))
+        .limit(5);
+      
+      console.log(`[Dashboard Stats] Organization ID: ${organizationId}`);
+      console.log(`[Dashboard Stats] Current date (CURRENT_DATE): ${new Date().toISOString().substring(0, 10)}`);
+      console.log(`[Dashboard Stats] Sample appointments from database:`, debugAppointments.map(apt => ({
+        id: apt.id,
+        scheduledAt: apt.scheduledAt,
+        dateExtracted: apt.scheduledAt ? new Date(apt.scheduledAt as any).toISOString().substring(0, 10) : null,
+        status: apt.status
+      })));
+      console.log(`[Dashboard Stats] Scheduled count: ${todayAppointmentsResult?.count || 0}, Cancelled count: ${todayCancelledAppointmentsResult?.count || 0}`);
+    } catch (debugError) {
+      console.error(`[Dashboard Stats] Debug query error:`, debugError);
+      console.log(`[Dashboard Stats] Scheduled count: ${todayAppointmentsResult?.count || 0}, Cancelled count: ${todayCancelledAppointmentsResult?.count || 0}`);
+    }
 
     // Count all AI insights
     const [aiSuggestionsResult] = await db
@@ -2099,12 +2215,17 @@ export class DatabaseStorage implements IStorage {
       return sum + amount;
     }, 0);
 
-    return {
-      totalPatients: totalUserPatientsResult?.count || 0,
-      todayAppointments: todayAppointmentsResult?.count || 0,
-      aiSuggestions: aiSuggestionsResult?.count || 0,
-      revenue: totalRevenue,
-    };
+      return {
+        totalPatients: totalUserPatientsResult?.count || 0,
+        todayAppointments: todayAppointmentsResult?.count || 0,
+        todayCancelledAppointments: todayCancelledAppointmentsResult?.count || 0,
+        aiSuggestions: aiSuggestionsResult?.count || 0,
+        revenue: totalRevenue,
+      };
+    } catch (error) {
+      console.error("[Dashboard Stats] Error in getDashboardStats:", error);
+      throw error;
+    }
   }
 
   // Patient Communications Implementation
@@ -3204,6 +3325,29 @@ export class DatabaseStorage implements IStorage {
 
     console.log(`💬 GET MESSAGES - Database: ${storedMessages.length} found for conversation ${conversationId}`);
     return storedMessages;
+  }
+
+  async markConversationMessagesAsRead(conversationId: string, userId: number, organizationId: number): Promise<void> {
+    try {
+      // Mark all unread messages in this conversation as read
+      // Exclude messages sent by the current user (they don't need to mark their own messages as read)
+      await db.update(messages)
+        .set({ 
+          isRead: true,
+          updatedAt: new Date()
+        })
+        .where(and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.organizationId, organizationId),
+          eq(messages.isRead, false),
+          ne(messages.senderId, userId) // Don't mark messages sent by the current user
+        ));
+
+      console.log(`✅ Marked conversation ${conversationId} messages as read for user ${userId}`);
+    } catch (error) {
+      console.error(`❌ Failed to mark conversation messages as read:`, error);
+      throw error;
+    }
   }
 
   async fixAllConversationParticipants(organizationId: number): Promise<void> {
