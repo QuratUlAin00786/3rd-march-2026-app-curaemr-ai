@@ -1496,8 +1496,12 @@ export default function ImagingPage() {
       const totalAmount = subtotal + tax;
       
       // Pre-populate invoice fields
+      // Service date should be today (order date) for new imaging orders
+      const serviceDate = new Date().toISOString().split('T')[0];
+      
       setInvoicePatient(selectedPatient.patientId || "");
-      setInvoiceServiceDate(new Date().toISOString().split('T')[0]);
+      setInvoiceServiceDate(serviceDate);
+      setInvoiceDueDate(serviceDate); // Due date should be same as service date (like appointments)
       setInvoiceServiceCode(pricingData?.imagingCode || "IMG-001");
       setInvoiceServiceDesc("Medical Imaging - " + uploadFormData.studyType);
       setInvoiceServiceQty("1");

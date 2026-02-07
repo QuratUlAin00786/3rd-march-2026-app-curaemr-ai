@@ -55,7 +55,9 @@ export class MultiTenantCorePackage {
       if (req.path.startsWith('/saas/') || 
           req.path.startsWith('/forms/share/') ||
           req.path.startsWith('/organizations/check-name') ||
-          req.path.startsWith('/create-trial')) {
+          req.path.startsWith('/create-trial') ||
+          req.path === '/auth/universal-login' || req.path === '/auth/login' ||
+          req.path.startsWith('/auth/forgot-password') || req.path.startsWith('/auth/reset-password')) {
         console.log(`[EXCLUDE-SAAS] ✅ Skipping middleware for exempt route: ${req.path}`);
         return next();
       }

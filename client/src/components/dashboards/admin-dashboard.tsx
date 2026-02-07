@@ -216,8 +216,8 @@ export function AdminDashboard() {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      // Fetch all patients without isActive filter
-      const response = await fetch('/api/patients', {
+      // Fetch all patients without isActive filter - use a very high limit to get all patients
+      const response = await fetch('/api/patients?limit=10000', {
         headers,
         credentials: 'include'
       });
@@ -245,8 +245,8 @@ export function AdminDashboard() {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      // Fetch only active patients (is_active = true)
-      const response = await fetch('/api/patients?isActive=true', {
+      // Fetch only active patients (is_active = true) - use a very high limit to get all active patients
+      const response = await fetch('/api/patients?isActive=true&limit=10000', {
         headers,
         credentials: 'include'
       });
@@ -295,8 +295,9 @@ export function AdminDashboard() {
   const dashboardCards = [
     {
       title: "Total Patients",
-      value: patientsLoading ? "--" : (Array.isArray(allPatients) ? allPatients.length.toString() : "0"),
-      description: patientsLoading || activePatientsLoading ? "Loading..." : `${Array.isArray(allPatients) ? allPatients.length : 0} total patients • ${Array.isArray(activePatients) ? activePatients.length : 0} active patients`,
+      // Use stats.totalPatients if available (from database count), otherwise fall back to fetched patients count
+      value: isLoading || patientsLoading ? "--" : (stats?.totalPatients?.toString() || (Array.isArray(allPatients) ? allPatients.length.toString() : "0")),
+      description: isLoading || patientsLoading || activePatientsLoading ? "Loading..." : `${stats?.totalPatients || (Array.isArray(allPatients) ? allPatients.length : 0)} total patients • ${stats?.activePatients || (Array.isArray(activePatients) ? activePatients.length : 0)} active patients`,
       icon: Users,
       href: `/${subdomain}/patients`,
       color: "text-blue-500"

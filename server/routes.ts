@@ -1447,6 +1447,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Register remaining SaaS administration routes
   registerSaaSRoutes(app);
 
+  // Temporary admin endpoint to activate subscription for a user by email
+  // MUST be before tenantMiddleware to bypass subscription checks
+  app.post("/api/admin/activate-subscription", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, status = "active" } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      if (!["active", "trial"].includes(status)) {
+        return res.status(400).json({ error: "Status must be 'active' or 'trial'" });
+      }
+
+      // Find user by email
+      const user = await storage.getUserByEmailGlobal(email);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Get organization subscription
+      const subscription = await storage.getOrganizationSubscription(user.organizationId);
+      if (!subscription) {
+        return res.status(404).json({ error: "Subscription not found for this organization" });
+      }
+
+      // Update subscription status
+      const updated = await storage.updateSaaSSubscription(subscription.subscriptionId, {
+        status: status as "active" | "trial",
+      });
+
+      if (!updated) {
+        return res.status(500).json({ error: "Failed to update subscription" });
+      }
+
+      return res.json({
+        success: true,
+        message: `Subscription activated for ${email}`,
+        subscription: {
+          id: updated.id,
+          organizationId: updated.organizationId,
+          status: updated.status,
+          expiresAt: updated.expiresAt,
+        }
+      });
+    } catch (error: any) {
+      console.error("[ACTIVATE-SUBSCRIPTION] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to activate subscription" });
+    }
+  });
+
   // Universal login endpoint (no tenant required - determines subdomain from user's organization)
   app.post("/api/auth/universal-login", async (req: express.Request, res: express.Response) => {
     try {
@@ -1491,24 +1542,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[UNIVERSAL LOGIN] Checking subscription for user ${email}, organization ID: ${user.organizationId}`);
       const subscription = await storage.getOrganizationSubscription(user.organizationId);
       
-      console.log(`[UNIVERSAL LOGIN] Subscription lookup result:`, subscription ? `Found subscription (ID: ${subscription.subscriptionId}, Status: ${subscription.status})` : `No subscription found`);
+      console.log(`[UNIVERSAL LOGIN] Subscription lookup result:`, subscription ? `Found subscription (ID: ${subscription.subscriptionId}, Status: ${subscription.status}, Type: ${typeof subscription.status})` : `No subscription found`);
       
-      if (subscription) {
+      if (!subscription) {
+        console.log(`[UNIVERSAL LOGIN] ⚠️ No subscription found for org ${user.organizationId} - allowing login (subscription may be optional)`);
+        // Continue with login if no subscription found - some organizations may not have subscriptions yet
+      } else {
         console.log(`[UNIVERSAL LOGIN] Subscription found for org ${user.organizationId}:`, {
           subscriptionId: subscription.subscriptionId,
           packageId: subscription.packageId,
           expiresAt: subscription.expiresAt,
           status: subscription.status,
+          statusType: typeof subscription.status,
           paymentStatus: subscription.paymentStatus
         });
         
         // FIRST: Check subscription status - block "expired" or "cancelled" immediately
-        if (!["trial", "active"].includes(subscription.status)) {
-          console.log(`[UNIVERSAL LOGIN] ❌ Subscription inactive for user ${email}, org ID: ${user.organizationId}, status: ${subscription.status}`);
+        // Normalize status to lowercase for case-insensitive comparison
+        const rawStatus = subscription.status || '';
+        const normalizedStatus = rawStatus.toString().toLowerCase().trim();
+        console.log(`[UNIVERSAL LOGIN] Status check - Raw: "${rawStatus}", Type: ${typeof rawStatus}, Normalized: "${normalizedStatus}", Valid: ${["trial", "active"].includes(normalizedStatus)}`);
+        
+        // Allow "trial" and "active" status (case-insensitive)
+        if (!normalizedStatus || !["trial", "active"].includes(normalizedStatus)) {
+          console.log(`[UNIVERSAL LOGIN] ❌ Subscription inactive for user ${email}, org ID: ${user.organizationId}`);
+          console.log(`[UNIVERSAL LOGIN] ❌ Raw status: "${rawStatus}", Normalized: "${normalizedStatus}", Valid values: ["trial", "active"]`);
           return res.status(403).json({ 
-            error: `Your subscription is inactive. Please renew your subscription. Status: ${subscription.status}` 
+            error: `Your subscription is inactive. Please renew your subscription. Status: ${rawStatus || 'unknown'}` 
           });
         }
+        
+        console.log(`[UNIVERSAL LOGIN] ✅ Subscription status check passed: "${normalizedStatus}"`);
         
         // SECOND: Check if subscription has expired based on expiresAt
         // This ensures expired subscriptions are blocked even if status is still "active"
@@ -1570,14 +1634,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // THIRD: Block login if packageId is 0 AND subscription is expired/inactive
         // Only block packageId: 0 if the subscription is also expired or inactive
         // If packageId: 0 but subscription is valid (not expired, status is trial/active), allow login
-        if ((subscription.packageId === 0 || subscription.packageId === null || subscription.packageId === undefined) && (isExpired || !["trial", "active"].includes(subscription.status))) {
+        const normalizedStatusForPackage = (subscription.status || '').toString().toLowerCase().trim();
+        if ((subscription.packageId === 0 || subscription.packageId === null || subscription.packageId === undefined) && (isExpired || !["trial", "active"].includes(normalizedStatusForPackage))) {
           console.log(`[UNIVERSAL LOGIN] ❌ Blocking login - packageId is 0 and subscription is expired/inactive for user ${email}, org ID: ${user.organizationId}`);
           return res.status(403).json({ 
             error: `Your trial subscription is not valid. Please contact support to activate a proper subscription plan.` 
           });
         }
-      } else {
-        console.log(`[UNIVERSAL LOGIN] ⚠️ No subscription found for org ${user.organizationId} - allowing login`);
       }
 
       const token = authService.generateToken(user);
@@ -1724,20 +1787,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[LOGIN] Checking subscription for user ${email}, organization ID: ${user.organizationId}`);
       const subscription = await storage.getOrganizationSubscription(user.organizationId);
       
-      console.log(`[LOGIN] Subscription lookup result:`, subscription ? `Found subscription (ID: ${subscription.subscriptionId}, Status: ${subscription.status})` : `No subscription found`);
+      console.log(`[LOGIN] Subscription lookup result:`, subscription ? `Found subscription (ID: ${subscription.subscriptionId}, Status: ${subscription.status}, Type: ${typeof subscription.status})` : `No subscription found`);
       
-      if (subscription) {
+      if (!subscription) {
+        console.log(`[LOGIN] ⚠️ No subscription found for org ${user.organizationId} - allowing login (subscription may be optional)`);
+        // Continue with login if no subscription found - some organizations may not have subscriptions yet
+      } else {
         console.log(`[LOGIN] Subscription found for org ${user.organizationId}:`, {
           subscriptionId: subscription.subscriptionId,
           packageId: subscription.packageId,
           expiresAt: subscription.expiresAt,
           status: subscription.status,
+          statusType: typeof subscription.status,
           paymentStatus: subscription.paymentStatus
         });
         
         // FIRST: Check subscription status - block "expired" or "cancelled" immediately
-        if (!["trial", "active"].includes(subscription.status)) {
-          console.log(`[LOGIN] ❌ Subscription inactive for user ${email}, org ID: ${user.organizationId}, status: ${subscription.status}`);
+        // Normalize status to lowercase for case-insensitive comparison
+        const normalizedStatus = (subscription.status || '').toString().toLowerCase().trim();
+        console.log(`[LOGIN] Status check - Original: "${subscription.status}", Normalized: "${normalizedStatus}", Valid: ${["trial", "active"].includes(normalizedStatus)}`);
+        
+        if (!["trial", "active"].includes(normalizedStatus)) {
+          console.log(`[LOGIN] ❌ Subscription inactive for user ${email}, org ID: ${user.organizationId}, status: ${subscription.status} (normalized: ${normalizedStatus})`);
           return res.status(403).json({ 
             error: `Your subscription is inactive. Please renew your subscription. Status: ${subscription.status}` 
           });
@@ -1803,14 +1874,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // THIRD: Block login if packageId is 0 AND subscription is expired/inactive
         // Only block packageId: 0 if the subscription is also expired or inactive
         // If packageId: 0 but subscription is valid (not expired, status is trial/active), allow login
-        if ((subscription.packageId === 0 || subscription.packageId === null || subscription.packageId === undefined) && (isExpired || !["trial", "active"].includes(subscription.status))) {
+        const normalizedStatusForPackage = (subscription.status || '').toString().toLowerCase().trim();
+        if ((subscription.packageId === 0 || subscription.packageId === null || subscription.packageId === undefined) && (isExpired || !["trial", "active"].includes(normalizedStatusForPackage))) {
           console.log(`[LOGIN] ❌ Blocking login - packageId is 0 and subscription is expired/inactive for user ${email}, org ID: ${user.organizationId}`);
           return res.status(403).json({ 
             error: `Your trial subscription is not valid. Please contact support to activate a proper subscription plan.` 
           });
         }
-      } else {
-        console.log(`[LOGIN] ⚠️ No subscription found for org ${user.organizationId} - allowing login`);
       }
 
       const token = authService.generateToken(user);
@@ -2378,6 +2448,57 @@ The Cura EMR Team`,
     } catch (error) {
       console.error("[CHECK-ORG-NAME] Error:", error);
       res.status(500).json({ error: "Failed to check organization name" });
+    }
+  });
+
+  // Temporary admin endpoint to activate subscription for a user by email
+  // MUST be before tenantMiddleware to bypass subscription checks
+  app.post("/api/admin/activate-subscription", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, status = "active" } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      if (!["active", "trial"].includes(status)) {
+        return res.status(400).json({ error: "Status must be 'active' or 'trial'" });
+      }
+
+      // Find user by email
+      const user = await storage.getUserByEmailGlobal(email);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Get organization subscription
+      const subscription = await storage.getOrganizationSubscription(user.organizationId);
+      if (!subscription) {
+        return res.status(404).json({ error: "Subscription not found for this organization" });
+      }
+
+      // Update subscription status
+      const updated = await storage.updateSaaSSubscription(subscription.subscriptionId, {
+        status: status as "active" | "trial",
+      });
+
+      if (!updated) {
+        return res.status(500).json({ error: "Failed to update subscription" });
+      }
+
+      return res.json({
+        success: true,
+        message: `Subscription activated for ${email}`,
+        subscription: {
+          id: updated.id,
+          organizationId: updated.organizationId,
+          status: updated.status,
+          expiresAt: updated.expiresAt,
+        }
+      });
+    } catch (error: any) {
+      console.error("[ACTIVATE-SUBSCRIPTION] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to activate subscription" });
     }
   });
 
@@ -6917,6 +7038,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         dueDate: z.string(),
         status: z.string().default("draft"),
         invoiceType: z.string().default("payment"),
+        serviceType: z.string().optional(), // Add serviceType field
         paymentMethod: z.string().optional(),
         subtotal: z.string(),
         tax: z.string().default("0"),
@@ -6932,7 +7054,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         })),
         insuranceProvider: z.string().optional(),
         notes: z.string().optional(),
-        serviceId: z.string().optional()
+        serviceId: z.string().optional(),
+        doctorId: z.number().optional(), // Add doctorId field
+        createdBy: z.number().optional() // Add createdBy field
       }).parse(req.body);
 
       // Generate unique invoice number
@@ -6951,6 +7075,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           dueDate: new Date(invoiceData.dueDate),
           status: invoiceData.status,
           invoiceType: invoiceData.invoiceType,
+          serviceType: invoiceData.serviceType || null, // Add serviceType field
           paymentMethod: invoiceData.paymentMethod || null,
           subtotal: invoiceData.subtotal,
           tax: invoiceData.tax,
@@ -6960,7 +7085,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           items: invoiceData.items as any,
           insuranceProvider: invoiceData.insuranceProvider || null,
           notes: invoiceData.notes || null,
-          serviceId: invoiceData.serviceId || null
+          serviceId: invoiceData.serviceId || null,
+          doctorId: invoiceData.doctorId || null, // Add doctorId field
+          createdBy: invoiceData.createdBy || req.user?.id || null // Add createdBy field, fallback to logged-in user
         })
         .returning();
 
@@ -26381,19 +26508,20 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       
       // Enrich invoices with provider/doctor information
       const enrichedInvoices = await Promise.all(invoices.map(async (invoice: any) => {
-        // Get provider info from invoice items
+        // Get provider info from invoice items or invoice-level fields
         let providerName = null;
         let providerRole = null;
         
-        if (invoice.items && invoice.items.length > 0) {
-          const firstItem = invoice.items[0];
-          if (firstItem?.serviceType && firstItem?.serviceId) {
+        // Get serviceType and serviceId from invoice level or first item
+        const serviceType = invoice.serviceType || invoice.items?.[0]?.serviceType;
+        const serviceId = invoice.serviceId || invoice.items?.[0]?.serviceId || invoice.serviceIds?.[0];
+        
+        if (serviceType && serviceId) {
             try {
-              const serviceId = firstItem.serviceId;
               const serviceIdNum = Number(serviceId);
               const isNumericId = !isNaN(serviceIdNum);
               
-              if (firstItem.serviceType === 'appointments') {
+              if (serviceType === 'appointments') {
                 let appointment: any[] = [];
                 
                 // Try matching by numeric ID first
@@ -26426,13 +26554,16 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                     providerRole = provider[0].role;
                   }
                 }
-              } else if (firstItem.serviceType === 'labResults') {
+              } else if (serviceType === 'labResults') {
                 let labResult: any[] = [];
                 
                 // Try matching by numeric ID first
                 if (isNumericId) {
                   labResult = await db
-                    .select({ orderedBy: schema.labResults.orderedBy })
+                    .select({ 
+                      doctorName: schema.labResults.doctorName,
+                      orderedBy: schema.labResults.orderedBy 
+                    })
                     .from(schema.labResults)
                     .where(eq(schema.labResults.id, serviceIdNum))
                     .limit(1);
@@ -26441,31 +26572,45 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                 // If not found, try matching by testId string
                 if (labResult.length === 0 && typeof serviceId === 'string') {
                   labResult = await db
-                    .select({ orderedBy: schema.labResults.orderedBy })
+                    .select({ 
+                      doctorName: schema.labResults.doctorName,
+                      orderedBy: schema.labResults.orderedBy 
+                    })
                     .from(schema.labResults)
                     .where(eq(schema.labResults.testId, serviceId))
                     .limit(1);
                 }
                 
-                if (labResult[0]?.orderedBy) {
-                  const provider = await db
-                    .select({ firstName: schema.users.firstName, lastName: schema.users.lastName, role: schema.users.role })
-                    .from(schema.users)
-                    .where(eq(schema.users.id, labResult[0].orderedBy))
-                    .limit(1);
-                  
-                  if (provider[0]) {
-                    providerName = `${provider[0].firstName} ${provider[0].lastName}`;
-                    providerRole = provider[0].role;
+                if (labResult[0]) {
+                  // First try to use doctorName if available
+                  if (labResult[0].doctorName) {
+                    providerName = labResult[0].doctorName;
+                    providerRole = null; // doctorName doesn't include role info
+                  } else if (labResult[0].orderedBy) {
+                    // Fallback to orderedBy to get provider from users table
+                    const provider = await db
+                      .select({ firstName: schema.users.firstName, lastName: schema.users.lastName, role: schema.users.role })
+                      .from(schema.users)
+                      .where(eq(schema.users.id, labResult[0].orderedBy))
+                      .limit(1);
+                    
+                    if (provider[0]) {
+                      providerName = `${provider[0].firstName} ${provider[0].lastName}`;
+                      providerRole = provider[0].role;
+                    }
                   }
                 }
-              } else if (firstItem.serviceType === 'imaging') {
+              } else if (serviceType === 'imaging') {
                 let imagingRecord: any[] = [];
                 
                 // Try matching by numeric ID first
                 if (isNumericId) {
                   imagingRecord = await db
-                    .select({ uploadedBy: schema.medicalImages.uploadedBy, radiologist: schema.medicalImages.radiologist })
+                    .select({ 
+                      selectedUserId: schema.medicalImages.selectedUserId,
+                      uploadedBy: schema.medicalImages.uploadedBy, 
+                      radiologist: schema.medicalImages.radiologist 
+                    })
                     .from(schema.medicalImages)
                     .where(eq(schema.medicalImages.id, serviceIdNum))
                     .limit(1);
@@ -26474,14 +26619,19 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                 // If not found, try matching by imageId string
                 if (imagingRecord.length === 0 && typeof serviceId === 'string') {
                   imagingRecord = await db
-                    .select({ uploadedBy: schema.medicalImages.uploadedBy, radiologist: schema.medicalImages.radiologist })
+                    .select({ 
+                      selectedUserId: schema.medicalImages.selectedUserId,
+                      uploadedBy: schema.medicalImages.uploadedBy, 
+                      radiologist: schema.medicalImages.radiologist 
+                    })
                     .from(schema.medicalImages)
                     .where(eq(schema.medicalImages.imageId, serviceId))
                     .limit(1);
                 }
                 
                 if (imagingRecord[0]) {
-                  const providerId = imagingRecord[0].uploadedBy;
+                  // First try to use selectedUserId if available
+                  const providerId = imagingRecord[0].selectedUserId || imagingRecord[0].uploadedBy;
                   if (providerId) {
                     const provider = await db
                       .select({ firstName: schema.users.firstName, lastName: schema.users.lastName, role: schema.users.role })
@@ -26494,7 +26644,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                       providerRole = provider[0].role;
                     }
                   } else if (imagingRecord[0].radiologist) {
-                    // Use radiologist name if available
+                    // Fallback to radiologist name if available
                     providerName = imagingRecord[0].radiologist;
                     providerRole = 'radiologist';
                   }
@@ -26503,7 +26653,6 @@ This treatment plan should be reviewed and adjusted based on individual patient 
             } catch (error) {
               console.error(`Error fetching provider info for invoice ${invoice.id}:`, error);
             }
-          }
         }
         
         return {
@@ -26640,7 +26789,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         insuranceProvider: z.string().optional(),
         nhsNumber: z.string().optional(),
         notes: z.string().optional(),
-        paymentMethod: z.string().optional()
+        paymentMethod: z.union([z.string(), z.null()]).optional(),
+        doctorId: z.number().int().positive().optional()
       }).parse(req.body);
 
       const patient = await storage.getPatientByPatientId(invoiceData.patientId, req.tenant!.id);
@@ -26698,14 +26848,20 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         invoiceDate: new Date(invoiceData.invoiceDate),
         dueDate: new Date(invoiceData.dueDate),
         dateOfService: new Date(invoiceData.serviceDate),
-        status: "draft" as const,
+        // Set status based on payment method:
+        // - Cash: "paid" (immediate payment)
+        // - "Not Selected": "unpaid" 
+        // - Other methods (Online Payment, Insurance): "unpaid" (pending payment)
+        status: (invoiceData.paymentMethod === "Cash") ? "paid" : "unpaid" as const,
         invoiceType,
-        paymentMethod: invoiceData.paymentMethod || null,
+        // Save "Not Selected" as string, default to "Online Payment" if not provided
+        paymentMethod: invoiceData.paymentMethod || "Online Payment",
         subtotal: computedTotal,
         tax: 0,
         discount: 0,
         totalAmount: computedTotal,
-        paidAmount: 0,
+        // Set paidAmount to totalAmount when Cash payment method (immediate payment)
+        paidAmount: (invoiceData.paymentMethod === "Cash") ? computedTotal : 0,
         items: invoiceData.lineItems.map((item) => ({
           code: item.code,
           description: item.description,
@@ -26719,7 +26875,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         insurance: insuranceData,
         payments: [],
         serviceId: serviceIds[0] || null,
-        serviceType: invoiceData.serviceType
+        serviceType: invoiceData.serviceType,
+        doctorId: invoiceData.doctorId || null
       });
 
       const createdInvoice = await storage.createPatientInvoice(invoiceToCreate);
@@ -26753,13 +26910,26 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   app.patch("/api/billing/invoices/:id", requireRole(["admin", "doctor", "nurse", "receptionist", "patient"]), async (req: TenantRequest, res) => {
     try {
       const { id } = req.params;
-      const { status } = req.body;
+      const { status, paymentMethod } = req.body;
 
       if (!status) {
         return res.status(400).json({ error: "Status is required" });
       }
 
-      await storage.updateInvoice(parseInt(id), req.tenant!.id, { status });
+      const updateData: any = { status };
+      // Update payment method if provided (e.g., when Stripe payment succeeds)
+      if (paymentMethod) {
+        updateData.paymentMethod = paymentMethod;
+      }
+      // If status is "paid" and payment method is "Cash" or "Online Payment", update paidAmount
+      if (status === "paid" && paymentMethod) {
+        const invoice = await storage.getInvoice(parseInt(id), req.tenant!.id);
+        if (invoice) {
+          updateData.paidAmount = invoice.totalAmount;
+        }
+      }
+
+      await storage.updateInvoice(parseInt(id), req.tenant!.id, updateData);
       res.json({ success: true });
     } catch (error) {
       console.error("Failed to update invoice status:", error);

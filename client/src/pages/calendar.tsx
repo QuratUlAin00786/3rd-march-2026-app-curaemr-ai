@@ -63,11 +63,42 @@ const formatRoleLabel = (role?: string) => {
     .join(' ');
 };
 
-const buildInvoiceDefaults = (appointment: any, serviceInfo: BookingServiceInfo | null) => {
-  const referenceDate = appointment?.scheduledAt ? new Date(appointment.scheduledAt) : new Date();
-  const serviceDate = referenceDate.toISOString().split("T")[0];
-  const invoiceDate = new Date().toISOString().split("T")[0];
-  const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+const buildInvoiceDefaults = (appointment: any, serviceInfo: BookingServiceInfo | null, userRole?: string) => {
+  // Extract date directly from scheduledAt string to avoid timezone conversion issues
+  // scheduledAt format is typically "YYYY-MM-DDTHH:mm:ss" or "YYYY-MM-DDTHH:mm:ss.sssZ"
+  let serviceDate: string;
+  if (appointment?.scheduledAt) {
+    // Extract date part directly from string (first 10 characters: YYYY-MM-DD)
+    // This avoids any timezone conversion issues
+    const scheduledAtStr = appointment.scheduledAt.toString();
+    if (scheduledAtStr.includes('T')) {
+      // Extract date part before 'T' - this is the actual date without timezone conversion
+      serviceDate = scheduledAtStr.split('T')[0];
+    } else if (scheduledAtStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+      // If it's already in YYYY-MM-DD format, use it directly
+      serviceDate = scheduledAtStr.substring(0, 10);
+    } else {
+      // Fallback: parse as date but use UTC methods to avoid timezone shift
+      const dateObj = new Date(appointment.scheduledAt);
+      // Use UTC methods to get the exact date without timezone conversion
+      const year = dateObj.getUTCFullYear();
+      const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getUTCDate()).padStart(2, '0');
+      serviceDate = `${year}-${month}-${day}`;
+    }
+  } else {
+    // Fallback to current date if no scheduledAt
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    serviceDate = `${year}-${month}-${day}`;
+  }
+  
+  // Invoice date should be current date, while service date and due date should be appointment date
+  const invoiceDate = new Date().toISOString().split("T")[0]; // Current date for invoice date
+  const dueDate = serviceDate; // Due date should be the same as service date (appointment date)
+  
   const amount = serviceInfo?.amount || "50.00";
   const serviceDescription =
     serviceInfo?.name || appointment?.title || "General Consultation";
@@ -75,14 +106,14 @@ const buildInvoiceDefaults = (appointment: any, serviceInfo: BookingServiceInfo 
 
   return {
     serviceDate,
-    invoiceDate,
-    dueDate,
+    invoiceDate, // Same as appointment scheduledAt date
+    dueDate, // Same as appointment scheduledAt date
     serviceCode,
     serviceDescription,
     amount,
     insuranceProvider: "None (Patient Self-Pay)",
     notes: "",
-    paymentMethod: "Online Payment",
+    paymentMethod: "Not Selected", // Default to "Not Selected" instead of "Online Payment"
   };
 };
 
@@ -1860,12 +1891,42 @@ const getAppointmentTypeLabel = (appointment: any): string => {
       const appointment = await appointmentResponse.json();
       
       // Use appointment_id from the created appointment as serviceId in invoice
+      // Also ensure service date and due date use the actual appointment date (schedule_at)
+      // Due date should always be the same as service date (dateOfService)
+      const appointmentDate = appointment.scheduledAt || appointmentData.scheduledAt;
+      let serviceDate = invoiceData.dateOfService;
+      
+      // Extract date from appointment scheduledAt if available
+      // Use UTC methods to avoid timezone conversion issues
+      if (appointmentDate) {
+        const scheduledAtStr = appointmentDate.toString();
+        if (scheduledAtStr.includes('T')) {
+          // Extract date part before 'T' - this is the actual date without timezone conversion
+          serviceDate = scheduledAtStr.split('T')[0];
+        } else if (scheduledAtStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+          // If it's already in YYYY-MM-DD format, use it directly
+          serviceDate = scheduledAtStr.substring(0, 10);
+        } else {
+          // Fallback: parse as date but use UTC methods to avoid timezone shift
+          const dateObj = new Date(appointmentDate);
+          const year = dateObj.getUTCFullYear();
+          const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(dateObj.getUTCDate()).padStart(2, '0');
+          serviceDate = `${year}-${month}-${day}`;
+        }
+      }
+      
+      // Due date should always be the same as service date (dateOfService)
+      const dueDate = serviceDate;
+      
       const invoiceDataWithServiceId = {
         ...invoiceData,
-        serviceId: appointment.appointmentId || appointment.appointment_id
+        serviceId: appointment.appointmentId || appointment.appointment_id,
+        dateOfService: serviceDate, // Use actual appointment date
+        dueDate: dueDate // Due date should always be the same as service date (dateOfService)
       };
       
-      // Create invoice with appointment_id as serviceId
+      // Create invoice with appointment_id as serviceId and correct dates
       const invoiceResponse = await apiRequest("POST", "/api/invoices", invoiceDataWithServiceId);
       const invoice = await invoiceResponse.json();
       
@@ -2197,7 +2258,7 @@ const getAppointmentTypeLabel = (appointment: any): string => {
 
     const patientName = `${patient.firstName} ${patient.lastName}`;
     const serviceInfo = getBookingServiceInfo(appointmentData);
-    const invoiceDefaults = buildInvoiceDefaults(appointmentData, serviceInfo);
+    const invoiceDefaults = buildInvoiceDefaults(appointmentData, serviceInfo, user?.role);
     
     // Create invoice data populated with selected service details
     const invoiceData = {
@@ -2207,7 +2268,7 @@ const getAppointmentTypeLabel = (appointment: any): string => {
       dateOfService: invoiceDefaults.serviceDate,
       invoiceDate: invoiceDefaults.invoiceDate,
       dueDate: invoiceDefaults.dueDate,
-      status: "draft",
+      status: "unpaid",
       invoiceType: "payment",
       paymentMethod: invoiceDefaults.paymentMethod,
       subtotal: invoiceDefaults.amount,
@@ -2859,8 +2920,20 @@ const getAppointmentTypeLabel = (appointment: any): string => {
 
         {/* New Appointment Modal */}
         {showNewAppointmentModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={(e) => {
+              // Prevent closing on backdrop click - only close via X button or Cancel
+              e.stopPropagation();
+            }}
+          >
+            <div 
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+              onClick={(e) => {
+                // Prevent clicks inside modal from closing it
+                e.stopPropagation();
+              }}
+            >
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-xl font-bold text-gray-900 dark:text-white">
@@ -4717,6 +4790,11 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                         }
 
                         if (user?.role === "patient") {
+                          // Set invoice form with appointment data for patient role
+                          const serviceInfo = getBookingServiceInfo(patientAppointmentData);
+                          const invoiceDefaults = buildInvoiceDefaults(patientAppointmentData, serviceInfo, user?.role);
+                          setInvoiceForm(invoiceDefaults);
+                          
                           setShowInvoiceModal(true);
                           setShowConfirmationModal(false);
                           return;
@@ -4740,8 +4818,32 @@ const getAppointmentTypeLabel = (appointment: any): string => {
 
         {/* Confirmation Modal for All Users */}
         {showConfirmationModal && pendingAppointmentData && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={(e) => {
+              // Prevent closing on backdrop click - only close via X button or Cancel
+              if (e.target === e.currentTarget) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              }
+            }}
+            onMouseDown={(e) => {
+              // Prevent closing on backdrop click
+              if (e.target === e.currentTarget) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              }
+            }}
+          >
+            <div 
+              className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+              onClick={(e) => {
+                // Prevent clicks inside modal from closing it
+                e.stopPropagation();
+              }}
+            >
               <div className="p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900">
@@ -4914,7 +5016,7 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                       }
 
                       const serviceInfo = getBookingServiceInfo(pendingAppointmentData);
-                      const invoiceDefaults = buildInvoiceDefaults(pendingAppointmentData, serviceInfo);
+                      const invoiceDefaults = buildInvoiceDefaults(pendingAppointmentData, serviceInfo, user?.role);
                       setInvoiceForm(invoiceDefaults);
                       
                       // Close confirmation modal and open invoice modal
@@ -5064,13 +5166,37 @@ const getAppointmentTypeLabel = (appointment: any): string => {
 
         {/* Invoice Creation Modal */}
         {showInvoiceModal && pendingAppointmentData && !showInvoiceSummary && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={(e) => {
+              // Prevent closing on backdrop click - only close via X button or Cancel
+              if (e.target === e.currentTarget) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              }
+            }}
+            onMouseDown={(e) => {
+              // Prevent closing on backdrop click
+              if (e.target === e.currentTarget) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              }
+            }}
+          >
+            <div 
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+              onClick={(e) => {
+                // Prevent clicks inside modal from closing it
+                e.stopPropagation();
+              }}
+            >
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-xl font-bold text-blue-700 dark:text-blue-400">
-                      Create New Invoice
+                      Create New Invoice.
                     </h2>
                     <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                       Invoice details for the appointment
@@ -5244,8 +5370,32 @@ const getAppointmentTypeLabel = (appointment: any): string => {
 
         {/* Invoice Summary Modal */}
         {showInvoiceModal && showInvoiceSummary && pendingAppointmentData && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={(e) => {
+              // Prevent closing on backdrop click - only close via X button or Cancel
+              if (e.target === e.currentTarget) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              }
+            }}
+            onMouseDown={(e) => {
+              // Prevent closing on backdrop click
+              if (e.target === e.currentTarget) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              }
+            }}
+          >
+            <div 
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+              onClick={(e) => {
+                // Prevent clicks inside modal from closing it
+                e.stopPropagation();
+              }}
+            >
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <div>
@@ -5340,7 +5490,39 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Payment Method</span>
-                        <span className="font-medium text-gray-900 dark:text-white capitalize">{invoiceForm.paymentMethod}</span>
+                        <span className="font-medium text-gray-900 dark:text-white capitalize">
+                          {(() => {
+                            // If status would be unpaid and payment method is Online Payment, show "Not Selected"
+                            const isStripePayment = invoiceForm.paymentMethod === "Online Payment" || 
+                                                   invoiceForm.paymentMethod?.toLowerCase().includes("stripe");
+                            const isCashPayment = invoiceForm.paymentMethod === "Cash";
+                            const paidAmount = isCashPayment ? invoiceForm.amount : "0";
+                            const amount = parseFloat(invoiceForm.amount);
+                            
+                            let invoiceStatus: string;
+                            if (isCashPayment && parseFloat(paidAmount) === amount) {
+                              invoiceStatus = "paid";
+                            } else {
+                              // Default to "unpaid" for all non-cash payments or unpaid invoices
+                              invoiceStatus = "unpaid";
+                            }
+                            
+                            if (invoiceStatus === "unpaid" && isStripePayment) {
+                              return "Not Selected";
+                            }
+                            return invoiceForm.paymentMethod || "Not Selected";
+                          })()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Provider/Doctor</span>
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {pendingAppointmentData?.providerId 
+                            ? (usersData?.find((u: any) => u.id === pendingAppointmentData.providerId) 
+                                ? `${usersData.find((u: any) => u.id === pendingAppointmentData.providerId).firstName} ${usersData.find((u: any) => u.id === pendingAppointmentData.providerId).lastName}`
+                                : "-")
+                            : "-"}
+                        </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Insurance Provider</span>
@@ -5359,7 +5541,7 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600 dark:text-gray-400">Status</span>
                         <span className="text-sm font-medium text-gray-900 dark:text-white">
-                          {invoiceForm.paymentMethod === "cash" ? "Paid" : "Draft"}
+                          {invoiceForm.paymentMethod === "cash" ? "Paid" : "Unpaid"}
                         </span>
                       </div>
                     </div>
@@ -5415,42 +5597,87 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                         
                         // Set invoice status based on payment method:
                         // - Cash payments: "paid" (since paidAmount equals totalAmount)
-                        // - Stripe/Online payments (pending/not paid): "unpaid" status
-                        // - Other methods: "sent"
+                        // - All other cases (including Stripe/Online payments not paid): "unpaid" status
                         let invoiceStatus: string;
                         if (isCashPayment && parseFloat(paidAmount) === amount) {
                           invoiceStatus = "paid";
-                        } else if (isStripePayment && parseFloat(paidAmount) === 0) {
-                          // Stripe payment is pending/not paid yet - use "unpaid" status
-                          invoiceStatus = "unpaid";
                         } else {
-                          invoiceStatus = "sent";
+                          // Default to "unpaid" for all non-cash payments or unpaid invoices
+                          invoiceStatus = "unpaid";
                         }
                         
+                        // Fix payment method: If status is "unpaid", paymentMethod should always be "Not Selected" (like admin role)
+                        let finalPaymentMethod = invoiceForm.paymentMethod;
+                        if (invoiceStatus === "unpaid") {
+                          finalPaymentMethod = "Not Selected";
+                        }
+                        
+                        // Extract appointment date from pendingAppointmentData for correct service date and due date
+                        // Invoice date should be current date, while service date and due date should be appointment date
+                        const appointmentScheduledAt = pendingAppointmentData?.scheduledAt;
+                        let finalServiceDate = invoiceForm.serviceDate;
+                        
+                        if (appointmentScheduledAt) {
+                          const scheduledAtStr = appointmentScheduledAt.toString();
+                          if (scheduledAtStr.includes('T')) {
+                            // Extract date part before 'T' - this is the actual date without timezone conversion
+                            finalServiceDate = scheduledAtStr.split('T')[0];
+                          } else if (scheduledAtStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+                            // If it's already in YYYY-MM-DD format, use it directly
+                            finalServiceDate = scheduledAtStr.substring(0, 10);
+                          } else {
+                            // Fallback: parse as date but use UTC methods to avoid timezone shift
+                            const dateObj = new Date(appointmentScheduledAt);
+                            const year = dateObj.getUTCFullYear();
+                            const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+                            const day = String(dateObj.getUTCDate()).padStart(2, '0');
+                            finalServiceDate = `${year}-${month}-${day}`;
+                          }
+                        }
+                        
+                        // Due date should always be the same as service date (dateOfService)
+                        const finalDueDate = finalServiceDate;
+                        
+                        // Invoice date should be current date (not appointment date)
+                        const finalInvoiceDate = new Date().toISOString().split("T")[0];
+                        
+                        // Get doctor/provider ID from pendingAppointmentData or selectedDoctor
+                        // Ensure we get the provider ID from the appointment data
+                        const doctorId = pendingAppointmentData?.providerId || 
+                                        pendingAppointmentData?.doctorId || 
+                                        selectedDoctor?.id || 
+                                        selectedProviderId || 
+                                        null;
+                        
+                        // Ensure all fields are included in invoice data
                         const invoiceData = {
                           patientId: patient.patientId || patient.id?.toString(),
                           patientName: `${patient.firstName} ${patient.lastName}`,
                           nhsNumber: patient.nhsNumber || "",
-                          dateOfService: invoiceForm.serviceDate,
-                          invoiceDate: invoiceForm.invoiceDate,
-                          dueDate: invoiceForm.dueDate,
+                          dateOfService: finalServiceDate, // Use actual appointment date
+                          invoiceDate: finalInvoiceDate, // Invoice date should be current date
+                          dueDate: finalDueDate, // Due date should always be the same as service date (dateOfService)
                           status: invoiceStatus,
                           invoiceType: "payment",
-                          paymentMethod: invoiceForm.paymentMethod,
+                          serviceType: "appointments", // Set service type to "appointments" for patient bookings
+                          paymentMethod: finalPaymentMethod || "Not Selected", // "Not Selected" if unpaid, otherwise original value
+                          doctorId: doctorId ? Number(doctorId) : (pendingAppointmentData?.providerId ? Number(pendingAppointmentData.providerId) : null), // Always include doctorId if available (follow admin strategy)
+                          createdBy: user?.id, // Add logged-in user ID to created_by column
                           subtotal: invoiceForm.amount,
                           tax: "0",
                           discount: "0",
                           totalAmount: invoiceForm.amount,
-                          paidAmount: paidAmount,
+                          paidAmount: paidAmount || "0",
                           items: [{
-                            code: invoiceForm.serviceCode,
-                            description: invoiceForm.serviceDescription,
+                            code: invoiceForm.serviceCode || "CONS-001",
+                            description: invoiceForm.serviceDescription || "General Consultation",
                             quantity: 1,
                             unitPrice: amount,
-                            total: amount
+                            total: amount,
+                            serviceType: "appointments" // Include serviceType in items as well
                           }],
-                          insuranceProvider: invoiceForm.insuranceProvider,
-                          notes: invoiceForm.notes
+                          insuranceProvider: invoiceForm.insuranceProvider || "None (Patient Self-Pay)",
+                          notes: invoiceForm.notes || ""
                         };
 
                         // Create both appointment and invoice
@@ -5473,8 +5700,30 @@ const getAppointmentTypeLabel = (appointment: any): string => {
         )}
 
         {/* Stripe Payment Dialog */}
-        <Dialog open={!!stripeClientSecret} onOpenChange={(open) => !open && setStripeClientSecret("")}>
-          <DialogContent className="max-w-md max-h-[550px] flex flex-col">
+        <Dialog 
+          open={!!stripeClientSecret} 
+          onOpenChange={(open) => {
+            // Prevent closing on outside click - only close via X button or Cancel
+            // Don't allow closing via onOpenChange (which triggers on backdrop click)
+            if (open) {
+              // Keep dialog open
+              return;
+            }
+            // If open is false, ignore it - user must click X or Cancel button
+            // Only close via explicit button handlers
+          }}
+        >
+          <DialogContent 
+            className="max-w-md max-h-[550px] flex flex-col"
+            onPointerDownOutside={(e) => {
+              // Prevent closing on outside click
+              e.preventDefault();
+            }}
+            onEscapeKeyDown={(e) => {
+              // Prevent closing on Escape key
+              e.preventDefault();
+            }}
+          >
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <CreditCard className="h-5 w-5" />
@@ -5489,15 +5738,28 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                 <Elements stripe={stripePromise} options={{ clientSecret: stripeClientSecret }}>
                   <StripePaymentForm
                     onSuccess={async () => {
-                      // Update invoice status to paid
+                      // Update invoice status to paid and payment details
                       if (createdInvoiceId) {
                         try {
+                          // Get the invoice to get the total amount
+                          const invoiceResponse = await apiRequest('GET', `/api/billing/invoices/${createdInvoiceId}`);
+                          const invoice = await invoiceResponse.json();
+                          const totalAmount = parseFloat(invoice.totalAmount || invoice.subtotal || "0");
+                          
+                          // Update invoice to paid status with payment details
                           await apiRequest('PATCH', `/api/billing/invoices/${createdInvoiceId}`, {
-                            status: 'paid'
+                            status: 'paid',
+                            paymentMethod: 'Online Payment',
+                            paidAmount: totalAmount.toString()
                           });
-                          console.log("Invoice status updated to paid");
+                          
+                          // Invalidate queries to refresh the billing page
+                          queryClient.invalidateQueries({ queryKey: ["/api/billing/invoices"] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/billing"] });
+                          
+                          console.log("✅ Invoice status updated to paid with payment details");
                         } catch (error) {
-                          console.error("Failed to update invoice status:", error);
+                          console.error("❌ Failed to update invoice status:", error);
                         }
                       }
                       setStripeClientSecret("");
@@ -5505,6 +5767,7 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                       setShowSuccessModal(true);
                     }}
                     onCancel={() => {
+                      // Allow closing via Cancel button
                       setStripeClientSecret("");
                       setCreatedInvoiceId(null);
                       toast({

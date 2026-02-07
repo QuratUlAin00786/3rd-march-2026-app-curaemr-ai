@@ -1163,8 +1163,14 @@ export default function LabResultsPage() {
       
       const totalAmount = invoiceItems.reduce((sum, item) => sum + item.total, 0);
       
+      // Service date should be today (order date) for new lab orders
+      const serviceDate = new Date().toISOString().split('T')[0];
+      
       setInvoiceData({
         ...invoiceData,
+        serviceDate: serviceDate,
+        invoiceDate: new Date().toISOString().split('T')[0],
+        dueDate: serviceDate, // Due date should be same as service date (like appointments)
         items: invoiceItems,
         totalAmount: totalAmount,
         paymentMethod: 'cash', // Set default payment method
@@ -1430,10 +1436,17 @@ export default function LabResultsPage() {
     });
     
     // Populate invoice form with test details
+    // Extract service date from test result (orderDate or createdAt)
+    const serviceDate = result.orderDate 
+      ? new Date(result.orderDate).toISOString().split('T')[0]
+      : result.createdAt 
+      ? new Date(result.createdAt).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
+    
     setInvoiceData({
-      serviceDate: new Date().toISOString().split('T')[0],
+      serviceDate: serviceDate,
       invoiceDate: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      dueDate: serviceDate, // Due date should be same as service date (like appointments)
       items: invoiceItems,
       totalAmount: totalAmount,
       paymentMethod: '',

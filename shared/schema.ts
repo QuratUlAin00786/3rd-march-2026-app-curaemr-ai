@@ -501,6 +501,7 @@ export const invoices = pgTable("invoices", {
   invoiceType: varchar("invoice_type", { length: 50 }).notNull().default("payment"), // payment, insurance_claim
   paymentMethod: varchar("payment_method", { length: 50 }), // cash, card, stripe, paypal
   insuranceProvider: varchar("insurance_provider", { length: 100 }), // NHS, Bupa, AXA, etc.
+  doctorId: integer("doctor_id").references(() => users.id), // Reference to provider/doctor who performed the service
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
   tax: decimal("tax", { precision: 10, scale: 2 }).notNull().default("0"),
   discount: decimal("discount", { precision: 10, scale: 2 }).notNull().default("0"),

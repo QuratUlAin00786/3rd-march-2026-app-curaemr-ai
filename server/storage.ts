@@ -2064,17 +2064,28 @@ export class DatabaseStorage implements IStorage {
   // Dashboard Stats
   async getDashboardStats(organizationId: number): Promise<{
     totalPatients: number;
+    activePatients: number;
     todayAppointments: number;
     todayCancelledAppointments: number;
     aiSuggestions: number;
     revenue: number;
   }> {
     try {
-      // Count total users with role 'patient'
-      const [totalUserPatientsResult] = await db
+      // Count total patients from patients table (not users table)
+      // This matches what the admin dashboard displays
+      const [totalPatientsResult] = await db
         .select({ count: count() })
-        .from(users)
-        .where(and(eq(users.organizationId, organizationId), eq(users.role, 'patient'), eq(users.isActive, true)));
+        .from(patients)
+        .where(eq(patients.organizationId, organizationId));
+      
+      // Count active patients (isActive = true)
+      const [activePatientsResult] = await db
+        .select({ count: count() })
+        .from(patients)
+        .where(and(
+          eq(patients.organizationId, organizationId),
+          eq(patients.isActive, true)
+        ));
 
     // CRITICAL FIX: Match calendar's date comparison logic exactly
     // 
@@ -2216,7 +2227,8 @@ export class DatabaseStorage implements IStorage {
     }, 0);
 
       return {
-        totalPatients: totalUserPatientsResult?.count || 0,
+        totalPatients: totalPatientsResult?.count || 0,
+        activePatients: activePatientsResult?.count || 0,
         todayAppointments: todayAppointmentsResult?.count || 0,
         todayCancelledAppointments: todayCancelledAppointmentsResult?.count || 0,
         aiSuggestions: aiSuggestionsResult?.count || 0,

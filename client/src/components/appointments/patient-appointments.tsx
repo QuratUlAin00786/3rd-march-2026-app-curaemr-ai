@@ -773,7 +773,7 @@ export default function PatientAppointments({
   }
 
   return (
-    <div className="space-y-6" data-testid="patient-appointments-view">
+    <div className="space-y-6 overflow-x-hidden" data-testid="patient-appointments-view">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
@@ -1241,7 +1241,7 @@ export default function PatientAppointments({
       {/* Edit Appointment Modal */}
       {editingAppointment && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto overflow-x-hidden">
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div>

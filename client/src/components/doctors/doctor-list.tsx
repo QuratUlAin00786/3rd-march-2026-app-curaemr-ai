@@ -93,11 +93,42 @@ const formatDecimalString = (value?: number | string | null): string => {
   return numeric.toFixed(2);
 };
 
-const buildInvoiceDefaults = (appointment: any, serviceInfo: BookingServiceInfo | null) => {
-  const referenceDate = appointment?.scheduledAt ? new Date(appointment.scheduledAt) : new Date();
-  const serviceDate = referenceDate.toISOString().split("T")[0];
-  const invoiceDate = new Date().toISOString().split("T")[0];
-  const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+const buildInvoiceDefaults = (appointment: any, serviceInfo: BookingServiceInfo | null, userRole?: string) => {
+  // Extract date directly from scheduledAt string to avoid timezone conversion issues
+  // scheduledAt format is typically "YYYY-MM-DDTHH:mm:ss" or "YYYY-MM-DDTHH:mm:ss.sssZ"
+  let serviceDate: string;
+  if (appointment?.scheduledAt) {
+    // Extract date part directly from string (first 10 characters: YYYY-MM-DD)
+    // This avoids any timezone conversion issues
+    const scheduledAtStr = appointment.scheduledAt.toString();
+    if (scheduledAtStr.includes('T')) {
+      // Extract date part before 'T' - this is the actual date without timezone conversion
+      serviceDate = scheduledAtStr.split('T')[0];
+    } else if (scheduledAtStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+      // If it's already in YYYY-MM-DD format, use it directly
+      serviceDate = scheduledAtStr.substring(0, 10);
+    } else {
+      // Fallback: parse as date but use UTC methods to avoid timezone shift
+      const dateObj = new Date(appointment.scheduledAt);
+      // Use UTC methods to get the exact date without timezone conversion
+      const year = dateObj.getUTCFullYear();
+      const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getUTCDate()).padStart(2, '0');
+      serviceDate = `${year}-${month}-${day}`;
+    }
+  } else {
+    // Fallback to current date if no scheduledAt
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    serviceDate = `${year}-${month}-${day}`;
+  }
+  
+  // Invoice date should be current date, while service date and due date should be appointment date
+  const invoiceDate = new Date().toISOString().split("T")[0]; // Current date for invoice date
+  const dueDate = serviceDate; // Due date should be the same as service date (appointment date)
+  
   const amount = serviceInfo?.amount || "50.00";
   const serviceDescription =
     serviceInfo?.name || appointment?.title || "General Consultation";
@@ -105,14 +136,14 @@ const buildInvoiceDefaults = (appointment: any, serviceInfo: BookingServiceInfo 
 
   return {
     serviceDate,
-    invoiceDate,
-    dueDate,
+    invoiceDate, // Same as appointment scheduledAt date
+    dueDate, // Same as appointment scheduledAt date
     serviceCode,
     serviceDescription,
     amount,
     insuranceProvider: "None (Patient Self-Pay)",
     notes: "",
-    paymentMethod: "Online Payment",
+    paymentMethod: "Not Selected", // Default to "Not Selected" instead of "Online Payment"
   };
 };
 
@@ -803,9 +834,45 @@ const bookingSummaryServiceInfo = useMemo(
       });
       const appointment = await appointmentResponse.json();
 
+      // Use appointment_id from the created appointment as serviceId in invoice
+      // Also ensure service date and due date use the actual appointment date (schedule_at)
+      // Due date should always be the same as service date (dateOfService)
+      const appointmentDate = appointment.scheduledAt || appointmentData.scheduledAt;
+      let serviceDate = invoiceData.dateOfService;
+      
+      // Extract date from appointment scheduledAt if available
+      // Use UTC methods to avoid timezone conversion issues
+      if (appointmentDate) {
+        const scheduledAtStr = appointmentDate.toString();
+        if (scheduledAtStr.includes('T')) {
+          // Extract date part before 'T' - this is the actual date without timezone conversion
+          serviceDate = scheduledAtStr.split('T')[0];
+        } else if (scheduledAtStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+          // If it's already in YYYY-MM-DD format, use it directly
+          serviceDate = scheduledAtStr.substring(0, 10);
+        } else {
+          // Fallback: parse as date but use UTC methods to avoid timezone shift
+          const dateObj = new Date(appointmentDate);
+          const year = dateObj.getUTCFullYear();
+          const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(dateObj.getUTCDate()).padStart(2, '0');
+          serviceDate = `${year}-${month}-${day}`;
+        }
+      }
+      
+      // Due date should always be the same as service date (dateOfService)
+      const dueDate = serviceDate;
+      
+      // Ensure all required fields are explicitly included in the invoice data
       const invoiceDataWithServiceId = {
         ...invoiceData,
         serviceId: appointment.appointmentId || appointment.appointment_id,
+        dateOfService: serviceDate, // Use actual appointment date
+        dueDate: dueDate, // Due date should always be the same as service date (dateOfService)
+        // Explicitly ensure these fields are included (don't rely on spread alone)
+        serviceType: invoiceData.serviceType || "appointments", // Ensure serviceType is set
+        doctorId: invoiceData.doctorId !== undefined && invoiceData.doctorId !== null ? Number(invoiceData.doctorId) : (appointment.providerId || appointment.provider_id ? Number(appointment.providerId || appointment.provider_id) : null), // Ensure doctorId is set from appointment if not in invoiceData
+        createdBy: invoiceData.createdBy || user?.id || null, // Ensure createdBy is set
       };
 
       const invoiceResponse = await apiRequest("POST", "/api/invoices", invoiceDataWithServiceId);
@@ -1089,7 +1156,7 @@ const bookingSummaryServiceInfo = useMemo(
 
     setPendingAppointmentData(appointmentData);
     const serviceInfo = getBookingServiceInfo(appointmentData);
-    setInvoiceForm(buildInvoiceDefaults(appointmentData, serviceInfo));
+    setInvoiceForm(buildInvoiceDefaults(appointmentData, serviceInfo, user?.role));
 
     if (user?.role === "patient") {
       setIsBookingOpen(false);
@@ -1208,21 +1275,80 @@ const bookingSummaryServiceInfo = useMemo(
       }
 
       const amount = parseFloat(invoiceForm.amount || "0");
+      
+      // Set invoice status based on payment method (follow admin strategy):
+      // - Cash payments: "paid" (since paidAmount equals totalAmount)
+      // - All other cases (including Stripe/Online payments not paid): "unpaid" status
+      const isCashPayment = invoiceForm.paymentMethod === "Cash";
+      const paidAmount = isCashPayment ? invoiceForm.amount : "0";
+      
+      let invoiceStatus: string;
+      if (isCashPayment && parseFloat(paidAmount) === amount) {
+        invoiceStatus = "paid";
+      } else {
+        // Default to "unpaid" for all non-cash payments or unpaid invoices
+        invoiceStatus = "unpaid";
+      }
+      
+      // Fix payment method: If status is "unpaid", paymentMethod should always be "Not Selected" (like admin role)
+      let finalPaymentMethod = invoiceForm.paymentMethod;
+      if (invoiceStatus === "unpaid") {
+        finalPaymentMethod = "Not Selected";
+      }
+      
+      // Extract appointment date from appointmentData for correct service date and due date
+      // Invoice date should be current date, while service date and due date should be appointment date
+      const appointmentScheduledAt = appointmentData?.scheduledAt;
+      let finalServiceDate = invoiceForm.serviceDate;
+      
+      if (appointmentScheduledAt) {
+        const scheduledAtStr = appointmentScheduledAt.toString();
+        if (scheduledAtStr.includes('T')) {
+          // Extract date part before 'T' - this is the actual date without timezone conversion
+          finalServiceDate = scheduledAtStr.split('T')[0];
+        } else if (scheduledAtStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+          // If it's already in YYYY-MM-DD format, use it directly
+          finalServiceDate = scheduledAtStr.substring(0, 10);
+        } else {
+          // Fallback: parse as date but use UTC methods to avoid timezone shift
+          const dateObj = new Date(appointmentScheduledAt);
+          const year = dateObj.getUTCFullYear();
+          const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(dateObj.getUTCDate()).padStart(2, '0');
+          finalServiceDate = `${year}-${month}-${day}`;
+        }
+      }
+      
+      // Due date should always be the same as service date (dateOfService)
+      const finalDueDate = finalServiceDate;
+      
+      // Get doctor/provider ID from appointmentData - ensure we get it from multiple sources
+      const doctorId = appointmentData?.providerId || 
+                      appointmentData?.doctorId || 
+                      selectedBookingDoctor?.id || 
+                      null;
+      
+      // Ensure doctorId is always a number if available
+      const finalDoctorId = doctorId ? Number(doctorId) : null;
+      
       const invoiceData = {
         patientId: patient.patientId || patient.id.toString(),
         patientName: `${patient.firstName} ${patient.lastName}`,
         nhsNumber: patient.nhsNumber || "",
-        dateOfService: invoiceForm.serviceDate,
-        invoiceDate: invoiceForm.invoiceDate,
-        dueDate: invoiceForm.dueDate,
-        status: "sent",
+        dateOfService: finalServiceDate, // Use actual appointment date
+        invoiceDate: new Date().toISOString().split("T")[0], // Invoice date should be current date
+        dueDate: finalDueDate, // Due date should always be the same as service date (dateOfService)
+        status: invoiceStatus,
         invoiceType: "payment",
-        paymentMethod: invoiceForm.paymentMethod,
+        serviceType: "appointments", // Set service type to "appointments" for patient bookings - REQUIRED
+        paymentMethod: finalPaymentMethod, // "Not Selected" if unpaid, otherwise original value
+        doctorId: finalDoctorId, // Always include doctorId if available (follow admin strategy) - REQUIRED
+        createdBy: user?.id || null, // Add logged-in user ID to created_by column - REQUIRED
         subtotal: invoiceForm.amount,
         tax: "0",
         discount: "0",
         totalAmount: invoiceForm.amount,
-        paidAmount: invoiceForm.paymentMethod === "Cash" ? invoiceForm.amount : "0",
+        paidAmount: paidAmount, // Use calculated paidAmount (0 for unpaid, amount for cash)
         items: [
           {
             code: invoiceForm.serviceCode,
@@ -1230,6 +1356,7 @@ const bookingSummaryServiceInfo = useMemo(
             quantity: 1,
             unitPrice: amount,
             total: amount,
+            serviceType: "appointments" // Include serviceType in items as well
           },
         ],
         insuranceProvider: invoiceForm.insuranceProvider,
@@ -1882,12 +2009,25 @@ const bookingSummaryServiceInfo = useMemo(
 
       {/* Stripe Payment Dialog */}
       <Dialog open={!!stripeClientSecret} onOpenChange={(open) => {
-        if (!open) {
-          setStripeClientSecret("");
-          setCreatedInvoiceId(null);
+        // Prevent closing on outside click - only close via X button or Cancel
+        if (open) {
+          // Keep dialog open
+          return;
         }
+        // If open is false, ignore it - user must click X or Cancel button
+        // Only close via explicit button handlers
       }}>
-        <DialogContent className="max-w-md max-h-[550px] flex flex-col">
+        <DialogContent 
+          className="max-w-md max-h-[550px] flex flex-col"
+          onPointerDownOutside={(e) => {
+            // Prevent closing on outside click
+            e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            // Prevent closing on Escape key
+            e.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CreditCard className="h-5 w-5" />
@@ -1902,13 +2042,28 @@ const bookingSummaryServiceInfo = useMemo(
               <Elements stripe={stripePromise} options={{ clientSecret: stripeClientSecret }}>
                 <StripePaymentForm
                   onSuccess={async () => {
+                    // Update invoice status to paid and payment details
                     if (createdInvoiceId) {
                       try {
+                        // Get the invoice to get the total amount
+                        const invoiceResponse = await apiRequest('GET', `/api/billing/invoices/${createdInvoiceId}`);
+                        const invoice = await invoiceResponse.json();
+                        const totalAmount = parseFloat(invoice.totalAmount || invoice.subtotal || "0");
+                        
+                        // Update invoice to paid status with payment details
                         await apiRequest("PATCH", `/api/billing/invoices/${createdInvoiceId}`, {
                           status: "paid",
+                          paymentMethod: "Online Payment",
+                          paidAmount: totalAmount.toString()
                         });
+                        
+                        // Invalidate queries to refresh the billing page
+                        queryClient.invalidateQueries({ queryKey: ["/api/billing/invoices"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/billing"] });
+                        
+                        console.log("✅ Invoice status updated to paid with payment details");
                       } catch (error) {
-                        console.error("Failed to update invoice status:", error);
+                        console.error("❌ Failed to update invoice status:", error);
                       }
                     }
                     setStripeClientSecret("");
@@ -1931,15 +2086,29 @@ const bookingSummaryServiceInfo = useMemo(
       </Dialog>
 
       {/* Booking Dialog */}
-      <Dialog open={isBookingOpen} onOpenChange={(open) => {
-        setIsBookingOpen(open);
-        if (!open) {
-          setBookingInProgress(null);
-        }
-      }}>
+      <Dialog 
+        open={isBookingOpen} 
+        onOpenChange={(open) => {
+          // Prevent closing on outside click - only close via X button or Cancel
+          // Don't allow closing via onOpenChange (which triggers on backdrop click)
+          // Only allow explicit closes via button handlers
+          if (open) {
+            setIsBookingOpen(true);
+          }
+          // If open is false, ignore it - user must click X or Cancel button
+        }}
+      >
         <DialogContent
           className="max-w-6xl max-h-[90vh] overflow-y-auto"
           aria-describedby="booking-dialog-description"
+          onPointerDownOutside={(e) => {
+            // Prevent closing on outside click - only close via X button or Cancel
+            e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            // Prevent closing on Escape key - only close via X button or Cancel
+            e.preventDefault();
+          }}
         >
           <DialogHeader>
             <DialogTitle>
@@ -2392,13 +2561,30 @@ const bookingSummaryServiceInfo = useMemo(
       </Dialog>
 
       {/* Confirmation Dialog */}
-      <Dialog open={isConfirmationOpen} onOpenChange={(open) => {
-        setIsConfirmationOpen(open);
-        if (!open && !bookAppointmentMutation.isPending) {
-          setBookingInProgress(null);
-        }
-      }}>
-        <DialogContent className="max-w-2xl" aria-describedby="confirmation-dialog-description">
+      <Dialog 
+        open={isConfirmationOpen} 
+        onOpenChange={(open) => {
+          // Prevent closing on outside click - only close via X button or Cancel
+          // Don't allow closing via onOpenChange (which triggers on backdrop click)
+          if (open) {
+            setIsConfirmationOpen(true);
+          }
+          // If open is false, ignore it - user must click X or Cancel button
+          // Reset booking progress only when explicitly closed via button
+        }}
+      >
+        <DialogContent 
+          className="max-w-2xl" 
+          aria-describedby="confirmation-dialog-description"
+          onPointerDownOutside={(e) => {
+            // Prevent closing on outside click
+            e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            // Prevent closing on Escape key
+            e.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Appointment Booking Confirmation</DialogTitle>
           </DialogHeader>
@@ -2543,12 +2729,28 @@ const bookingSummaryServiceInfo = useMemo(
       </Dialog>
 
       {/* Invoice Creation Modal */}
-      <Dialog open={showInvoiceModal} onOpenChange={(open) => {
-        if (!open) {
-          setShowInvoiceModal(false);
-        }
-      }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <Dialog 
+        open={showInvoiceModal} 
+        onOpenChange={(open) => {
+          // Prevent closing on outside click - only close via X button or Cancel
+          // Don't allow closing via onOpenChange (which triggers on backdrop click)
+          if (open) {
+            setShowInvoiceModal(true);
+          }
+          // If open is false, ignore it - user must click X or Cancel button
+        }}
+      >
+        <DialogContent 
+          className="max-w-3xl max-h-[90vh] overflow-y-auto"
+          onPointerDownOutside={(e) => {
+            // Prevent closing on outside click - only close via X button or Cancel
+            e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            // Prevent closing on Escape key - only close via X button or Cancel
+            e.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Create New Invoice</DialogTitle>
           </DialogHeader>

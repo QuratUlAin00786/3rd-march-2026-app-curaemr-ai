@@ -22,9 +22,32 @@ export interface TenantRequest extends Request {
 
 export async function tenantMiddleware(req: TenantRequest, res: Response, next: NextFunction) {
   try {
+    // DEBUG: Log all incoming requests
+    console.log(`[TENANT-MIDDLEWARE] 🔍 Request: ${req.method} ${req.path} | originalUrl: ${req.originalUrl} | url: ${req.url}`);
+    
     // CRITICAL: Skip tenant middleware for SaaS routes - they use separate authentication
     if (req.path.startsWith('/saas/')) {
       console.log(`[TENANT-MIDDLEWARE] ✅ Skipping SaaS route: ${req.path}`);
+      return next();
+    }
+    
+    // Skip subscription checks for admin endpoints - they need to bypass subscription validation
+    if (req.path.startsWith('/api/admin/')) {
+      console.log(`[TENANT-MIDDLEWARE] ✅ Skipping subscription check for admin endpoint: ${req.path}`);
+      return next();
+    }
+    
+    // Skip subscription checks for login endpoints - they handle their own subscription validation
+    // Universal login determines organization from user, regular login uses subdomain but handles subscription check
+    // Check both /api/auth/... and /auth/... paths (depending on how Express mounts routes)
+    const authPath = req.path;
+    const originalUrl = req.originalUrl || req.url || '';
+    if (authPath === '/api/auth/universal-login' || authPath === '/auth/universal-login' ||
+        authPath === '/api/auth/login' || authPath === '/auth/login' ||
+        originalUrl.includes('/auth/universal-login') || originalUrl.includes('/auth/login') ||
+        authPath.startsWith('/api/auth/forgot-password') || authPath.startsWith('/auth/forgot-password') ||
+        authPath.startsWith('/api/auth/reset-password') || authPath.startsWith('/auth/reset-password')) {
+      console.log(`[TENANT-MIDDLEWARE] ✅ Skipping subscription check for auth endpoint: path=${authPath}, originalUrl=${originalUrl}`);
       return next();
     }
     
@@ -175,19 +198,24 @@ export async function tenantMiddleware(req: TenantRequest, res: Response, next: 
     console.log(`[TENANT-MIDDLEWARE] Path check - path: ${req.path}, originalUrl: ${req.originalUrl}, url: ${req.url}, isTenantInfo: ${isTenantInfoEndpoint}`);
     
     if (!isTenantInfoEndpoint) {
-      // Check subscription expiration - get from saas_subscriptions table
-      const subscription = await storage.getOrganizationSubscription(organization.id);
-      if (subscription) {
-        // Check if subscription status is valid
-        if (!["trial", "active"].includes(subscription.status)) {
-          return res.status(403).json({ error: "Subscription inactive" });
-        }
+      // Skip subscription check for admin endpoints
+      const isAdminEndpoint = req.path.startsWith('/api/admin/');
+      if (!isAdminEndpoint) {
+        // Check subscription expiration - get from saas_subscriptions table
+        const subscription = await storage.getOrganizationSubscription(organization.id);
+        if (subscription) {
+          // Check if subscription status is valid (case-insensitive)
+          const normalizedStatus = subscription.status?.toLowerCase() || '';
+          if (!["trial", "active"].includes(normalizedStatus)) {
+            console.log(`[TENANT-MIDDLEWARE] ❌ Subscription inactive for org ${organization.id}, status: ${subscription.status} (normalized: ${normalizedStatus})`);
+            return res.status(403).json({ error: "Subscription inactive" });
+          }
         
-        // Check if subscription has expired based on expiresAt
-        // Only check expiration for authenticated requests (login endpoints handle unauthenticated)
-        const hasAuthToken = req.get("Authorization")?.startsWith("Bearer ");
-        
-        if (hasAuthToken && subscription.expiresAt) {
+          // Check if subscription has expired based on expiresAt
+          // Only check expiration for authenticated requests (login endpoints handle unauthenticated)
+          const hasAuthToken = req.get("Authorization")?.startsWith("Bearer ");
+          
+          if (hasAuthToken && subscription.expiresAt) {
           // Parse expiresAt - handle both Date objects and ISO strings
           let expiresAt: Date;
           if (subscription.expiresAt instanceof Date) {
@@ -234,6 +262,7 @@ export async function tenantMiddleware(req: TenantRequest, res: Response, next: 
             });
           }
         }
+      }
       }
     } else {
       console.log(`[TENANT-MIDDLEWARE] ✅ Allowing /tenant/info endpoint without subscription checks`);

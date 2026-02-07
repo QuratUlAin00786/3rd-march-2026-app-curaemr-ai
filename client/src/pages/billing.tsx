@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
@@ -64,7 +64,7 @@ interface Invoice {
   dateOfService: string;
   invoiceDate: string;
   dueDate: string;
-  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
+  status: 'unpaid' | 'sent' | 'paid' | 'overdue' | 'cancelled';
   totalAmount: number;
   paidAmount: number;
   items: Array<{
@@ -102,6 +102,8 @@ interface LineItem {
   unitPrice: number;
   total: number;
   readOnlyPrice?: boolean;
+  providerName?: string; // Display name of the provider/doctor
+  doctorId?: number; // ID of the provider/doctor for saving to invoice
 }
 
 const DOCTOR_SERVICE_OPTIONS = [
@@ -3773,8 +3775,8 @@ export default function BillingPage() {
   const [invoiceToPay, setInvoiceToPay] = useState<Invoice | null>(null);
   const [isListView, setIsListView] = useState(true);
   const [invoicePaymentMethod, setInvoicePaymentMethod] = useState<
-    "Cash" | "Online Payment" | "Insurance"
-  >("Online Payment");
+    "Cash" | "Online Payment" | "Insurance" | "Not Selected"
+  >("Not Selected");
   const [invoiceStatus, setInvoiceStatus] = useState<"pending" | "paid" | "partial">("pending");
   const [insuranceDetails, setInsuranceDetails] = useState({
     provider: "",
@@ -3846,12 +3848,16 @@ export default function BillingPage() {
   };
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
 
-  const handleInvoicePaymentMethodChange = (newMethod: "Cash" | "Online Payment" | "Insurance") => {
+  const handleInvoicePaymentMethodChange = (newMethod: "Cash" | "Online Payment" | "Insurance" | "Not Selected") => {
     setInvoicePaymentMethod(newMethod);
     if (newMethod === "Cash") {
       setInvoiceStatus("paid");
     } else if (newMethod === "Online Payment") {
+      // Online Payment means payment is expected, status will be "pending" or "sent", not "unpaid"
       setInvoiceStatus("pending");
+    } else if (newMethod === "Not Selected") {
+      // "Not Selected" means no payment method chosen, status will be "unpaid" on server
+      setInvoiceStatus("pending"); // Status will be set to "unpaid" on server when payment method is "Not Selected"
     } else {
       setInvoiceStatus("pending");
     }
@@ -3859,7 +3865,11 @@ export default function BillingPage() {
 
   const handlePaymentSuccess = async (paidInvoice: Invoice) => {
     try {
-      await apiRequest("PATCH", `/api/billing/invoices/${paidInvoice.id}`, { status: "paid" });
+      // Update invoice status to "paid" and payment method to "Online Payment" when Stripe payment succeeds
+      await apiRequest("PATCH", `/api/billing/invoices/${paidInvoice.id}`, { 
+        status: "paid",
+        paymentMethod: "Online Payment"
+      });
       toast({
         title: "Payment Successful",
         description: `Invoice ${paidInvoice.invoiceNumber} marked as paid.`,
@@ -3937,7 +3947,7 @@ export default function BillingPage() {
   const isPatient = user?.role === 'patient';
   const canShowNewInvoiceButton = isAdmin || user?.role === 'doctor' || user?.role === 'nurse';
 
-  // Fetch clinic headers and footers
+  // Fetch clinic headers and footers from database tables clinic_headers and clinic_footers
   useEffect(() => {
     const fetchClinicBranding = async () => {
       try {
@@ -3956,10 +3966,22 @@ export default function BillingPage() {
             try {
               const headerData = await headerResponse.json();
               if (headerData) {
-                setClinicHeader(headerData);
+                // Handle array response - get the first active header or first one
+                let header = null;
+                if (Array.isArray(headerData)) {
+                  // Find active header or use first one
+                  header = headerData.find((h: any) => h.isActive === true) || headerData[0];
+                } else if (typeof headerData === 'object') {
+                  // Single object response
+                  header = headerData;
+                }
+                
+                if (header) {
+                  setClinicHeader(header);
+                }
               }
             } catch (jsonError) {
-              // Silently ignore JSON parse errors - endpoint might return HTML
+              console.error('Error parsing clinic header JSON:', jsonError);
             }
           }
         }
@@ -3973,21 +3995,36 @@ export default function BillingPage() {
             try {
               const footerData = await footerResponse.json();
               if (footerData) {
-                setClinicFooter(footerData);
+                // Handle array response - get the first active footer or first one
+                let footer = null;
+                if (Array.isArray(footerData)) {
+                  // Find active footer or use first one
+                  footer = footerData.find((f: any) => f.isActive === true) || footerData[0];
+                } else if (typeof footerData === 'object') {
+                  // Single object response
+                  footer = footerData;
+                }
+                
+                if (footer) {
+                  setClinicFooter(footer);
+                }
               }
             } catch (jsonError) {
-              // Silently ignore JSON parse errors - endpoint might return HTML
+              console.error('Error parsing clinic footer JSON:', jsonError);
             }
           }
         }
       } catch (error: any) {
+        console.error('Error fetching clinic branding:', error);
         // Silently handle errors - clinic branding is optional
-        // The endpoints might not exist yet or the server might not have restarted
       }
     };
     
-    fetchClinicBranding();
-  }, []);
+    // Only fetch for admin/doctor/nurse roles
+    if (isAdmin || user?.role === 'doctor' || user?.role === 'nurse') {
+      fetchClinicBranding();
+    }
+  }, [isAdmin, user?.role]);
 
   const handleViewInvoice = (invoice: Invoice) => {
     setSelectedInvoice(invoice);
@@ -4179,6 +4216,28 @@ export default function BillingPage() {
     const uniqueServiceTypes = Array.from(new Set(lineItems.map((item) => item.serviceType)));
     const serviceTypeField = uniqueServiceTypes.length === 1 ? uniqueServiceTypes[0] : "multiple";
     const serviceIds = lineItems.map((item) => item.serviceId).filter(Boolean) as string[];
+    
+    // Determine doctor_id: use the first line item's doctorId if available
+    // If multiple line items have different doctorIds, use the first one
+    const doctorId = lineItems.find((item) => item.doctorId)?.doctorId;
+
+    // Determine payment method: if status will be unpaid, payment method should be "Not Selected"
+    // If payment method is "Not Selected", status will be "unpaid" on server
+    // "Online Payment" should only be used when payment is actually processed via Stripe
+    // If user selected "Online Payment" but invoice is not paid, use "Not Selected" instead
+    let finalPaymentMethod = invoicePaymentMethod || "Not Selected";
+    
+    // If payment method is "Not Selected", ensure it stays that way (status will be unpaid)
+    // If payment method is "Online Payment" but invoice is not paid, change to "Not Selected"
+    // "Online Payment" should only be set when payment is actually completed via Stripe
+    if (!invoicePaymentMethod || invoicePaymentMethod === "Not Selected") {
+      finalPaymentMethod = "Not Selected";
+    } else if (invoicePaymentMethod === "Online Payment") {
+      // "Online Payment" should only be used when payment is actually processed
+      // Since we're creating a new invoice, it's not paid yet, so use "Not Selected"
+      // The payment method will be updated to "Online Payment" when Stripe payment succeeds
+      finalPaymentMethod = "Not Selected";
+    }
 
     const payload = {
       patientId: selectedPatient,
@@ -4186,7 +4245,9 @@ export default function BillingPage() {
       invoiceDate,
       dueDate,
       totalAmount: total.toFixed(2),
-      paymentMethod: invoicePaymentMethod,
+      // If payment method is "Not Selected", status will be "unpaid" on server
+      // If payment method is "Online Payment", status will be "pending" or "sent"
+      paymentMethod: finalPaymentMethod,
       insuranceProvider: resolvedInsuranceProvider,
       nhsNumber: nhsNumber.trim() || undefined,
       notes: [notes, insuranceSummary].filter(Boolean).join(' | '),
@@ -4200,7 +4261,8 @@ export default function BillingPage() {
         serviceId: item.serviceId
       })),
       serviceType: serviceTypeField,
-      serviceIds
+      serviceIds,
+      doctorId: doctorId || undefined
     };
 
     try {
@@ -4229,7 +4291,7 @@ export default function BillingPage() {
         unitPrice: ""
       });
       setServiceSelectionError("");
-      setInvoicePaymentMethod("Online Payment");
+      setInvoicePaymentMethod("Not Selected");
       setInvoiceStatus("pending");
       setInsuranceDetails({
         provider: "",
@@ -4378,6 +4440,8 @@ export default function BillingPage() {
 
   const handleSaveInvoice = async (invoiceId: string) => {
     console.log('💾 Save Invoice button clicked for invoice:', invoiceId);
+    console.log('📋 Current clinicHeader state:', clinicHeader);
+    console.log('📋 Current clinicFooter state:', clinicFooter);
     
     const invoice = Array.isArray(invoices) ? invoices.find((inv: any) => inv.id === Number(invoiceId)) : null;
     
@@ -4391,12 +4455,115 @@ export default function BillingPage() {
       return;
     }
 
+    // Always fetch clinic branding data to ensure we have the latest
+    let currentClinicHeader = clinicHeader;
+    let currentClinicFooter = clinicFooter;
+    
+    console.log('🔄 Fetching clinic branding data...');
+    try {
+      const [headerResult, footerResult] = await Promise.allSettled([
+        apiRequest('GET', '/api/clinic-headers', undefined),
+        apiRequest('GET', '/api/clinic-footers', undefined)
+      ]);
+      
+      // Handle header response
+      if (headerResult.status === 'fulfilled') {
+        const headerResponse = headerResult.value;
+        console.log('📋 Header response status:', headerResponse.status, headerResponse.ok);
+        
+        if (headerResponse.ok) {
+          try {
+            const headerData = await headerResponse.json();
+            console.log('📋 Raw header data:', headerData);
+            
+            if (headerData) {
+              let header = null;
+              if (Array.isArray(headerData)) {
+                header = headerData.find((h: any) => h.isActive === true) || headerData[0];
+                console.log('📋 Selected header from array:', header);
+              } else if (typeof headerData === 'object') {
+                header = headerData;
+                console.log('📋 Using header object:', header);
+              }
+              if (header) {
+                currentClinicHeader = header;
+                setClinicHeader(header);
+                console.log('✅ Clinic header fetched and set:', {
+                  clinicName: header.clinicName || header.name,
+                  tagline: header.tagline || header.subtitle,
+                  hasLogo: !!(header.logoBase64 || header.logoUrl)
+                });
+              } else {
+                console.warn('⚠️ No valid header found in response');
+              }
+            } else {
+              console.warn('⚠️ Header data is null or undefined');
+            }
+          } catch (jsonError) {
+            console.error('❌ Error parsing clinic header JSON:', jsonError);
+          }
+        } else {
+          const errorText = await headerResponse.text().catch(() => '');
+          console.error('❌ Header response not OK:', headerResponse.status, errorText);
+        }
+      } else {
+        console.error('❌ Header request failed:', headerResult.reason);
+      }
+      
+      // Handle footer response
+      if (footerResult.status === 'fulfilled') {
+        const footerResponse = footerResult.value;
+        console.log('📋 Footer response status:', footerResponse.status, footerResponse.ok);
+        
+        if (footerResponse.ok) {
+          try {
+            const footerData = await footerResponse.json();
+            console.log('📋 Raw footer data:', footerData);
+            
+            if (footerData) {
+              let footer = null;
+              if (Array.isArray(footerData)) {
+                footer = footerData.find((f: any) => f.isActive === true) || footerData[0];
+                console.log('📋 Selected footer from array:', footer);
+              } else if (typeof footerData === 'object') {
+                footer = footerData;
+                console.log('📋 Using footer object:', footer);
+              }
+              if (footer) {
+                currentClinicFooter = footer;
+                setClinicFooter(footer);
+                console.log('✅ Clinic footer fetched and set:', {
+                  footerText: footer.footerText || footer.text,
+                  disclaimer: footer.disclaimer || footer.copyright
+                });
+              } else {
+                console.warn('⚠️ No valid footer found in response');
+              }
+            } else {
+              console.warn('⚠️ Footer data is null or undefined');
+            }
+          } catch (jsonError) {
+            console.error('❌ Error parsing clinic footer JSON:', jsonError);
+          }
+        } else {
+          const errorText = await footerResponse.text().catch(() => '');
+          console.error('❌ Footer response not OK:', footerResponse.status, errorText);
+        }
+      } else {
+        console.error('❌ Footer request failed:', footerResult.reason);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching clinic branding:', error);
+    }
+
     try {
       // Helper to safely convert to number and format
       const toNum = (val: any) => typeof val === 'string' ? parseFloat(val) : val;
 
       // Create PDF document
       console.log('📄 Creating PDF document for save...');
+      console.log('📋 Using clinicHeader:', currentClinicHeader);
+      console.log('📋 Using clinicFooter:', currentClinicFooter);
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
@@ -4404,81 +4571,210 @@ export default function BillingPage() {
       const contentWidth = pageWidth - 2 * margin;
 
       // Function to add header to page
+      // Helper function to auto-adjust font size based on text length and available width
+      const getAutoFontSize = (text: string, maxWidth: number, minSize: number = 8, maxSize: number = 24): number => {
+        if (!text) return maxSize;
+        const textWidth = doc.getTextWidth(text);
+        if (textWidth <= maxWidth) return maxSize;
+        // Calculate appropriate font size
+        const ratio = maxWidth / textWidth;
+        const calculatedSize = Math.max(minSize, Math.min(maxSize, maxSize * ratio));
+        return Math.floor(calculatedSize);
+      };
+
       const addHeader = () => {
-        // Purple header background
-        doc.setFillColor(79, 70, 229);
-        doc.rect(0, 0, pageWidth, 40, 'F');
-        
+        // Clean white header - no background color
+        const headerHeight = 70;
         let logoX = margin;
         let textX = margin;
-        const logoSize = 25;
+        const logoSize = 35;
+        const lineSpacing = 2;
         
-        // Add logo if available
-        if (clinicHeader?.logoBase64) {
+        // Service ID in top left corner
+        const serviceId = invoice.serviceId || invoice.service_id || invoice.items?.[0]?.serviceId;
+        if (serviceId) {
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(100, 100, 100); // Gray color
+          doc.text(String(serviceId), margin, 8);
+        }
+        
+        // Status badge in top right corner
+        const invoiceStatus = invoice.status || 'unpaid';
+        const statusText = invoiceStatus.charAt(0).toUpperCase() + invoiceStatus.slice(1);
+        
+        // Status badge colors
+        let statusBgColor = [220, 38, 38]; // Red for unpaid/overdue
+        let statusTextColor = [255, 255, 255]; // White text
+        
+        if (invoiceStatus === 'paid') {
+          statusBgColor = [34, 197, 94]; // Green
+        } else if (invoiceStatus === 'partial') {
+          statusBgColor = [251, 191, 36]; // Yellow/Amber
+        } else if (invoiceStatus === 'cancelled') {
+          statusBgColor = [107, 114, 128]; // Gray
+        }
+        
+        // Draw status badge background
+        const statusTextWidth = doc.getTextWidth(statusText);
+        const badgeWidth = statusTextWidth + 8;
+        const badgeHeight = 6;
+        const badgeX = pageWidth - margin - badgeWidth;
+        const badgeY = 5;
+        
+        doc.setFillColor(statusBgColor[0], statusBgColor[1], statusBgColor[2]);
+        doc.roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 1, 1, 'F');
+        
+        // Status text
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(statusTextColor[0], statusTextColor[1], statusTextColor[2]);
+        doc.text(statusText, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2 + 1, { align: 'center' });
+        
+        // Add logo if available from clinic_headers table
+        if (currentClinicHeader?.logoBase64 || currentClinicHeader?.logoUrl) {
           try {
-            const logoPosition = clinicHeader?.logoPosition || 'left';
-            const logoData = clinicHeader.logoBase64.includes(',') 
-              ? clinicHeader.logoBase64 
-              : `data:image/png;base64,${clinicHeader.logoBase64}`;
+            const logoPosition = currentClinicHeader?.logoPosition || 'left';
+            let logoData = '';
+            let imageFormat = 'PNG';
             
-            if (logoPosition === 'left') {
-              // Logo on left
-              doc.addImage(logoData, 'PNG', logoX, 7, logoSize, logoSize);
-              textX = logoX + logoSize + 10;
-            } else if (logoPosition === 'center') {
-              // Logo centered
-              const centerX = (pageWidth - logoSize) / 2;
-              doc.addImage(logoData, 'PNG', centerX, 7, logoSize, logoSize);
-              textX = margin;
-            } else {
-              // Logo on right
-              logoX = pageWidth - margin - logoSize - 100;
-              doc.addImage(logoData, 'PNG', logoX, 7, logoSize, logoSize);
-              textX = margin;
+            if (currentClinicHeader.logoBase64) {
+              if (currentClinicHeader.logoBase64.includes(',')) {
+                logoData = currentClinicHeader.logoBase64;
+                const formatMatch = logoData.match(/data:image\/(\w+);base64/);
+                if (formatMatch) {
+                  imageFormat = formatMatch[1].toUpperCase();
+                }
+              } else {
+                logoData = `data:image/png;base64,${currentClinicHeader.logoBase64}`;
+                imageFormat = 'PNG';
+              }
+            } else if (currentClinicHeader.logoUrl && currentClinicHeader.logoUrl.startsWith('data:')) {
+              logoData = currentClinicHeader.logoUrl;
+              const formatMatch = logoData.match(/data:image\/(\w+);base64/);
+              if (formatMatch) {
+                imageFormat = formatMatch[1].toUpperCase();
+              }
+            }
+            
+            if (logoData) {
+              if (logoPosition === 'left') {
+                doc.addImage(logoData, imageFormat, logoX, 10, logoSize, logoSize);
+                textX = logoX + logoSize + 7;
+              } else if (logoPosition === 'center') {
+                const centerX = (pageWidth - logoSize) / 2;
+                doc.addImage(logoData, imageFormat, centerX, 10, logoSize, logoSize);
+                textX = margin;
+              } else {
+                logoX = pageWidth - margin - logoSize - 130;
+                doc.addImage(logoData, imageFormat, logoX, 10, logoSize, logoSize);
+                textX = margin;
+              }
             }
           } catch (error) {
             console.error('Error adding logo to invoice PDF:', error);
-            // Continue without logo if there's an error
           }
         }
         
-        // Clinic name
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(24);
-        doc.setFont('helvetica', 'bold');
-        doc.text(clinicHeader?.clinicName || 'nhjn', textX, 18);
+        // Set black text color for header details
+        doc.setTextColor(0, 0, 0);
         
-        // Tagline
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
-        doc.text(clinicHeader?.tagline || 'Excellence in Healthcare', textX, 28);
+        // Clinic name from clinic_headers table - with auto font sizing
+        const clinicName = currentClinicHeader?.clinicName || currentClinicHeader?.name || null;
+        let currentY = 15;
+        const availableWidth = pageWidth - textX - margin - 130; // Reserve space for "INVOICE" text
         
-        // INVOICE text on right
+        if (clinicName) {
+          const fontSize = getAutoFontSize(clinicName, availableWidth, 14, 22);
+          doc.setFontSize(fontSize);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(66, 133, 244); // Blue color for clinic name
+          doc.text(clinicName, textX, currentY, { maxWidth: availableWidth });
+          currentY += fontSize * 0.4 + 2;
+        }
+        
+        // Address - on separate line
+        if (currentClinicHeader?.address) {
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0); // Black for details
+          doc.text(currentClinicHeader.address, textX, currentY, { maxWidth: availableWidth });
+          currentY += 4;
+        }
+        
+        // Phone and Email - on same line with bullet separator
+        const contactLine: string[] = [];
+        if (currentClinicHeader?.phone) contactLine.push(currentClinicHeader.phone);
+        if (currentClinicHeader?.email) contactLine.push(currentClinicHeader.email);
+        
+        if (contactLine.length > 0) {
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0);
+          const contactText = contactLine.join(' • ');
+          doc.text(contactText, textX, currentY, { maxWidth: availableWidth });
+          currentY += 4;
+        }
+        
+        // Website - on separate line
+        if (currentClinicHeader?.website) {
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0);
+          doc.text(currentClinicHeader.website, textX, currentY, { maxWidth: availableWidth });
+        }
+        
+        // INVOICE text on right - blue color
         doc.setFontSize(32);
         doc.setFont('helvetica', 'bold');
-        doc.text('INVOICE', pageWidth - margin - 55, 28);
+        doc.setTextColor(66, 133, 244); // Blue color for INVOICE
+        doc.text('INVOICE', pageWidth - margin - 5, headerHeight / 2 + 8, { align: 'right' });
       };
 
       // Function to add footer to page
       const addFooter = (pageNum: number) => {
         const footerY = pageHeight - 20;
+        console.log('📄 Adding footer at Y position:', footerY, 'Page height:', pageHeight);
+        console.log('📋 Footer data:', {
+          footerText: currentClinicFooter?.footerText || currentClinicFooter?.text,
+          disclaimer: currentClinicFooter?.disclaimer || currentClinicFooter?.copyright
+        });
+        
+        // Footer background
         doc.setFillColor(248, 250, 252);
         doc.rect(0, footerY - 5, pageWidth, 25, 'F');
+        
+        // Footer line
         doc.setDrawColor(229, 231, 235);
         doc.line(margin, footerY - 5, pageWidth - margin, footerY - 5);
+        
+        // Footer text from clinic_footers table - only if exists in database
         doc.setTextColor(107, 114, 128);
         doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
-        const footerText = clinicFooter?.footerText || 'Thank you for choosing Cura Medical Practice for your healthcare needs.';
-        doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
-        doc.text('© 2025 Cura Software Limited - Powered by Halo Group & Averox Technologies', pageWidth / 2, footerY + 8, { align: 'center' });
+        const footerText = currentClinicFooter?.footerText || currentClinicFooter?.text || null;
+        console.log('📝 Footer text from database:', footerText, 'Full footer:', currentClinicFooter);
+        if (footerText) {
+          doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
+        }
+        
+        // Additional footer information from clinic_footers table - only if exists in database
+        const disclaimer = currentClinicFooter?.disclaimer || currentClinicFooter?.copyright || null;
+        console.log('📝 Disclaimer from database:', disclaimer);
+        if (disclaimer) {
+          doc.text(disclaimer, pageWidth / 2, footerY + 8, { align: 'center' });
+        }
+        
+        // Page number
         doc.text(`Page ${pageNum}`, pageWidth - margin, footerY + 2, { align: 'right' });
+        console.log('✅ Footer added successfully');
       };
 
       // Start PDF content
       addHeader();
       
-      let yPosition = 50;
+      // Adjust starting position based on header height (70) + spacing
+      let yPosition = 85;
 
       // Bill To and Invoice Details section
       doc.setTextColor(0, 0, 0);
@@ -4525,7 +4821,7 @@ export default function BillingPage() {
           addFooter(1);
           doc.addPage();
           addHeader();
-          yPosition = 50;
+          yPosition = 85;
         }
 
         if (rowCount % 2 === 0) {
@@ -4673,8 +4969,10 @@ export default function BillingPage() {
     }
   };
 
-  const handleDownloadInvoice = (invoiceId: string) => {
+  const handleDownloadInvoice = async (invoiceId: string) => {
     console.log('🔽 Download button clicked for invoice:', invoiceId);
+    console.log('📋 Current clinicHeader state:', clinicHeader);
+    console.log('📋 Current clinicFooter state:', clinicFooter);
     
     const invoice = Array.isArray(invoices) ? invoices.find((inv: any) => inv.id === Number(invoiceId)) : null;
     
@@ -4690,43 +4988,284 @@ export default function BillingPage() {
 
     console.log('✅ Invoice found:', invoice);
 
+    // Always fetch clinic branding data to ensure we have the latest
+    let currentClinicHeader = clinicHeader;
+    let currentClinicFooter = clinicFooter;
+    
+    console.log('🔄 Fetching clinic branding data...');
+    try {
+      const [headerResult, footerResult] = await Promise.allSettled([
+        apiRequest('GET', '/api/clinic-headers', undefined),
+        apiRequest('GET', '/api/clinic-footers', undefined)
+      ]);
+      
+      // Handle header response
+      if (headerResult.status === 'fulfilled') {
+        const headerResponse = headerResult.value;
+        console.log('📋 Header response status:', headerResponse.status, headerResponse.ok);
+        
+        if (headerResponse.ok) {
+          try {
+            const headerData = await headerResponse.json();
+            console.log('📋 Raw header data:', headerData);
+            
+            if (headerData) {
+              let header = null;
+              if (Array.isArray(headerData)) {
+                header = headerData.find((h: any) => h.isActive === true) || headerData[0];
+                console.log('📋 Selected header from array:', header);
+              } else if (typeof headerData === 'object') {
+                header = headerData;
+                console.log('📋 Using header object:', header);
+              }
+              if (header) {
+                currentClinicHeader = header;
+                setClinicHeader(header);
+                console.log('✅ Clinic header fetched and set:', {
+                  clinicName: header.clinicName || header.name,
+                  tagline: header.tagline || header.subtitle,
+                  hasLogo: !!(header.logoBase64 || header.logoUrl)
+                });
+              } else {
+                console.warn('⚠️ No valid header found in response');
+              }
+            } else {
+              console.warn('⚠️ Header data is null or undefined');
+            }
+          } catch (jsonError) {
+            console.error('❌ Error parsing clinic header JSON:', jsonError);
+          }
+        } else {
+          const errorText = await headerResponse.text().catch(() => '');
+          console.error('❌ Header response not OK:', headerResponse.status, errorText);
+        }
+      } else {
+        console.error('❌ Header request failed:', headerResult.reason);
+      }
+      
+      // Handle footer response
+      if (footerResult.status === 'fulfilled') {
+        const footerResponse = footerResult.value;
+        console.log('📋 Footer response status:', footerResponse.status, footerResponse.ok);
+        
+        if (footerResponse.ok) {
+          try {
+            const footerData = await footerResponse.json();
+            console.log('📋 Raw footer data:', footerData);
+            
+            if (footerData) {
+              let footer = null;
+              if (Array.isArray(footerData)) {
+                footer = footerData.find((f: any) => f.isActive === true) || footerData[0];
+                console.log('📋 Selected footer from array:', footer);
+              } else if (typeof footerData === 'object') {
+                footer = footerData;
+                console.log('📋 Using footer object:', footer);
+              }
+              if (footer) {
+                currentClinicFooter = footer;
+                setClinicFooter(footer);
+                console.log('✅ Clinic footer fetched and set:', {
+                  footerText: footer.footerText || footer.text,
+                  disclaimer: footer.disclaimer || footer.copyright
+                });
+              } else {
+                console.warn('⚠️ No valid footer found in response');
+              }
+            } else {
+              console.warn('⚠️ Footer data is null or undefined');
+            }
+          } catch (jsonError) {
+            console.error('❌ Error parsing clinic footer JSON:', jsonError);
+          }
+        } else {
+          const errorText = await footerResponse.text().catch(() => '');
+          console.error('❌ Footer response not OK:', footerResponse.status, errorText);
+        }
+      } else {
+        console.error('❌ Footer request failed:', footerResult.reason);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching clinic branding:', error);
+    }
+
     try {
       // Helper to safely convert to number and format
       const toNum = (val: any) => typeof val === 'string' ? parseFloat(val) : val;
 
       // Create new PDF document
       console.log('📄 Creating PDF document...');
+      console.log('📋 Using clinicHeader:', currentClinicHeader);
+      console.log('📋 Using clinicFooter:', currentClinicFooter);
       const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 20;
-    const contentWidth = pageWidth - 2 * margin;
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      const contentWidth = pageWidth - 2 * margin;
 
-    // Function to add header to page
-    const addHeader = () => {
-      // Purple header background
-      doc.setFillColor(79, 70, 229);
-      doc.rect(0, 0, pageWidth, 40, 'F');
-      
-      // Clinic name
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(24);
-      doc.setFont('helvetica', 'bold');
-      doc.text(clinicHeader?.clinicName || 'nhjn', margin, 18);
-      
-      // Tagline
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text(clinicHeader?.tagline || 'Excellence in Healthcare', margin, 28);
-      
-      // INVOICE text on right
-      doc.setFontSize(32);
-      doc.setFont('helvetica', 'bold');
-      doc.text('INVOICE', pageWidth - margin - 55, 28);
+      // Helper function to auto-adjust font size based on text length and available width
+    const getAutoFontSize = (text: string, maxWidth: number, minSize: number = 8, maxSize: number = 24): number => {
+      if (!text) return maxSize;
+      const textWidth = doc.getTextWidth(text);
+      if (textWidth <= maxWidth) return maxSize;
+      // Calculate appropriate font size
+      const ratio = maxWidth / textWidth;
+      const calculatedSize = Math.max(minSize, Math.min(maxSize, maxSize * ratio));
+      return Math.floor(calculatedSize);
     };
 
-    // Function to add footer to page
-    const addFooter = (pageNum: number) => {
+      // Function to add header to page with data from clinic_headers table
+      const addHeader = () => {
+        // Clean white header - no background color
+        const headerHeight = 70;
+        let logoX = margin;
+        let textX = margin;
+        const logoSize = 35;
+        const lineSpacing = 2;
+        
+        // Service ID in top left corner
+        const serviceId = invoice.serviceId || invoice.service_id || invoice.items?.[0]?.serviceId;
+        if (serviceId) {
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(100, 100, 100); // Gray color
+          doc.text(String(serviceId), margin, 8);
+        }
+        
+        // Status badge in top right corner
+        const invoiceStatus = invoice.status || 'unpaid';
+        const statusText = invoiceStatus.charAt(0).toUpperCase() + invoiceStatus.slice(1);
+        
+        // Status badge colors
+        let statusBgColor = [220, 38, 38]; // Red for unpaid/overdue
+        let statusTextColor = [255, 255, 255]; // White text
+        
+        if (invoiceStatus === 'paid') {
+          statusBgColor = [34, 197, 94]; // Green
+        } else if (invoiceStatus === 'partial') {
+          statusBgColor = [251, 191, 36]; // Yellow/Amber
+        } else if (invoiceStatus === 'cancelled') {
+          statusBgColor = [107, 114, 128]; // Gray
+        }
+        
+        // Draw status badge background
+        const statusTextWidth = doc.getTextWidth(statusText);
+        const badgeWidth = statusTextWidth + 8;
+        const badgeHeight = 6;
+        const badgeX = pageWidth - margin - badgeWidth;
+        const badgeY = 5;
+        
+        doc.setFillColor(statusBgColor[0], statusBgColor[1], statusBgColor[2]);
+        doc.roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 1, 1, 'F');
+        
+        // Status text
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(statusTextColor[0], statusTextColor[1], statusTextColor[2]);
+        doc.text(statusText, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2 + 1, { align: 'center' });
+        
+        // Add logo if available from clinic_headers table
+        if (currentClinicHeader?.logoBase64 || currentClinicHeader?.logoUrl) {
+          try {
+            const logoPosition = currentClinicHeader?.logoPosition || 'left';
+            let logoData = '';
+            let imageFormat = 'PNG';
+            
+            if (currentClinicHeader.logoBase64) {
+              if (currentClinicHeader.logoBase64.includes(',')) {
+                logoData = currentClinicHeader.logoBase64;
+                const formatMatch = logoData.match(/data:image\/(\w+);base64/);
+                if (formatMatch) {
+                  imageFormat = formatMatch[1].toUpperCase();
+                }
+              } else {
+                logoData = `data:image/png;base64,${currentClinicHeader.logoBase64}`;
+                imageFormat = 'PNG';
+              }
+            } else if (currentClinicHeader.logoUrl && currentClinicHeader.logoUrl.startsWith('data:')) {
+              logoData = currentClinicHeader.logoUrl;
+              const formatMatch = logoData.match(/data:image\/(\w+);base64/);
+              if (formatMatch) {
+                imageFormat = formatMatch[1].toUpperCase();
+              }
+            }
+            
+            if (logoData) {
+              if (logoPosition === 'left') {
+                doc.addImage(logoData, imageFormat, logoX, 10, logoSize, logoSize);
+                textX = logoX + logoSize + 7;
+              } else if (logoPosition === 'center') {
+                const centerX = (pageWidth - logoSize) / 2;
+                doc.addImage(logoData, imageFormat, centerX, 10, logoSize, logoSize);
+                textX = margin;
+              } else {
+                logoX = pageWidth - margin - logoSize - 130;
+                doc.addImage(logoData, imageFormat, logoX, 10, logoSize, logoSize);
+                textX = margin;
+              }
+            }
+          } catch (error) {
+            console.error('Error adding logo to invoice PDF:', error);
+          }
+        }
+        
+        // Set black text color for header details
+        doc.setTextColor(0, 0, 0);
+        
+        // Clinic name from clinic_headers table - with auto font sizing
+        const clinicName = currentClinicHeader?.clinicName || currentClinicHeader?.name || null;
+        let currentY = 15;
+        const availableWidth = pageWidth - textX - margin - 130; // Reserve space for "INVOICE" text
+        
+        if (clinicName) {
+          const fontSize = getAutoFontSize(clinicName, availableWidth, 14, 22);
+          doc.setFontSize(fontSize);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(66, 133, 244); // Blue color for clinic name
+          doc.text(clinicName, textX, currentY, { maxWidth: availableWidth });
+          currentY += fontSize * 0.4 + 2;
+        }
+        
+        // Address - on separate line
+        if (currentClinicHeader?.address) {
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0); // Black for details
+          doc.text(currentClinicHeader.address, textX, currentY, { maxWidth: availableWidth });
+          currentY += 4;
+        }
+        
+        // Phone and Email - on same line with bullet separator
+        const contactLine: string[] = [];
+        if (currentClinicHeader?.phone) contactLine.push(currentClinicHeader.phone);
+        if (currentClinicHeader?.email) contactLine.push(currentClinicHeader.email);
+        
+        if (contactLine.length > 0) {
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0);
+          const contactText = contactLine.join(' • ');
+          doc.text(contactText, textX, currentY, { maxWidth: availableWidth });
+          currentY += 4;
+        }
+        
+        // Website - on separate line
+        if (currentClinicHeader?.website) {
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0);
+          doc.text(currentClinicHeader.website, textX, currentY, { maxWidth: availableWidth });
+        }
+        
+        // INVOICE text on right - blue color
+        doc.setFontSize(32);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(66, 133, 244); // Blue color for INVOICE
+        doc.text('INVOICE', pageWidth - margin - 5, headerHeight / 2 + 8, { align: 'right' });
+      };
+
+      // Function to add footer to page
+      const addFooter = (pageNum: number) => {
       const footerY = pageHeight - 20;
       
       // Footer background
@@ -4737,13 +5276,22 @@ export default function BillingPage() {
       doc.setDrawColor(229, 231, 235);
       doc.line(margin, footerY - 5, pageWidth - margin, footerY - 5);
       
-      // Footer text
+      // Footer text from clinic_footers table - only if exists in database
       doc.setTextColor(107, 114, 128);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      const footerText = clinicFooter?.footerText || 'Thank you for choosing Cura Medical Practice for your healthcare needs.';
-      doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
-      doc.text('© 2025 Cura Software Limited - Powered by Halo Group & Averox Technologies', pageWidth / 2, footerY + 8, { align: 'center' });
+      const footerText = currentClinicFooter?.footerText || currentClinicFooter?.text || null;
+      console.log('📝 Download - Footer text from database:', footerText, 'Full footer:', currentClinicFooter);
+      if (footerText) {
+        doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
+      }
+      
+      // Additional footer information from clinic_footers table - only if exists in database
+      const disclaimer = currentClinicFooter?.disclaimer || currentClinicFooter?.copyright || null;
+      console.log('📝 Download - Disclaimer from database:', disclaimer);
+      if (disclaimer) {
+        doc.text(disclaimer, pageWidth / 2, footerY + 8, { align: 'center' });
+      }
       
       // Page number
       doc.text(`Page ${pageNum}`, pageWidth - margin, footerY + 2, { align: 'right' });
@@ -4752,7 +5300,8 @@ export default function BillingPage() {
     // Start PDF content
     addHeader();
     
-    let yPosition = 50;
+    // Adjust starting position based on header height (60) + spacing
+    let yPosition = 75;
 
     // Bill To and Invoice Details section
     doc.setTextColor(0, 0, 0);
@@ -4816,7 +5365,7 @@ export default function BillingPage() {
         addFooter(1);
         doc.addPage();
         addHeader();
-        yPosition = 50;
+        yPosition = 85;
       }
 
       // Alternate row background
@@ -5134,6 +5683,58 @@ export default function BillingPage() {
 
   const isLoadingInvoices = user?.role === 'doctor' ? doctorInvoicesLoading : invoicesLoading;
 
+  // Track which invoices have been checked/updated to avoid repeated updates
+  const processedOverdueInvoicesRef = React.useRef<Set<number>>(new Set());
+
+  // Auto-update invoice status to "overdue" for admin role when due date is past
+  useEffect(() => {
+    if (user?.role === 'admin' && displayInvoices && Array.isArray(displayInvoices) && !isLoadingInvoices) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Set to start of day for accurate comparison
+      
+      const overdueUpdates: Array<Promise<void>> = [];
+      const newlyProcessed: number[] = [];
+      
+      displayInvoices.forEach((invoice: any) => {
+        // Skip if already processed, paid, or overdue
+        if (processedOverdueInvoicesRef.current.has(invoice.id) || invoice.status === 'paid' || invoice.status === 'overdue') {
+          return;
+        }
+        
+        // Check if due date is in the past (not equal to today or future)
+        const dueDate = new Date(invoice.dueDate);
+        dueDate.setHours(0, 0, 0, 0);
+        
+        if (dueDate < today) {
+          newlyProcessed.push(invoice.id);
+          // Update status to overdue
+          overdueUpdates.push(
+            (async (): Promise<void> => {
+              try {
+                await apiRequest('PATCH', `/api/billing/invoices/${invoice.id}`, {
+                  status: 'overdue'
+                });
+              } catch (error) {
+                console.error(`Failed to update invoice ${invoice.id} to overdue:`, error);
+              }
+            })()
+          );
+        }
+      });
+      
+      // Execute all updates
+      if (overdueUpdates.length > 0) {
+        // Mark invoices as processed before making API calls
+        newlyProcessed.forEach(id => processedOverdueInvoicesRef.current.add(id));
+        
+        Promise.all(overdueUpdates).then(() => {
+          // Refetch invoices after updates
+          queryClient.refetchQueries({ queryKey: ["/api/billing/invoices"] });
+        });
+      }
+    }
+  }, [displayInvoices, user?.role, isLoadingInvoices, queryClient]);
+
   // Fetch patients for new invoice dropdown
   const { data: patients, isLoading: patientsLoading } = useQuery({
     queryKey: ["/api/patients"],
@@ -5175,6 +5776,181 @@ export default function BillingPage() {
     enabled: Boolean(user)
   });
 
+  // Fetch appointments, lab results, and medical images for patient/admin/doctor/nurse roles to get provider information and format Service IDs
+  const { data: appointmentsData = [] } = useQuery({
+    queryKey: ["/api/appointments", "billing-providers"],
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const subdomain = localStorage.getItem('user_subdomain') || 'demo';
+      const response = await fetch('/api/appointments', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Subdomain': subdomain
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch appointments');
+      return response.json();
+    },
+    enabled: user?.role === 'patient' || user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse',
+  });
+
+  const { data: labResultsData = [] } = useQuery({
+    queryKey: ["/api/lab-results", "billing-providers"],
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const subdomain = localStorage.getItem('user_subdomain') || 'demo';
+      const response = await fetch('/api/lab-results', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Subdomain': subdomain
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch lab results');
+      return response.json();
+    },
+    enabled: user?.role === 'patient' || user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse',
+  });
+
+  const { data: medicalImagesData = [] } = useQuery({
+    queryKey: ["/api/medical-images", "billing-providers"],
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const subdomain = localStorage.getItem('user_subdomain') || 'demo';
+      const response = await fetch('/api/medical-images', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Subdomain': subdomain
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch medical images');
+      return response.json();
+    },
+    enabled: user?.role === 'patient' || user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse',
+  });
+
+  // Fetch users to get provider names (for patient and admin roles)
+  const { data: usersData = [] } = useQuery({
+    queryKey: ["/api/users", "billing-providers"],
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const subdomain = localStorage.getItem('user_subdomain') || 'demo';
+      const response = await fetch('/api/users', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Subdomain': subdomain
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch users');
+      return response.json();
+    },
+    enabled: user?.role === 'patient' || user?.role === 'admin',
+  });
+
+  // Function to get provider information based on serviceType and serviceId
+  const getProviderInfo = (invoice: any): { name: string; role?: string } | null => {
+    // Only show provider info for patient and admin roles
+    if (user?.role !== 'patient' && user?.role !== 'admin') {
+      return null;
+    }
+
+    // First check if providerName is already enriched from server
+    if (invoice.providerName) {
+      return { name: invoice.providerName, role: invoice.providerRole };
+    }
+
+    // For patient and admin roles: First try to get doctor_id directly from invoices table
+    // Handle both camelCase (doctorId) and snake_case (doctor_id)
+    const doctorId = invoice.doctorId || invoice.doctor_id;
+    if (doctorId && allUsers && allUsers.length > 0) {
+      const provider = allUsers.find((u: any) => {
+        if (!u || !u.id) return false;
+        const userId = Number(u.id);
+        const invoiceDoctorId = Number(doctorId);
+        // Check both numeric and string comparison
+        return userId === invoiceDoctorId || 
+               String(u.id) === String(doctorId) ||
+               u.id === doctorId;
+      });
+      if (provider) {
+        const firstName = provider.firstName || '';
+        const lastName = provider.lastName || '';
+        const fullName = `${firstName} ${lastName}`.trim();
+        const role = provider.role || '';
+        if (fullName) {
+          return { name: fullName, role };
+        }
+      }
+    }
+
+    // Get serviceType and serviceId from invoice level or first item
+    const serviceType = invoice.serviceType || invoice.items?.[0]?.serviceType;
+    const serviceId = invoice.serviceId || invoice.items?.[0]?.serviceId || invoice.serviceIds?.[0];
+
+    if (!serviceType || !serviceId) {
+      return null;
+    }
+
+    // For appointments: get provider_id from appointments table
+    if (serviceType === 'appointments') {
+      // Find appointment by appointmentId (e.g., APT1769676433356P54AUTO)
+      const appointment = appointmentsData.find((apt: any) => 
+        apt.appointmentId === serviceId || apt.id?.toString() === serviceId
+      );
+      if (appointment?.providerId) {
+        const provider = usersData.find((u: any) => u.id === appointment.providerId);
+        if (provider) {
+          const firstName = provider.firstName || '';
+          const lastName = provider.lastName || '';
+          const fullName = `${firstName} ${lastName}`.trim();
+          const role = provider.role || '';
+          return { name: fullName, role };
+        }
+      }
+    }
+
+    // For lab_results: get doctor_name from lab_results table
+    if (serviceType === 'labResults') {
+      // Find lab result by testId (e.g., LAB1770092882457O5GW3) or id
+      const labResult = labResultsData.find((lr: any) => 
+        lr.testId === serviceId || lr.id?.toString() === serviceId
+      );
+      if (labResult?.doctorName) {
+        return { name: labResult.doctorName };
+      }
+      // Fallback: if doctorName not available, try to get from orderedBy
+      if (labResult?.orderedBy) {
+        const provider = usersData.find((u: any) => u.id === labResult.orderedBy);
+        if (provider) {
+          const firstName = provider.firstName || '';
+          const lastName = provider.lastName || '';
+          const fullName = `${firstName} ${lastName}`.trim();
+          const role = provider.role || '';
+          return { name: fullName, role };
+        }
+      }
+    }
+
+    // For medical_images: get selected_user_id from medical_images table
+    if (serviceType === 'imaging') {
+      // Find medical image by imageId (e.g., IMG-004) or id
+      const medicalImage = medicalImagesData.find((img: any) => 
+        img.imageId === serviceId || img.id?.toString() === serviceId
+      );
+      if (medicalImage?.selectedUserId) {
+        const provider = usersData.find((u: any) => u.id === medicalImage.selectedUserId);
+        if (provider) {
+          const firstName = provider.firstName || '';
+          const lastName = provider.lastName || '';
+          const fullName = `${firstName} ${lastName}`.trim();
+          const role = provider.role || '';
+          return { name: fullName, role };
+        }
+      }
+    }
+
+    return null;
+  };
+
   // Get the current patient's patientId if user is a patient
   const currentPatient = isPatient && patients ? patients.find((p: any) => p.userId === user?.id) : null;
   const currentPatientId = currentPatient?.patientId;
@@ -5182,11 +5958,63 @@ export default function BillingPage() {
     ? patients?.find((p: any) => p.patientId === selectedPatient)
     : null;
 
+  // Fetch all invoices to filter out services that already have invoices
+  const { data: allInvoices = [] } = useQuery({
+    queryKey: ["/api/billing/invoices", "filter-services"],
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const subdomain = localStorage.getItem('user_subdomain') || 'demo';
+      const response = await fetch('/api/billing/invoices', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Subdomain': subdomain
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch invoices');
+      return response.json();
+    },
+    enabled: Boolean(selectedPatientRecord?.id)
+  });
+
+  // Extract service IDs that already have invoices (paid or unpaid status)
+  const invoicedServiceIds = React.useMemo(() => {
+    const serviceIds = new Set<string>();
+    allInvoices.forEach((invoice: any) => {
+      // Check if invoice has paid or unpaid status
+      if (invoice.status === 'paid' || invoice.status === 'unpaid' || invoice.status === 'draft') {
+        // Check line items for service IDs
+        if (invoice.items && Array.isArray(invoice.items)) {
+          invoice.items.forEach((item: any) => {
+            if (item.serviceId) {
+              serviceIds.add(`${item.serviceType || invoice.serviceType || 'appointments'}-${String(item.serviceId)}`);
+            }
+          });
+        }
+        // Also check top-level serviceId
+        if (invoice.serviceId) {
+          serviceIds.add(`${invoice.serviceType || 'appointments'}-${String(invoice.serviceId)}`);
+        }
+      }
+    });
+    return serviceIds;
+  }, [allInvoices]);
+
   const { data: patientAppointments = [], isLoading: patientAppointmentsLoading } = useQuery({
     queryKey: ["/api/appointments", selectedPatientRecord?.id],
     queryFn: () => fetchResource(`/api/appointments?patientId=${selectedPatientRecord?.id}`),
     enabled: Boolean(selectedPatientRecord?.id)
   });
+
+  // Filter appointments that don't have invoices yet
+  const availableAppointments = React.useMemo(() => {
+    return patientAppointments.filter((appointment: any) => {
+      // Check both formatted ID (appointmentId) and numeric ID
+      const formattedKey = appointment.appointmentId ? `appointments-${appointment.appointmentId}` : null;
+      const numericKey = `appointments-${String(appointment.id)}`;
+      // Return true if neither key exists in invoicedServiceIds
+      return !(formattedKey && invoicedServiceIds.has(formattedKey)) && !invoicedServiceIds.has(numericKey);
+    });
+  }, [patientAppointments, invoicedServiceIds]);
 
   const { data: patientLabResults = [], isLoading: patientLabResultsLoading } = useQuery({
     queryKey: ["/api/patients", selectedPatientRecord?.id, "lab-results"],
@@ -5194,17 +6022,49 @@ export default function BillingPage() {
     enabled: Boolean(selectedPatientRecord?.id)
   });
 
+  // Filter lab results that don't have invoices yet
+  const availableLabResults = React.useMemo(() => {
+    return patientLabResults.filter((result: any) => {
+      // Check both formatted ID (testId) and numeric ID
+      const formattedKey = result.testId ? `labResults-${result.testId}` : null;
+      const numericKey = `labResults-${String(result.id)}`;
+      // Return true if neither key exists in invoicedServiceIds
+      return !(formattedKey && invoicedServiceIds.has(formattedKey)) && !invoicedServiceIds.has(numericKey);
+    });
+  }, [patientLabResults, invoicedServiceIds]);
+
   const { data: patientImaging = [], isLoading: patientImagingLoading } = useQuery({
     queryKey: ["/api/patients", selectedPatientRecord?.id, "medical-imaging"],
     queryFn: () => fetchResource(`/api/patients/${selectedPatientRecord?.id}/medical-imaging`),
     enabled: Boolean(selectedPatientRecord?.id)
   });
 
+  // Filter imaging studies that don't have invoices yet
+  const availableImaging = React.useMemo(() => {
+    return patientImaging.filter((study: any) => {
+      // Check both formatted ID (imageId) and numeric ID
+      const formattedKey = study.imageId ? `imaging-${study.imageId}` : null;
+      const numericKey = `imaging-${String(study.id)}`;
+      // Return true if neither key exists in invoicedServiceIds
+      return !(formattedKey && invoicedServiceIds.has(formattedKey)) && !invoicedServiceIds.has(numericKey);
+    });
+  }, [patientImaging, invoicedServiceIds]);
+
   const { data: treatmentsInfoList = [] } = useQuery({
     queryKey: ["/api/treatments-info", "billing"],
     queryFn: () => fetchResource("/api/treatments-info"),
     enabled: Boolean(user)
   });
+
+  // Fetch users to get provider information (for admin/doctor/nurse roles)
+  const { data: usersList = [] } = useQuery({
+    queryKey: ["/api/users", "billing-providers"],
+    queryFn: () => fetchResource("/api/users"),
+    enabled: Boolean(user && (user.role === 'admin' || user.role === 'doctor' || user.role === 'nurse'))
+  });
+
+  // Use usersData for patient role, usersList for admin/doctor/nurse
+  const allUsers = user?.role === 'patient' ? (usersData || []) : (usersList || []);
 
   const findDoctorFeeByDoctorId = (doctorId?: number) => {
     if (!doctorId) return null;
@@ -5257,12 +6117,32 @@ export default function BillingPage() {
     const lineId = `${selectedServiceType}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     let newItem: LineItem | null = null;
+    let providerName: string | undefined = undefined;
+    let doctorId: number | undefined = undefined;
 
     if (selectedServiceType === "appointments") {
-      const appointment = patientAppointments.find((apt: any) => String(apt.id) === selectedAppointmentId);
+      const appointment = availableAppointments.find((apt: any) => String(apt.id) === selectedAppointmentId);
       if (!appointment) {
         setServiceSelectionError("Select a valid appointment for this patient.");
         return;
+      }
+
+      // Fetch provider information from appointments table
+      if (appointment.providerId) {
+        const provider = allUsers.find((u: any) => u.id === appointment.providerId);
+        if (provider) {
+          providerName = `${provider.firstName} ${provider.lastName}`;
+          doctorId = provider.id;
+        }
+      }
+
+      // For all roles (admin, patient, etc.), set due date and service date to appointment schedule_at date
+      // Follow admin strategy: Due date should always be appointment schedule_at date (not current date)
+      if (appointment.scheduledAt) {
+        const appointmentDate = new Date(appointment.scheduledAt);
+        const appointmentDateStr = appointmentDate.toISOString().split('T')[0];
+        setDueDate(appointmentDateStr); // Set due date to appointment date
+        setServiceDate(appointmentDateStr); // Also set service date to appointment date
       }
 
       const treatment = findTreatmentById(appointment.treatmentId);
@@ -5278,13 +6158,15 @@ export default function BillingPage() {
         newItem = {
           id: lineId,
           serviceType: "appointments",
-          serviceId: String(appointment.id),
+          serviceId: appointment.appointmentId || String(appointment.id),
           code: treatment.metadata?.code || `T-${treatment.id}`,
           description: treatmentInfo?.name || treatment.name || "Treatment",
           quantity: baseQuantity,
           unitPrice: amount,
           total: amount * baseQuantity,
-          readOnlyPrice: true
+          readOnlyPrice: true,
+          providerName,
+          doctorId
         };
       } else {
         let fee = findDoctorFeeByConsultationId(appointment.consultationId);
@@ -5299,23 +6181,43 @@ export default function BillingPage() {
       newItem = {
           id: lineId,
           serviceType: "appointments",
-          serviceId: String(appointment.id),
+          serviceId: appointment.appointmentId || String(appointment.id),
         code: appointment.appointmentId || `APT-${appointment.id}`,
         description: appointment.description || appointment.title || "Consultation",
           quantity: baseQuantity,
           unitPrice: amount,
           total: amount * baseQuantity,
-          readOnlyPrice: true
+          readOnlyPrice: true,
+          providerName,
+          doctorId
         };
       }
 
       setSelectedAppointmentId("");
     } else if (selectedServiceType === "labResults") {
-      const labResult = patientLabResults.find((result: any) => String(result.id) === selectedLabResultId);
+      const labResult = availableLabResults.find((result: any) => String(result.id) === selectedLabResultId);
       if (!labResult) {
         setServiceSelectionError("Select a lab result for this patient.");
         return;
       }
+      
+      // Fetch provider information from lab_results table
+      if (labResult.doctorName) {
+        // Use doctorName directly if available
+        providerName = labResult.doctorName;
+        // Try to find doctorId from users if doctorName matches
+        if (labResult.orderedBy) {
+          doctorId = labResult.orderedBy;
+        }
+      } else if (labResult.orderedBy) {
+        // Fallback to orderedBy user
+        const provider = allUsers.find((u: any) => u.id === labResult.orderedBy);
+        if (provider) {
+          providerName = `${provider.firstName} ${provider.lastName}`;
+          doctorId = provider.id;
+        }
+      }
+      
       const pricing = findLabPricingForResult(labResult);
       const amount = Number(pricing?.basePrice || 0);
       if (!pricing || amount <= 0) {
@@ -5326,22 +6228,41 @@ export default function BillingPage() {
       newItem = {
         id: lineId,
         serviceType: "labResults",
-        serviceId: String(labResult.id),
+        serviceId: labResult.testId || String(labResult.id),
         code: pricing.testCode || labResult.testId || "Lab",
         description: labResult.testName || pricing.testName || "Lab Result",
         quantity: baseQuantity,
         unitPrice: amount,
         total: amount * baseQuantity,
-        readOnlyPrice: true
+        readOnlyPrice: true,
+        providerName,
+        doctorId
       };
 
       setSelectedLabResultId("");
     } else if (selectedServiceType === "imaging") {
-      const imagingRecord = patientImaging.find((img: any) => String(img.id) === selectedImagingId);
+      const imagingRecord = availableImaging.find((img: any) => String(img.id) === selectedImagingId);
       if (!imagingRecord) {
         setServiceSelectionError("Select an imaging record for this patient.");
         return;
       }
+      
+      // Fetch provider information from medical_images table
+      const providerUserId = imagingRecord.selectedUserId || imagingRecord.uploadedBy;
+      if (providerUserId) {
+        const provider = allUsers.find((u: any) => u.id === providerUserId);
+        if (provider) {
+          providerName = `${provider.firstName} ${provider.lastName}`;
+          doctorId = provider.id;
+        } else if (imagingRecord.radiologist) {
+          // Fallback to radiologist name if available
+          providerName = imagingRecord.radiologist;
+        }
+      } else if (imagingRecord.radiologist) {
+        // Fallback to radiologist name if no user ID available
+        providerName = imagingRecord.radiologist;
+      }
+      
       const pricing = findImagingPricingForRecord(imagingRecord);
       const amount = Number(pricing?.basePrice || 0);
       if (!pricing || amount <= 0) {
@@ -5352,13 +6273,15 @@ export default function BillingPage() {
       newItem = {
         id: lineId,
         serviceType: "imaging",
-        serviceId: String(imagingRecord.id),
+        serviceId: imagingRecord.imageId || String(imagingRecord.id),
         code: pricing.imagingCode || imagingRecord.imageId || "Imaging",
         description: imagingRecord.studyType || pricing.imagingType || "Imaging Study",
         quantity: baseQuantity,
         unitPrice: amount,
         total: amount * baseQuantity,
-        readOnlyPrice: true
+        readOnlyPrice: true,
+        providerName,
+        doctorId
       };
 
       setSelectedImagingId("");
@@ -5400,16 +6323,38 @@ export default function BillingPage() {
   }, [
     selectedPatientRecord,
     selectedServiceType,
-    patientAppointments,
-    patientLabResults,
-    patientImaging,
+    availableAppointments,
+    availableLabResults,
+    availableImaging,
     manualServiceEntry,
     billingDoctorsFees,
     treatmentsInfoList,
     selectedLabResultId,
     selectedImagingId,
-    selectedAppointmentId
+    selectedAppointmentId,
+    allUsers,
+    user?.role
   ]);
+
+  // Auto-populate due date and service date when appointment is selected (for all roles including admin)
+  useEffect(() => {
+    if (
+      selectedServiceType === "appointments" &&
+      selectedAppointmentId &&
+      availableAppointments.length > 0 &&
+      !patientAppointmentsLoading
+    ) {
+      const appointment = availableAppointments.find((apt: any) => String(apt.id) === selectedAppointmentId);
+      if (appointment && appointment.scheduledAt) {
+        // Extract date from appointment scheduledAt
+        const appointmentDate = new Date(appointment.scheduledAt);
+        const appointmentDateStr = appointmentDate.toISOString().split('T')[0];
+        // Set due date and service date to appointment schedule_at date (follow admin strategy)
+        setDueDate(appointmentDateStr);
+        setServiceDate(appointmentDateStr);
+      }
+    }
+  }, [selectedAppointmentId, selectedServiceType, availableAppointments, patientAppointmentsLoading]);
 
   useEffect(() => {
     if (
@@ -6400,7 +7345,7 @@ export default function BillingPage() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="all">All Status</SelectItem>
-                                <SelectItem value="draft">Draft</SelectItem>
+                                <SelectItem value="unpaid">Unpaid</SelectItem>
                                 <SelectItem value="sent">Sent</SelectItem>
                                 <SelectItem value="paid">Paid</SelectItem>
                                 <SelectItem value="unpaid">Unpaid</SelectItem>
@@ -6635,29 +7580,39 @@ export default function BillingPage() {
                   /* List View - Table Format */
                   <Card>
                     <CardContent className="p-0">
-                      <div className="overflow-x-auto">
-                        <table className="w-full">
+                      <div className="overflow-x-auto overflow-y-visible">
+                        <table className="w-full min-w-[1200px]">
                           <thead className="bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-gray-700">
                             <tr>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Invoice No.</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Patient Name</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Provider/Doctor</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Payment Method</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service Type</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service ID</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service Date</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Due Date</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Total</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Outstanding</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Status</th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Invoice No.</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Patient Name</th>
+                              {(user?.role === 'patient' || user?.role === 'admin') && (
+                                <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Provider/Doctor</th>
+                              )}
+                              {user?.role === 'admin' && (
+                                <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Doctor Name</th>
+                              )}
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Payment Method</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Service Type</th>
+                              {(user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse' || user?.role === 'patient') && (
+                                <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Service ID</th>
+                              )}
+                              {isPatient && (
+                                <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Created At</th>
+                              )}
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Service Date</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Due Date</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Total</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Outstanding</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Status</th>
+                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Actions</th>
                             </tr>
                           </thead>
                           <tbody className="bg-white dark:bg-slate-900 divide-y divide-gray-200 dark:divide-gray-700">
                             {filteredInvoices.map((invoice) => (
                               <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-slate-800" data-testid={`invoice-row-${invoice.id}`}>
                                 <td 
-                                  className="px-4 py-4 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer hover:text-primary hover:underline" 
+                                  className="px-3 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer hover:text-primary hover:underline whitespace-nowrap" 
                                   onClick={() => {
                                     const invoiceNum = invoice.invoiceNumber || invoice.id;
                                     
@@ -6672,41 +7627,84 @@ export default function BillingPage() {
                                 >
                                   {invoice.invoiceNumber || invoice.id}
                                 </td>
-                                <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{invoice.patientName}</td>
-                                <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">
-                                  {(() => {
-                                    const invoiceWithProvider = invoice as any;
-                                    if (invoiceWithProvider.providerName) {
-                                      return (
-                                        <div className="flex flex-col">
-                                          <span className="font-medium text-gray-900 dark:text-gray-100">
-                                            {invoiceWithProvider.providerName}
-                                          </span>
-                                          {invoiceWithProvider.providerRole && (
-                                            <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">
-                                              {invoiceWithProvider.providerRole}
+                                <td className="px-3 py-3 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap">{invoice.patientName}</td>
+                                {(user?.role === 'patient' || user?.role === 'admin') && (
+                                  <td className="px-3 py-3 text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                                    {(() => {
+                                      const providerInfo = getProviderInfo(invoice);
+                                      if (providerInfo) {
+                                        return (
+                                          <div className="flex flex-col">
+                                            <span className="font-medium text-gray-900 dark:text-gray-100">
+                                              {providerInfo.name}
                                             </span>
-                                          )}
-                                        </div>
-                                      );
-                                    }
-                                    return <span className="text-gray-400">-</span>;
-                                  })()}
-                                </td>
-                                <td className="px-4 py-4 text-sm">
+                                            {providerInfo.role && (
+                                              <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                                                {providerInfo.role}
+                                              </span>
+                                            )}
+                                          </div>
+                                        );
+                                      }
+                                      return <span className="text-gray-400">-</span>;
+                                    })()}
+                                  </td>
+                                )}
+                                {user?.role === 'admin' && (
+                                  <td className="px-3 py-3 text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                                    {(() => {
+                                      // Get doctor name from doctor_id in invoices table
+                                      if (invoice.doctorId) {
+                                        const doctor = allUsers.find((u: any) => u.id === invoice.doctorId);
+                                        if (doctor) {
+                                          const firstName = doctor.firstName || '';
+                                          const lastName = doctor.lastName || '';
+                                          const fullName = `${firstName} ${lastName}`.trim();
+                                          return <span className="font-medium text-gray-900 dark:text-gray-100">{fullName || '-'}</span>;
+                                        }
+                                      }
+                                      return <span className="text-gray-400">-</span>;
+                                    })()}
+                                  </td>
+                                )}
+                                <td className="px-3 py-3 text-sm whitespace-nowrap">
                                   <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700">
-                                    {invoice.paymentMethod || 'N/A'}
+                                    {(() => {
+                                      // If status is unpaid and payment method is "Online Payment", show "Not Selected"
+                                      // "Online Payment" should only show when payment is actually processed
+                                      if (invoice.status === 'unpaid' && invoice.paymentMethod === 'Online Payment') {
+                                        return 'Not Selected';
+                                      }
+                                      return invoice.paymentMethod || 'Not Selected';
+                                    })()}
                                   </Badge>
                                 </td>
-                                <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">
+                                <td className="px-3 py-3 text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
                                   {invoice.serviceType || invoice.serviceName || invoice.items?.[0]?.description || '-'}
                                 </td>
-                                <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">{invoice.serviceId || '-'}</td>
-                                <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{format(new Date(invoice.dateOfService), 'MMM d, yyyy')}</td>
-                                <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{format(new Date(invoice.dueDate), 'MMM d, yyyy')}</td>
-                                <td className="px-4 py-4 text-sm font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(invoice.totalAmount)}</td>
-                                <td className="px-4 py-4 text-sm font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(invoice.totalAmount - invoice.paidAmount)}</td>
-                                <td className="px-4 py-4 text-sm">
+                                {(user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse' || user?.role === 'patient') && (
+                                  <td className="px-3 py-3 text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap font-mono text-xs">
+                                    {(() => {
+                                      // Get service_id directly from invoices table
+                                      // Priority: invoice.serviceId (top-level from invoices.service_id column) > invoice.items[0].serviceId
+                                      const serviceId = invoice.serviceId || invoice.service_id || invoice.items?.[0]?.serviceId;
+                                      // Display the raw service_id from invoices table
+                                      return serviceId ? String(serviceId) : '-';
+                                    })()}
+                                  </td>
+                                )}
+                                {isPatient && (
+                                  <td className="px-3 py-3 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                                    {invoice.createdAt || invoice.created_at 
+                                      ? format(new Date(invoice.createdAt || invoice.created_at), 'MMM d, yyyy HH:mm')
+                                      : '-'}
+                                  </td>
+                                )}
+                                <td className="px-3 py-3 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap">{format(new Date(invoice.dateOfService), 'MMM d, yyyy')}</td>
+                                <td className="px-3 py-3 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap">{format(new Date(invoice.dueDate), 'MMM d, yyyy')}</td>
+                                <td className="px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">{formatCurrency(invoice.totalAmount)}</td>
+                                <td className="px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">{formatCurrency(invoice.totalAmount - invoice.paidAmount)}</td>
+                                <td className="px-3 py-3 text-sm whitespace-nowrap">
                                   {user?.role === 'patient' ? (
                                     <Badge className={`${getStatusColor(invoice.status)}`}>
                                       {invoice.status}
@@ -6721,7 +7719,7 @@ export default function BillingPage() {
                                         <SelectValue>{invoice.status}</SelectValue>
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="draft">Draft</SelectItem>
+                                        <SelectItem value="unpaid">Unpaid</SelectItem>
                                         <SelectItem value="sent">Sent</SelectItem>
                                         <SelectItem value="paid">Paid</SelectItem>
                                         <SelectItem value="pending">Pending</SelectItem>
@@ -6731,7 +7729,7 @@ export default function BillingPage() {
                                     </Select>
                                   )}
                                 </td>
-                                <td className="px-4 py-4 text-sm">
+                                <td className="px-3 py-3 text-sm whitespace-nowrap">
                                   <div className="flex items-center gap-2">
                                     <Button variant="ghost" size="sm" onClick={() => handleViewInvoice(invoice)} data-testid="button-view-invoice" title="View">
                                       <Eye className="h-4 w-4" />
@@ -6786,7 +7784,7 @@ export default function BillingPage() {
                                         )}
                                       </>
                                     )}
-                                    {!isAdmin && invoice.status !== 'draft' && invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
+                                    {!isAdmin && invoice.status !== 'unpaid' && invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
                                       <Button 
                                         variant="default" 
                                         size="sm" 
@@ -6835,7 +7833,7 @@ export default function BillingPage() {
                                       <SelectValue>{invoice.status}</SelectValue>
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="draft">Draft</SelectItem>
+                                      <SelectItem value="unpaid">Unpaid</SelectItem>
                                       <SelectItem value="sent">Sent</SelectItem>
                                       <SelectItem value="paid">Paid</SelectItem>
                                       <SelectItem value="pending">Pending</SelectItem>
@@ -6879,11 +7877,72 @@ export default function BillingPage() {
                                     <div className="flex items-center gap-2">
                                       <strong>Payment Method:</strong>
                                       <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700">
-                                        {invoice.paymentMethod || 'N/A'}
+                                        {(() => {
+                                          // If status is unpaid and payment method is "Online Payment", show "Not Selected"
+                                          // "Online Payment" should only show when payment is actually processed
+                                          if (invoice.status === 'unpaid' && invoice.paymentMethod === 'Online Payment') {
+                                            return 'Not Selected';
+                                          }
+                                          return invoice.paymentMethod || 'Not Selected';
+                                        })()}
                                       </Badge>
                                     </div>
                                     <div><strong>Service Date:</strong> {format(new Date(invoice.dateOfService), 'MMM d, yyyy')}</div>
                                     <div><strong>Due Date:</strong> {format(new Date(invoice.dueDate), 'MMM d, yyyy')}</div>
+                                    {(user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse') && (() => {
+                                      // Get service_id directly from invoices table
+                                      // Priority: invoice.serviceId (top-level from invoices.service_id column) > invoice.items[0].serviceId
+                                      const serviceId = invoice.serviceId || invoice.service_id || invoice.items?.[0]?.serviceId;
+                                      if (!serviceId) return null;
+                                      
+                                      // Display the raw service_id from invoices table
+                                      return (
+                                        <div>
+                                          <strong>Service ID:</strong>{' '}
+                                          <span className="font-mono text-xs">{String(serviceId)}</span>
+                                        </div>
+                                      );
+                                    })()}
+                                    {(user?.role === 'patient' || user?.role === 'admin') && (() => {
+                                      const providerInfo = getProviderInfo(invoice);
+                                      if (providerInfo) {
+                                        return (
+                                          <div>
+                                            <strong>Provider/Doctor:</strong>{' '}
+                                            <span>{providerInfo.name}</span>
+                                            {providerInfo.role && (
+                                              <span className="text-xs text-gray-500 dark:text-gray-400 capitalize ml-1">
+                                                ({providerInfo.role})
+                                              </span>
+                                            )}
+                                          </div>
+                                        );
+                                      }
+                                      return null;
+                                    })()}
+                                    {user?.role === 'admin' && (() => {
+                                      // Get doctor name from doctor_id in invoices table
+                                      if (invoice.doctorId) {
+                                        const doctor = allUsers.find((u: any) => u.id === invoice.doctorId);
+                                        if (doctor) {
+                                          const firstName = doctor.firstName || '';
+                                          const lastName = doctor.lastName || '';
+                                          const fullName = `${firstName} ${lastName}`.trim();
+                                          return (
+                                            <div>
+                                              <strong>Doctor Name:</strong>{' '}
+                                              <span>{fullName || '-'}</span>
+                                            </div>
+                                          );
+                                        }
+                                      }
+                                      return (
+                                        <div>
+                                          <strong>Doctor Name:</strong>{' '}
+                                          <span className="text-gray-400">-</span>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
                                 
@@ -6980,7 +8039,7 @@ export default function BillingPage() {
                                   </Button>
                                 </>
                               )}
-                              {!isAdmin && invoice.status !== 'draft' && invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
+                              {!isAdmin && invoice.status !== 'unpaid' && invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
                                 <Button 
                                   variant="default" 
                                   size="sm" 
@@ -7040,7 +8099,7 @@ export default function BillingPage() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="all">All Status</SelectItem>
-                                <SelectItem value="draft">Draft</SelectItem>
+                                <SelectItem value="unpaid">Unpaid</SelectItem>
                                 <SelectItem value="sent">Sent</SelectItem>
                                 <SelectItem value="paid">Paid</SelectItem>
                                 <SelectItem value="unpaid">Unpaid</SelectItem>
@@ -7206,7 +8265,16 @@ export default function BillingPage() {
                             <thead className="bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-gray-700">
                               <tr>
                                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Invoice No.</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service ID</th>
                                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Patient Name</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Doctor Name</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service Type</th>
+                                {isAdmin && (
+                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Created By</th>
+                                )}
+                                {isPatient && (
+                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Created At</th>
+                                )}
                                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Payment Method</th>
                                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Service Date</th>
                                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">Due Date</th>
@@ -7217,13 +8285,129 @@ export default function BillingPage() {
                               </tr>
                             </thead>
                             <tbody className="bg-white dark:bg-slate-900 divide-y divide-gray-200 dark:divide-gray-700">
-                              {filteredInvoices.map((invoice) => (
-                                <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-slate-800" data-testid={`invoice-row-${invoice.id}`}>
+                              {filteredInvoices.map((invoice) => {
+                                // Get doctor name from doctor_id (handle both camelCase and snake_case)
+                                const doctorName = (() => {
+                                  // Check both doctorId and doctor_id
+                                  const doctorId = invoice.doctorId || invoice.doctor_id;
+                                  
+                                  if (doctorId && allUsers && allUsers.length > 0) {
+                                    // Try to find doctor by ID (handle both string and number)
+                                    const doctor = allUsers.find((u: any) => {
+                                      if (!u || !u.id) return false;
+                                      const userId = Number(u.id);
+                                      const invoiceDoctorId = Number(doctorId);
+                                      // Check both numeric and string comparison
+                                      return userId === invoiceDoctorId || 
+                                             String(u.id) === String(doctorId) ||
+                                             u.id === doctorId;
+                                    });
+                                    
+                                    if (doctor) {
+                                      const firstName = doctor.firstName || '';
+                                      const lastName = doctor.lastName || '';
+                                      const fullName = `${firstName} ${lastName}`.trim();
+                                      if (fullName) {
+                                        return fullName;
+                                      }
+                                    }
+                                  }
+                                  
+                                  // Fallback: try to get from provider info function
+                                  const providerInfo = getProviderInfo(invoice);
+                                  return providerInfo?.name || '-';
+                                })();
+                                
+                                // Get service type (check both camelCase and snake_case)
+                                let serviceType = invoice.serviceType || invoice.service_type || invoice.items?.[0]?.serviceType || invoice.items?.[0]?.service_type || 'other';
+                                
+                                // Normalize service type to match SERVICE_TYPE_LABELS keys
+                                // Database might have "appointments" but we need to ensure it matches the key format
+                                if (serviceType && serviceType !== 'other') {
+                                  // Convert common variations to match our ServiceType keys
+                                  const normalizedType = serviceType.toLowerCase().trim();
+                                  
+                                  // Map database values to ServiceType keys
+                                  if (normalizedType === 'appointments' || normalizedType === 'appointment' || normalizedType === 'consultation') {
+                                    serviceType = 'appointments';
+                                  } else if (normalizedType === 'labresults' || normalizedType === 'lab_results' || normalizedType === 'lab result' || normalizedType === 'lab') {
+                                    serviceType = 'labResults';
+                                  } else if (normalizedType === 'imaging' || normalizedType === 'medical_images' || normalizedType === 'medical image' || normalizedType === 'image') {
+                                    serviceType = 'imaging';
+                                  } else if (normalizedType === 'other' || normalizedType === 'multiple') {
+                                    serviceType = 'other';
+                                  }
+                                  // If it doesn't match any known type, keep the original value
+                                }
+                                
+                                const serviceTypeLabel = SERVICE_TYPE_LABELS[serviceType as ServiceType] || serviceType;
+                                
+                                // Get created by user name (for admin role)
+                                const createdByName = (() => {
+                                  if (!isAdmin) return null;
+                                  // Check both camelCase (createdBy) and snake_case (created_by)
+                                  const createdById = invoice.createdBy || invoice.created_by;
+                                  if (createdById && allUsers && allUsers.length > 0) {
+                                    const creator = allUsers.find((u: any) => {
+                                      if (!u || !u.id) return false;
+                                      const userId = Number(u.id);
+                                      const invoiceCreatedById = Number(createdById);
+                                      // Check both numeric and string comparison
+                                      return userId === invoiceCreatedById || 
+                                             String(u.id) === String(createdById) ||
+                                             u.id === createdById;
+                                    });
+                                    if (creator) {
+                                      const firstName = creator.firstName || '';
+                                      const lastName = creator.lastName || '';
+                                      const fullName = `${firstName} ${lastName}`.trim();
+                                      if (fullName) {
+                                        return fullName;
+                                      }
+                                    }
+                                  }
+                                  return '-';
+                                })();
+                                
+                                return (
+                                  <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-slate-800" data-testid={`invoice-row-${invoice.id}`}>
                                   <td className="px-4 py-4 text-sm font-medium text-gray-900 dark:text-gray-100">{invoice.invoiceNumber || invoice.id}</td>
+                                  <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">
+                                    {(() => {
+                                      // Get service_id directly from invoices table for patient role
+                                      // Priority: invoice.serviceId (top-level from invoices.service_id column) > invoice.items[0].serviceId
+                                      const serviceId = invoice.serviceId || invoice.service_id || invoice.items?.[0]?.serviceId;
+                                      // Display the raw service_id from invoices table
+                                      return serviceId ? String(serviceId) : '-';
+                                    })()}
+                                  </td>
                                   <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{invoice.patientName}</td>
+                                  <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{doctorName}</td>
+                                  <td className="px-4 py-4 text-sm">
+                                    <Badge variant="outline" className="text-xs">
+                                      {serviceTypeLabel}
+                                    </Badge>
+                                  </td>
+                                  {isAdmin && (
+                                    <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{createdByName}</td>
+                                  )}
+                                  {isPatient && (
+                                    <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
+                                      {invoice.createdAt || invoice.created_at 
+                                        ? format(new Date(invoice.createdAt || invoice.created_at), 'MMM d, yyyy HH:mm')
+                                        : '-'}
+                                    </td>
+                                  )}
                                   <td className="px-4 py-4 text-sm">
                                     <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700">
-                                      {invoice.paymentMethod || 'N/A'}
+                                      {(() => {
+                                        // If status is unpaid and payment method is "Online Payment", show "Not Selected"
+                                        // "Online Payment" should only show when payment is actually processed
+                                        if (invoice.status === 'unpaid' && invoice.paymentMethod === 'Online Payment') {
+                                          return 'Not Selected';
+                                        }
+                                        return invoice.paymentMethod || 'Not Selected';
+                                      })()}
                                     </Badge>
                                   </td>
                                   <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{format(new Date(invoice.dateOfService), 'MMM d, yyyy')}</td>
@@ -7241,7 +8425,7 @@ export default function BillingPage() {
                                           <SelectValue>{invoice.status}</SelectValue>
                                         </SelectTrigger>
                                         <SelectContent>
-                                          <SelectItem value="draft">Draft</SelectItem>
+                                          <SelectItem value="unpaid">Unpaid</SelectItem>
                                           <SelectItem value="sent">Sent</SelectItem>
                                           <SelectItem value="paid">Paid</SelectItem>
                                           <SelectItem value="pending">Pending</SelectItem>
@@ -7294,7 +8478,8 @@ export default function BillingPage() {
                                     </div>
                                   </td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -7320,7 +8505,7 @@ export default function BillingPage() {
                                         <SelectValue>{invoice.status}</SelectValue>
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="draft">Draft</SelectItem>
+                                        <SelectItem value="unpaid">Unpaid</SelectItem>
                                         <SelectItem value="sent">Sent</SelectItem>
                                         <SelectItem value="paid">Paid</SelectItem>
                                         <SelectItem value="pending">Pending</SelectItem>
@@ -7349,11 +8534,41 @@ export default function BillingPage() {
                                       <div className="flex items-center gap-2">
                                         <strong>Payment Method:</strong>
                                         <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700">
-                                          {invoice.paymentMethod || 'N/A'}
+                                          {(() => {
+                                            // If status is unpaid and payment method is "Online Payment", show "Not Selected"
+                                            // "Online Payment" should only show when payment is actually processed
+                                            if (invoice.status === 'unpaid' && invoice.paymentMethod === 'Online Payment') {
+                                              return 'Not Selected';
+                                            }
+                                            return invoice.paymentMethod || 'Not Selected';
+                                          })()}
                                         </Badge>
                                       </div>
                                       <div><strong>Service Date:</strong> {format(new Date(invoice.dateOfService), 'MMM d, yyyy')}</div>
                                       <div><strong>Due Date:</strong> {format(new Date(invoice.dueDate), 'MMM d, yyyy')}</div>
+                                      {user?.role === 'admin' && (() => {
+                                        // Get doctor name from doctor_id in invoices table
+                                        if (invoice.doctorId) {
+                                          const doctor = allUsers.find((u: any) => u.id === invoice.doctorId);
+                                          if (doctor) {
+                                            const firstName = doctor.firstName || '';
+                                            const lastName = doctor.lastName || '';
+                                            const fullName = `${firstName} ${lastName}`.trim();
+                                            return (
+                                              <div>
+                                                <strong>Doctor Name:</strong>{' '}
+                                                <span>{fullName || '-'}</span>
+                                              </div>
+                                            );
+                                          }
+                                        }
+                                        return (
+                                          <div>
+                                            <strong>Doctor Name:</strong>{' '}
+                                            <span className="text-gray-400">-</span>
+                                          </div>
+                                        );
+                                      })()}
                                     </div>
                                   </div>
                                   
@@ -7728,7 +8943,14 @@ export default function BillingPage() {
                                         £{totalAmount.toFixed(2)}
                                       </td>
                                       <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300 capitalize">
-                                        {invoice.paymentMethod || 'N/A'}
+                                        {(() => {
+                                          // If status is unpaid and payment method is "Online Payment", show "Not Selected"
+                                          // "Online Payment" should only show when payment is actually processed
+                                          if (invoice.status === 'unpaid' && invoice.paymentMethod === 'Online Payment') {
+                                            return 'Not Selected';
+                                          }
+                                          return invoice.paymentMethod || 'Not Selected';
+                                        })()}
                                       </td>
                                       <td className="px-4 py-3 text-sm">
                                         <Badge className={`${getStatusColor(invoice.status)}`}>
@@ -8472,7 +9694,7 @@ export default function BillingPage() {
 
       {/* New Invoice Dialog */}
       <Dialog open={showNewInvoice} onOpenChange={setShowNewInvoice}>
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle>Create New Invoice</DialogTitle>
           </DialogHeader>
@@ -8536,11 +9758,11 @@ export default function BillingPage() {
                 </Label>
                 {isDoctor ? (
                   <div className="h-10 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm">
-                    Hassan Mehmood
+                    {user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : user?.firstName || user?.lastName || '-'}
                   </div>
                 ) : (
                   <div className="h-10 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm">
-                    Hassan Mehmood
+                    {user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : user?.firstName || user?.lastName || '-'}
                   </div>
                 )}
               </div>
@@ -8552,7 +9774,8 @@ export default function BillingPage() {
                 <Input 
                   id="invoice-date" 
                   type="date" 
-                  defaultValue={new Date().toISOString().split('T')[0]}
+                  value={invoiceDate}
+                  onChange={(e) => setInvoiceDate(e.target.value)}
                 />
               </div>
               
@@ -8561,7 +9784,8 @@ export default function BillingPage() {
                 <Input 
                   id="due-date" 
                   type="date" 
-                  defaultValue={new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
                 />
               </div>
             </div>
@@ -8627,9 +9851,9 @@ export default function BillingPage() {
                       >
                         {patientAppointmentsLoading ? (
                           <SelectItem value="loading" disabled>Loading...</SelectItem>
-                        ) : patientAppointments.length > 0 ? (
-                          patientAppointments.map((appointment: any) => {
-                            const appointmentText = `${appointment.appointmentId || `APT-${appointment.id}`} - ${appointment.title || "Consultation"} (${format(new Date(appointment.scheduledAt || appointment.createdAt || Date.now()), "dd MMM yyyy")})`;
+                        ) : availableAppointments.length > 0 ? (
+                          availableAppointments.map((appointment: any) => {
+                            const appointmentText = `${appointment.appointmentId || `APT-${appointment.id}`} - ${appointment.title || "Consultation"}`;
                             return (
                               <SelectItem 
                                 key={appointment.id} 
@@ -8646,6 +9870,113 @@ export default function BillingPage() {
                         )}
                       </SelectContent>
                     </Select>
+                    
+                    {/* Appointment Details Card */}
+                    {selectedAppointmentId && (() => {
+                      const selectedAppointment = availableAppointments.find((apt: any) => String(apt.id) === selectedAppointmentId);
+                      if (!selectedAppointment) return null;
+
+                      // Extract dates directly to avoid timezone conversion
+                      let appointmentDateStr = '';
+                      let dueDateStr = '';
+                      let createdAtStr = '';
+                      
+                      if (selectedAppointment.scheduledAt) {
+                        const scheduledAtStr = selectedAppointment.scheduledAt.toString();
+                        if (scheduledAtStr.includes('T')) {
+                          appointmentDateStr = scheduledAtStr.split('T')[0];
+                          dueDateStr = scheduledAtStr.split('T')[0];
+                        } else {
+                          const dateObj = new Date(selectedAppointment.scheduledAt);
+                          const year = dateObj.getFullYear();
+                          const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                          const day = String(dateObj.getDate()).padStart(2, '0');
+                          appointmentDateStr = `${year}-${month}-${day}`;
+                          dueDateStr = `${year}-${month}-${day}`;
+                        }
+                      }
+
+                      if (selectedAppointment.createdAt) {
+                        const createdAtStrValue = selectedAppointment.createdAt.toString();
+                        if (createdAtStrValue.includes('T')) {
+                          createdAtStr = createdAtStrValue.split('T')[0];
+                        } else {
+                          const dateObj = new Date(selectedAppointment.createdAt);
+                          const year = dateObj.getFullYear();
+                          const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                          const day = String(dateObj.getDate()).padStart(2, '0');
+                          createdAtStr = `${year}-${month}-${day}`;
+                        }
+                      }
+
+                      const appointmentDate = appointmentDateStr ? format(new Date(appointmentDateStr + 'T00:00:00'), "dd MMM yyyy") : 'N/A';
+                      const appointmentTime = selectedAppointment.scheduledAt ? format(new Date(selectedAppointment.scheduledAt), "h:mm a") : 'N/A';
+                      const dueDate = dueDateStr ? format(new Date(dueDateStr + 'T00:00:00'), "dd MMM yyyy") : 'N/A';
+                      const createdDate = createdAtStr ? format(new Date(createdAtStr + 'T00:00:00'), "dd MMM yyyy") : 'N/A';
+                      const provider = allUsers.find((u: any) => u.id === selectedAppointment.providerId);
+
+                      return (
+                        <Card className="border-blue-200 bg-blue-50/30 dark:bg-blue-900/10 mt-2">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm font-semibold">Appointment Details</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2 text-sm">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Appointment ID:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100">{selectedAppointment.appointmentId || `APT-${selectedAppointment.id}`}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Title:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100">{selectedAppointment.title || "Consultation"}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Date:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100">{appointmentDate}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Time:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100">{appointmentTime}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Due Date:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100">{dueDate}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Created Date:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100">{createdDate}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Duration:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100">{selectedAppointment.duration || 30} minutes</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Status:</span>
+                                <span className="ml-2 text-gray-900 dark:text-gray-100 capitalize">{selectedAppointment.status || 'N/A'}</span>
+                              </div>
+                              {provider && (
+                                <div>
+                                  <span className="font-medium text-gray-700 dark:text-gray-300">Provider:</span>
+                                  <span className="ml-2 text-gray-900 dark:text-gray-100">{provider.firstName} {provider.lastName}</span>
+                                </div>
+                              )}
+                              {selectedAppointment.location && (
+                                <div>
+                                  <span className="font-medium text-gray-700 dark:text-gray-300">Location:</span>
+                                  <span className="ml-2 text-gray-900 dark:text-gray-100">{selectedAppointment.location}</span>
+                                </div>
+                              )}
+                              {selectedAppointment.description && (
+                                <div className="col-span-2">
+                                  <span className="font-medium text-gray-700 dark:text-gray-300">Description:</span>
+                                  <span className="ml-2 text-gray-900 dark:text-gray-100">{selectedAppointment.description}</span>
+                                </div>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -8665,9 +9996,35 @@ export default function BillingPage() {
                       >
                         {patientLabResultsLoading ? (
                           <SelectItem value="loading" disabled>Loading...</SelectItem>
-                        ) : patientLabResults.length > 0 ? (
-                          patientLabResults.map((result: any) => {
-                            const fullText = `${result.testId || `LR-${result.id}`} - ${result.testName} (${result.status})`;
+                        ) : availableLabResults.length > 0 ? (
+                          availableLabResults.map((result: any) => {
+                            // Extract date directly from orderedDate or createdAt to avoid timezone conversion
+                            let dueDateStr = '';
+                            if (result.orderedDate) {
+                              const orderedDateStr = result.orderedDate.toString();
+                              if (orderedDateStr.includes('T')) {
+                                dueDateStr = orderedDateStr.split('T')[0];
+                              } else {
+                                const dateObj = new Date(result.orderedDate);
+                                const year = dateObj.getFullYear();
+                                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                                const day = String(dateObj.getDate()).padStart(2, '0');
+                                dueDateStr = `${year}-${month}-${day}`;
+                              }
+                            } else if (result.createdAt) {
+                              const createdAtStr = result.createdAt.toString();
+                              if (createdAtStr.includes('T')) {
+                                dueDateStr = createdAtStr.split('T')[0];
+                              } else {
+                                const dateObj = new Date(result.createdAt);
+                                const year = dateObj.getFullYear();
+                                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                                const day = String(dateObj.getDate()).padStart(2, '0');
+                                dueDateStr = `${year}-${month}-${day}`;
+                              }
+                            }
+                            const dueDate = dueDateStr ? format(new Date(dueDateStr + 'T00:00:00'), "dd MMM yyyy") : '';
+                            const fullText = `${result.testId || `LR-${result.id}`} - ${result.testName} (${result.status}${dueDate ? `, Due: ${dueDate}` : ''})`;
                             return (
                               <SelectItem 
                                 key={result.id} 
@@ -8703,9 +10060,35 @@ export default function BillingPage() {
                       >
                         {patientImagingLoading ? (
                           <SelectItem value="loading" disabled>Loading...</SelectItem>
-                        ) : patientImaging.length > 0 ? (
-                          patientImaging.map((study: any) => {
-                            const imagingText = `${study.studyType || "Imaging"} - ${study.imageId || `IMG-${study.id}`}`;
+                        ) : availableImaging.length > 0 ? (
+                          availableImaging.map((study: any) => {
+                            // Extract date directly from studyDate or createdAt to avoid timezone conversion
+                            let dueDateStr = '';
+                            if (study.studyDate) {
+                              const studyDateStr = study.studyDate.toString();
+                              if (studyDateStr.includes('T')) {
+                                dueDateStr = studyDateStr.split('T')[0];
+                              } else {
+                                const dateObj = new Date(study.studyDate);
+                                const year = dateObj.getFullYear();
+                                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                                const day = String(dateObj.getDate()).padStart(2, '0');
+                                dueDateStr = `${year}-${month}-${day}`;
+                              }
+                            } else if (study.createdAt) {
+                              const createdAtStr = study.createdAt.toString();
+                              if (createdAtStr.includes('T')) {
+                                dueDateStr = createdAtStr.split('T')[0];
+                              } else {
+                                const dateObj = new Date(study.createdAt);
+                                const year = dateObj.getFullYear();
+                                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                                const day = String(dateObj.getDate()).padStart(2, '0');
+                                dueDateStr = `${year}-${month}-${day}`;
+                              }
+                            }
+                            const dueDate = dueDateStr ? format(new Date(dueDateStr + 'T00:00:00'), "dd MMM yyyy") : '';
+                            const imagingText = `${study.studyType || "Imaging"} - ${study.imageId || `IMG-${study.id}`}${dueDate ? ` (Due: ${dueDate})` : ''}`;
                             return (
                               <SelectItem 
                                 key={study.id} 
@@ -8775,6 +10158,7 @@ export default function BillingPage() {
                           <tr>
                             <th className="p-2 text-left">Code</th>
                             <th className="p-2 text-left">Description</th>
+                            <th className="p-2 text-left">Provider</th>
                             <th className="p-2 text-center">Qty</th>
                             <th className="p-2 text-right">Unit Price</th>
                             <th className="p-2 text-right">Total</th>
@@ -8787,6 +10171,9 @@ export default function BillingPage() {
                             <tr key={item.id} className="border-b border-gray-200 dark:border-gray-700">
                               <td className="p-2 font-mono">{item.code}</td>
                               <td className="p-2">{item.description}</td>
+                              <td className="p-2 text-sm text-gray-600 dark:text-gray-400">
+                                {item.providerName || "—"}
+                              </td>
                               <td className="p-2 text-center">
                                 <Input
                                   type="number"
@@ -8848,6 +10235,7 @@ export default function BillingPage() {
                     sideOffset={4}
                     align="start"
                   >
+                    <SelectItem value="Not Selected">Not Selected</SelectItem>
                     <SelectItem value="Cash">Cash</SelectItem>
                     <SelectItem value="Online Payment">Online Payment</SelectItem>
                     <SelectItem value="Insurance">Insurance</SelectItem>
@@ -9729,11 +11117,11 @@ function PaymentModal({ invoice, open, onClose, onSuccess }: {
 }) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Pay Invoice {invoice.patientId}</DialogTitle>
+      <DialogContent className="max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle>Pay Invoice {invoice.invoiceNumber || invoice.id}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto flex-1 pr-2 min-h-0">
           <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg">
             <div className="flex justify-between items-center mb-2">
               <span className="text-sm text-gray-600 dark:text-gray-400">Patient:</span>
