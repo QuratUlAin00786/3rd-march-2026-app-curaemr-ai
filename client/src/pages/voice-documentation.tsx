@@ -24,6 +24,7 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogClose,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -170,6 +171,9 @@ export default function VoiceDocumentation() {
   const [localTemplates, setLocalTemplates] = useState<SmartTemplate[]>([]);
   const [editingTemplate, setEditingTemplate] = useState<SmartTemplate | null>(null);
   const [editTemplateDialogOpen, setEditTemplateDialogOpen] = useState(false);
+  const [templateDialogOpen, setTemplateDialogOpen] = useState<string | null>(null); // Track which template dialog is open
+  const [templateFormData, setTemplateFormData] = useState<Record<string, Record<string, string>>>({}); // Store form data per template: { templateId: { fieldName: value } }
+  const [templateSelectedPatient, setTemplateSelectedPatient] = useState<Record<string, string>>({}); // Store selected patient per template: { templateId: patientId }
   const [viewFullDialogOpen, setViewFullDialogOpen] = useState(false);
   const [annotateDialogOpen, setAnnotateDialogOpen] = useState(false);
   const [addToReportDialogOpen, setAddToReportDialogOpen] = useState(false);
@@ -179,6 +183,13 @@ export default function VoiceDocumentation() {
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState("en-US");
+  
+  // Voice settings state
+  const [autoSaveRecordings, setAutoSaveRecordings] = useState(true);
+  const [backgroundNoiseReduction, setBackgroundNoiseReduction] = useState(true);
+  const [medicalTerminologyEnhancement, setMedicalTerminologyEnhancement] = useState(true);
+  const [realTimeTranscription, setRealTimeTranscription] = useState(true);
+  const [encryptRecordings, setEncryptRecordings] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const speechRecognitionRef = useRef<any>(null);
@@ -204,25 +215,62 @@ export default function VoiceDocumentation() {
   const [voiceNoteToDelete, setVoiceNoteToDelete] = useState<VoiceNote | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [showVoiceSettingsSuccessModal, setShowVoiceSettingsSuccessModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { toast } = useToast();
+
+  // Load voice settings from localStorage on mount
+  useEffect(() => {
+    const savedLanguage = localStorage.getItem('voiceDocumentationLanguage');
+    if (savedLanguage) {
+      setSelectedLanguage(savedLanguage);
+    }
+    
+    const savedAutoSave = localStorage.getItem('voiceAutoSaveRecordings');
+    if (savedAutoSave !== null) {
+      setAutoSaveRecordings(savedAutoSave === 'true');
+    }
+    
+    const savedNoiseReduction = localStorage.getItem('voiceBackgroundNoiseReduction');
+    if (savedNoiseReduction !== null) {
+      setBackgroundNoiseReduction(savedNoiseReduction === 'true');
+    }
+    
+    const savedMedicalTerminology = localStorage.getItem('voiceMedicalTerminologyEnhancement');
+    if (savedMedicalTerminology !== null) {
+      setMedicalTerminologyEnhancement(savedMedicalTerminology === 'true');
+    }
+    
+    const savedRealTimeTranscription = localStorage.getItem('voiceRealTimeTranscription');
+    if (savedRealTimeTranscription !== null) {
+      setRealTimeTranscription(savedRealTimeTranscription === 'true');
+    }
+    
+    const savedEncryptRecordings = localStorage.getItem('voiceEncryptRecordings');
+    if (savedEncryptRecordings !== null) {
+      setEncryptRecordings(savedEncryptRecordings === 'true');
+    }
+  }, []);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element;
-      if (!target.closest(".searchable-dropdown")) {
+      // Check if click is outside the dropdown container
+      const dropdownContainer = target.closest(".searchable-dropdown");
+      if (!dropdownContainer) {
         setShowPatientDropdown(false);
         setShowPhotoTypeDropdown(false);
       }
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    // Use capture phase to catch events before they bubble
+    document.addEventListener("mousedown", handleClickOutside, true);
+    return () => document.removeEventListener("mousedown", handleClickOutside, true);
   }, []);
 
   // Fetch voice notes
-  const { data: voiceNotes, isLoading: notesLoading } = useQuery({
+  const { data: voiceNotes, isLoading: notesLoading, refetch: refetchVoiceNotes } = useQuery({
     queryKey: ["/api/voice-documentation/notes", refreshTrigger],
     queryFn: async () => {
       const token = localStorage.getItem("auth_token");
@@ -233,7 +281,9 @@ export default function VoiceDocumentation() {
         },
       });
       if (!response.ok) throw new Error("Failed to fetch voice notes");
-      return response.json();
+      const data = await response.json();
+      console.log("[VOICE-NOTES-QUERY] Fetched voice notes:", data?.length || 0, "notes");
+      return data;
     },
   });
 
@@ -366,23 +416,75 @@ export default function VoiceDocumentation() {
   // Delete voice note mutation
   const deleteVoiceNoteMutation = useMutation({
     mutationFn: async (noteId: string) => {
+      console.log("[DELETE-VOICE-NOTE] Attempting to delete note:", noteId);
+      console.log("[DELETE-VOICE-NOTE] Note ID type:", typeof noteId);
+      console.log("[DELETE-VOICE-NOTE] Active subdomain:", getActiveSubdomain());
+      
       const token = localStorage.getItem("auth_token");
-      const response = await fetch(`/api/voice-documentation/notes/${noteId}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-Tenant-Subdomain": getActiveSubdomain(),
-        },
-      });
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error("404: Voice note not found");
-        }
-        throw new Error("Failed to delete voice note");
+      if (!token) {
+        throw new Error("No authentication token found");
       }
-      return response.json();
+      
+      const url = `/api/voice-documentation/notes/${encodeURIComponent(noteId)}`;
+      console.log("[DELETE-VOICE-NOTE] DELETE URL:", url);
+      
+      try {
+        const response = await fetch(url, {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Tenant-Subdomain": getActiveSubdomain(),
+          },
+        });
+        
+        console.log("[DELETE-VOICE-NOTE] Response status:", response.status);
+        console.log("[DELETE-VOICE-NOTE] Response headers:", Object.fromEntries(response.headers.entries()));
+        
+        const responseText = await response.text();
+        console.log("[DELETE-VOICE-NOTE] Response text:", responseText);
+        
+        if (!response.ok) {
+          console.error("[DELETE-VOICE-NOTE] Error response:", responseText);
+          let errorMessage = `Failed to delete voice note: ${response.statusText}`;
+          
+          try {
+            const errorJson = JSON.parse(responseText);
+            errorMessage = errorJson.error || errorMessage;
+          } catch (e) {
+            // If response is not JSON, use the text as error message
+            if (responseText) {
+              errorMessage = responseText;
+            }
+          }
+          
+          if (response.status === 404) {
+            throw new Error("Voice note not found");
+          }
+          throw new Error(errorMessage);
+        }
+        
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (e) {
+          // If response is not JSON, create a result object
+          result = { success: true, message: "Voice note deleted successfully" };
+        }
+        
+        console.log("[DELETE-VOICE-NOTE] Delete successful:", result);
+        return result;
+      } catch (error: any) {
+        console.error("[DELETE-VOICE-NOTE] Fetch error:", error);
+        if (error.message) {
+          throw error;
+        }
+        throw new Error(`Network error: ${error.message || "Unknown error"}`);
+      }
     },
     onSuccess: async (data, noteId) => {
+      console.log("[DELETE-VOICE-NOTE] Success callback called for note:", noteId);
+      console.log("[DELETE-VOICE-NOTE] Response data:", data);
+      
       // Clean up audio storage
       setAudioStorage((prev) => {
         const newMap = new Map(prev);
@@ -390,15 +492,84 @@ export default function VoiceDocumentation() {
         return newMap;
       });
 
+      // Optimistically remove the note from ALL cached queries (regardless of refreshTrigger)
+      queryClient.setQueriesData(
+        { queryKey: ["/api/voice-documentation/notes"], exact: false },
+        (oldData: any) => {
+          if (!oldData || !Array.isArray(oldData)) {
+            console.log("[DELETE-VOICE-NOTE] No old data found or not an array");
+            return oldData;
+          }
+          const filtered = oldData.filter((note: any) => note.id !== noteId);
+          console.log("[DELETE-VOICE-NOTE] Optimistically removed note. Old count:", oldData.length, "New count:", filtered.length);
+          return filtered;
+        }
+      );
+
+      // Invalidate and refetch the voice notes query
+      try {
+        // Wait a brief moment to ensure database transaction is committed
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // Update refresh trigger to force a new query
+        setRefreshTrigger((prev) => prev + 1);
+        
+        // Invalidate all queries with this key prefix (this will trigger refetch)
+        await queryClient.invalidateQueries({
+          queryKey: ["/api/voice-documentation/notes"],
+          exact: false, // Match all queries that start with this key
+        });
+        console.log("[DELETE-VOICE-NOTE] Query invalidated");
+        
+        // Wait a bit for the query to refetch with the new refreshTrigger
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Manually refetch to ensure we have the latest data
+        const refetchResult = await refetchVoiceNotes();
+        console.log("[DELETE-VOICE-NOTE] Query refetched manually. Notes count:", refetchResult.data?.length || 0);
+        
+        // Double-check: verify the deleted note is not in the refetched data
+        if (refetchResult.data && Array.isArray(refetchResult.data)) {
+          const stillExists = refetchResult.data.find((note: any) => note.id === noteId);
+          if (stillExists) {
+            console.error(`[DELETE-VOICE-NOTE] WARNING: Deleted note ${noteId} still appears in refetched data!`);
+            toast({
+              title: "Warning",
+              description: "Note may not have been deleted. Please refresh the page.",
+              variant: "destructive"
+            });
+          } else {
+            console.log(`[DELETE-VOICE-NOTE] Verified: Note ${noteId} is no longer in the list`);
+          }
+        }
+      } catch (refetchError) {
+        console.error("[DELETE-VOICE-NOTE] Error refetching:", refetchError);
+        // Still show success message even if refetch fails, as the deletion succeeded
+      }
+
+      // Close the delete confirmation dialog
+      setVoiceNoteDeleteDialogOpen(false);
+      setVoiceNoteToDelete(null);
+      
       setSuccessMessage("Voice note deleted successfully!");
       setShowSuccessModal(true);
-      console.log("Voice note deleted from backend:", noteId);
-
-      // Trigger UI refresh by updating the refresh trigger
-      setRefreshTrigger((prev) => prev + 1);
     },
-    onError: (err, noteId) => {
-      toast({ title: "Failed to delete voice note", variant: "destructive" });
+    onError: (err: any, noteId) => {
+      console.error("[DELETE-VOICE-NOTE] Error deleting voice note:", err);
+      console.error("[DELETE-VOICE-NOTE] Error details:", {
+        message: err.message,
+        noteId: noteId,
+        error: err,
+        stack: err.stack
+      });
+      
+      const errorMessage = err?.message || "Failed to delete voice note. Please check the console for details.";
+      toast({ 
+        title: "Failed to delete voice note", 
+        description: errorMessage,
+        variant: "destructive",
+        duration: 5000
+      });
     },
   });
 
@@ -671,15 +842,59 @@ export default function VoiceDocumentation() {
       // Don't automatically clear transcript - let users decide with Clear button
       console.log("Requesting microphone access...");
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("Microphone access granted");
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
+      // Check if MediaRecorder is supported
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Microphone access is not supported in this browser. Please use a modern browser like Chrome, Firefox, or Edge.");
+      }
 
-      // Initialize speech recognition for real-time transcription
+      // Check if MediaRecorder is supported
+      if (!window.MediaRecorder) {
+        throw new Error("MediaRecorder is not supported in this browser. Please use a modern browser.");
+      }
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: backgroundNoiseReduction || localStorage.getItem('voiceBackgroundNoiseReduction') === 'true',
+            noiseSuppression: backgroundNoiseReduction || localStorage.getItem('voiceBackgroundNoiseReduction') === 'true',
+            autoGainControl: true
+          } 
+        });
+        console.log("Microphone access granted");
+        // Store stream in ref for later access
+        streamRef.current = stream;
+      } catch (mediaError: any) {
+        console.error("Microphone access error:", mediaError);
+        if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+          throw new Error("Microphone permission denied. Please allow microphone access in your browser settings and try again.");
+        } else if (mediaError.name === 'NotFoundError' || mediaError.name === 'DevicesNotFoundError') {
+          throw new Error("No microphone found. Please connect a microphone and try again.");
+        } else if (mediaError.name === 'NotReadableError' || mediaError.name === 'TrackStartError') {
+          throw new Error("Microphone is already in use by another application. Please close other applications using the microphone and try again.");
+        } else {
+          throw new Error(`Failed to access microphone: ${mediaError.message || mediaError.name || 'Unknown error'}`);
+        }
+      }
+
+      try {
+        mediaRecorderRef.current = new MediaRecorder(stream);
+        audioChunksRef.current = [];
+      } catch (recorderError: any) {
+        console.error("MediaRecorder creation error:", recorderError);
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+        throw new Error(`Failed to initialize recorder: ${recorderError.message || 'Unknown error'}`);
+      }
+
+      // Initialize speech recognition for real-time transcription (only if enabled)
+      const isRealTimeTranscriptionEnabled = realTimeTranscription || localStorage.getItem('voiceRealTimeTranscription') === 'true';
       if (
-        "webkitSpeechRecognition" in window ||
-        "SpeechRecognition" in window
+        isRealTimeTranscriptionEnabled &&
+        ("webkitSpeechRecognition" in window ||
+        "SpeechRecognition" in window)
       ) {
         const SpeechRecognition =
           (window as any).SpeechRecognition ||
@@ -717,33 +932,95 @@ export default function VoiceDocumentation() {
         };
 
         speechRecognitionRef.current.onerror = (event: any) => {
+          // "no-speech" is not really an error - it just means no speech was detected yet
+          // Don't log it as an error or show error toast
+          if (event.error === 'no-speech') {
+            // Silently handle - this is normal behavior when no speech is detected
+            // The onend handler will automatically restart speech recognition
+            return;
+          }
+          
+          // Log other errors
           console.error("Speech recognition error:", event.error);
-          toast({
-            title: `Speech recognition error: ${event.error}`,
-            variant: "destructive",
-          });
+          
+          // For other errors, show a toast but don't stop recording
+          if (event.error !== 'aborted' && event.error !== 'network') {
+            toast({
+              title: `Speech recognition error: ${event.error}`,
+              description: "Recording will continue, but transcription may be limited.",
+              variant: "destructive",
+              duration: 3000,
+            });
+          }
         };
 
         speechRecognitionRef.current.onend = () => {
           console.log("Speech recognition ended");
+          
+          // Automatically restart speech recognition if recording is still active
+          // Check both state and MediaRecorder state to be sure
+          const shouldRestart = isRecording && 
+                                mediaRecorderRef.current && 
+                                mediaRecorderRef.current.state === 'recording' &&
+                                speechRecognitionRef.current;
+          
+          if (shouldRestart) {
+            try {
+              // Small delay before restarting to avoid immediate restart loops
+              setTimeout(() => {
+                // Double-check state before restarting
+                if (isRecording && 
+                    mediaRecorderRef.current && 
+                    mediaRecorderRef.current.state === 'recording' &&
+                    speechRecognitionRef.current) {
+                  try {
+                    speechRecognitionRef.current.start();
+                    console.log("Speech recognition automatically restarted");
+                  } catch (restartError: any) {
+                    // If already started, ignore the error
+                    if (restartError.message && restartError.message.includes('already started')) {
+                      console.log("Speech recognition already running");
+                    } else {
+                      console.error("Failed to restart speech recognition:", restartError);
+                    }
+                  }
+                }
+              }, 100);
+            } catch (error) {
+              console.error("Error scheduling speech recognition restart:", error);
+            }
+          }
         };
 
         try {
           speechRecognitionRef.current.start();
           console.log("Speech recognition start requested");
-        } catch (error) {
+          
+          // Set a flag to track if speech recognition is active
+          // This helps prevent multiple simultaneous starts
+          (speechRecognitionRef.current as any)._isActive = true;
+        } catch (error: any) {
           console.error("Failed to start speech recognition:", error);
-          toast({
-            title: "Failed to start speech recognition",
-            variant: "destructive",
-          });
+          
+          // If already started, that's fine - don't show error
+          if (error.message && error.message.includes('already started')) {
+            console.log("Speech recognition already running");
+          } else {
+            // Only show warning, not error - recording can continue without transcription
+            console.warn("Speech recognition start failed, but recording will continue:", error);
+            // Don't show toast - recording can continue without real-time transcription
+          }
         }
-      } else {
+      } else if (isRealTimeTranscriptionEnabled) {
+        // Only show error if real-time transcription is enabled but not supported
         console.warn("Speech recognition not supported in this browser");
         toast({
           title: "Speech recognition not supported in this browser",
           variant: "destructive",
         });
+      } else {
+        // Real-time transcription is disabled, which is fine
+        console.log("Real-time transcription is disabled");
       }
 
       mediaRecorderRef.current.ondataavailable = (event) => {
@@ -763,18 +1040,40 @@ export default function VoiceDocumentation() {
           setAudioStorage((prev) => new Map(prev.set(tempNoteId, audioUrl)));
         }
 
-        stream.getTracks().forEach((track) => track.stop());
+        // Stop all tracks from the stream
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
 
         // Don't clear transcript here - it should persist for the user to see
       };
 
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
+      try {
+        mediaRecorderRef.current.start();
+        setIsRecording(true);
+        setRecordingTime(0);
+        setSuccessMessage("Recording started");
+        setShowSuccessModal(true);
+      } catch (startError: any) {
+        console.error("MediaRecorder start error:", startError);
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+        throw new Error(`Failed to start recording: ${startError.message || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      console.error("Recording error:", error);
+      const errorMessage = error?.message || "Failed to start recording. Please check your microphone permissions and try again.";
+      toast({ 
+        title: "Failed to start recording", 
+        description: errorMessage,
+        variant: "destructive" 
+      });
+      // Reset state on error
+      setIsRecording(false);
       setRecordingTime(0);
-      setSuccessMessage("Recording started");
-      setShowSuccessModal(true);
-    } catch (error) {
-      toast({ title: "Failed to start recording", variant: "destructive" });
     }
   };
 
@@ -783,9 +1082,15 @@ export default function VoiceDocumentation() {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
 
-      // Stop speech recognition
+      // Stop speech recognition and mark as inactive
       if (speechRecognitionRef.current) {
-        speechRecognitionRef.current.stop();
+        try {
+          (speechRecognitionRef.current as any)._isActive = false;
+          speechRecognitionRef.current.stop();
+          speechRecognitionRef.current.abort(); // Abort to prevent auto-restart
+        } catch (error) {
+          console.error("Error stopping speech recognition:", error);
+        }
       }
 
       // Clean up interim transcript markers
@@ -1474,7 +1779,7 @@ export default function VoiceDocumentation() {
                       <Search className="absolute right-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                     </div>
                     {showPatientDropdown && (
-                      <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl max-h-60 overflow-y-auto">
                         {patientsLoading ? (
                           <div className="p-2 text-sm text-gray-500">
                             Loading...
@@ -1506,8 +1811,9 @@ export default function VoiceDocumentation() {
                               filteredPatients.map((patient: any) => (
                                 <div
                                   key={patient.id}
-                                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-lg"
-                                  onClick={() => {
+                                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedPhotoPatient(
                                       patient.id.toString(),
                                     );
@@ -1551,7 +1857,7 @@ export default function VoiceDocumentation() {
                       <Search className="absolute right-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                     </div>
                     {showPhotoTypeDropdown && (
-                      <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl max-h-60 overflow-y-auto">
                         {(() => {
                           const photoTypes = [
                             { value: "wound", label: "Wound" },
@@ -2418,9 +2724,24 @@ export default function VoiceDocumentation() {
                     </div>
 
                     <div className="flex gap-2">
-                      <Dialog>
+                      <Dialog open={templateDialogOpen === template.id} onOpenChange={(open) => {
+                        setTemplateDialogOpen(open ? template.id : null);
+                        if (!open) {
+                          // Reset form data when dialog closes
+                          setTemplateFormData(prev => {
+                            const newData = { ...prev };
+                            delete newData[template.id];
+                            return newData;
+                          });
+                          setTemplateSelectedPatient(prev => {
+                            const newData = { ...prev };
+                            delete newData[template.id];
+                            return newData;
+                          });
+                        }
+                      }}>
                         <DialogTrigger asChild>
-                          <Button size="sm">Use Template</Button>
+                          <Button size="sm" onClick={() => setTemplateDialogOpen(template.id)}>Use Template</Button>
                         </DialogTrigger>
                         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                           <DialogHeader>
@@ -2455,9 +2776,17 @@ export default function VoiceDocumentation() {
 
                             <div>
                               <label className="text-sm font-medium mb-2 block">
-                                Patient Selection
+                                Patient Selection *
                               </label>
-                              <Select>
+                              <Select
+                                value={templateSelectedPatient[template.id] || ""}
+                                onValueChange={(value) => {
+                                  setTemplateSelectedPatient(prev => ({
+                                    ...prev,
+                                    [template.id]: value
+                                  }));
+                                }}
+                              >
                                 <SelectTrigger>
                                   <SelectValue
                                     placeholder={
@@ -2495,52 +2824,87 @@ export default function VoiceDocumentation() {
                                 Template Fields
                               </label>
                               <div className="space-y-3">
-                                {template.fields.map((field, idx) => (
-                                  <div key={idx}>
-                                    <label className="text-sm text-gray-700">
-                                      {field.name}
-                                      {field.required && (
-                                        <span className="text-red-500 ml-1">
-                                          *
-                                        </span>
+                                {template.fields.map((field, idx) => {
+                                  const currentValue = templateFormData[template.id]?.[field.name] || "";
+                                  
+                                  return (
+                                    <div key={idx}>
+                                      <label className="text-sm text-gray-700">
+                                        {field.name}
+                                        {field.required && (
+                                          <span className="text-red-500 ml-1">
+                                            *
+                                          </span>
+                                        )}
+                                      </label>
+                                      {field.type === "textarea" ? (
+                                        <Textarea
+                                          value={currentValue}
+                                          onChange={(e) => {
+                                            setTemplateFormData(prev => ({
+                                              ...prev,
+                                              [template.id]: {
+                                                ...prev[template.id],
+                                                [field.name]: e.target.value
+                                              }
+                                            }));
+                                          }}
+                                          placeholder={`Enter ${field.name.toLowerCase()}`}
+                                          className="mt-1"
+                                        />
+                                      ) : field.type === "select" &&
+                                        field.options ? (
+                                        <Select
+                                          value={currentValue}
+                                          onValueChange={(value) => {
+                                            setTemplateFormData(prev => ({
+                                              ...prev,
+                                              [template.id]: {
+                                                ...prev[template.id],
+                                                [field.name]: value
+                                              }
+                                            }));
+                                          }}
+                                        >
+                                          <SelectTrigger className="mt-1">
+                                            <SelectValue
+                                              placeholder={`Select ${field.name.toLowerCase()}`}
+                                            />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {field.options.map(
+                                              (option, optIdx) => (
+                                                <SelectItem
+                                                  key={optIdx}
+                                                  value={option
+                                                    .toLowerCase()
+                                                    .replace(/\s+/g, "_")}
+                                                >
+                                                  {option}
+                                                </SelectItem>
+                                              ),
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      ) : (
+                                        <Input
+                                          value={currentValue}
+                                          onChange={(e) => {
+                                            setTemplateFormData(prev => ({
+                                              ...prev,
+                                              [template.id]: {
+                                                ...prev[template.id],
+                                                [field.name]: e.target.value
+                                              }
+                                            }));
+                                          }}
+                                          placeholder={`Enter ${field.name.toLowerCase()}`}
+                                          className="mt-1"
+                                        />
                                       )}
-                                    </label>
-                                    {field.type === "textarea" ? (
-                                      <Textarea
-                                        placeholder={`Enter ${field.name.toLowerCase()}`}
-                                        className="mt-1"
-                                      />
-                                    ) : field.type === "select" &&
-                                      field.options ? (
-                                      <Select>
-                                        <SelectTrigger className="mt-1">
-                                          <SelectValue
-                                            placeholder={`Select ${field.name.toLowerCase()}`}
-                                          />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          {field.options.map(
-                                            (option, optIdx) => (
-                                              <SelectItem
-                                                key={optIdx}
-                                                value={option
-                                                  .toLowerCase()
-                                                  .replace(" ", "_")}
-                                              >
-                                                {option}
-                                              </SelectItem>
-                                            ),
-                                          )}
-                                        </SelectContent>
-                                      </Select>
-                                    ) : (
-                                      <Input
-                                        placeholder={`Enter ${field.name.toLowerCase()}`}
-                                        className="mt-1"
-                                      />
-                                    )}
-                                  </div>
-                                ))}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
 
@@ -2548,20 +2912,124 @@ export default function VoiceDocumentation() {
                               <label className="text-sm font-medium mb-2 block">
                                 Generated Note Preview
                               </label>
-                              <div className="p-3 bg-gray-50 rounded-lg font-mono text-sm text-gray-700 max-h-40 overflow-y-auto">
-                                {template.template}
+                              <div className="p-3 bg-gray-50 rounded-lg font-mono text-sm text-gray-700 max-h-40 overflow-y-auto whitespace-pre-wrap">
+                                {(() => {
+                                  // Generate preview with field values
+                                  let preview = template.template;
+                                  const formData = templateFormData[template.id] || {};
+                                  
+                                  template.fields.forEach((field) => {
+                                    const value = formData[field.name] || `[${field.name}]`;
+                                    // Replace placeholders in format {fieldName} or {{fieldName}} or [fieldName]
+                                    const patterns = [
+                                      new RegExp(`\\{\\{${field.name}\\}\\}`, 'gi'),
+                                      new RegExp(`\\{${field.name}\\}`, 'gi'),
+                                      new RegExp(`\\[${field.name}\\]`, 'gi'),
+                                    ];
+                                    
+                                    patterns.forEach(pattern => {
+                                      preview = preview.replace(pattern, value);
+                                    });
+                                  });
+                                  
+                                  return preview;
+                                })()}
                               </div>
                             </div>
 
                             <div className="flex justify-end gap-2 pt-4">
                               <DialogClose asChild>
-                                <Button variant="outline">Cancel</Button>
+                                <Button variant="outline" onClick={() => {
+                                  setTemplateDialogOpen(null);
+                                  setTemplateFormData(prev => {
+                                    const newData = { ...prev };
+                                    delete newData[template.id];
+                                    return newData;
+                                  });
+                                  setTemplateSelectedPatient(prev => {
+                                    const newData = { ...prev };
+                                    delete newData[template.id];
+                                    return newData;
+                                  });
+                                }}>Cancel</Button>
                               </DialogClose>
                               <Button
                                 onClick={() => {
+                                  // Validate required fields
+                                  const formData = templateFormData[template.id] || {};
+                                  const selectedPatientId = templateSelectedPatient[template.id];
+                                  
+                                  // Check if patient is selected
+                                  if (!selectedPatientId || selectedPatientId === 'loading' || selectedPatientId === 'no-patients') {
+                                    toast({
+                                      title: "Patient Required",
+                                      description: "Please select a patient for this note",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  
+                                  // Check required fields
+                                  const missingFields = template.fields
+                                    .filter(field => field.required && !formData[field.name]?.trim())
+                                    .map(field => field.name);
+                                  
+                                  if (missingFields.length > 0) {
+                                    toast({
+                                      title: "Required Fields Missing",
+                                      description: `Please fill in: ${missingFields.join(', ')}`,
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  
+                                  // Generate the note by replacing placeholders
+                                  let generatedNote = template.template;
+                                  template.fields.forEach((field) => {
+                                    const value = formData[field.name] || '';
+                                    // Replace placeholders in various formats
+                                    const patterns = [
+                                      new RegExp(`\\{\\{${field.name}\\}\\}`, 'gi'),
+                                      new RegExp(`\\{${field.name}\\}`, 'gi'),
+                                      new RegExp(`\\[${field.name}\\]`, 'gi'),
+                                    ];
+                                    
+                                    patterns.forEach(pattern => {
+                                      generatedNote = generatedNote.replace(pattern, value);
+                                    });
+                                  });
+                                  
+                                  // Set the generated note in transcript
+                                  setCurrentTranscript(generatedNote);
+                                  
+                                  // Set selected patient
+                                  setSelectedPatient(selectedPatientId);
+                                  
+                                  // Set note type based on template category
+                                  setSelectedNoteType(template.category);
+                                  
+                                  // Set selected template
+                                  setSelectedTemplate(template.id);
+                                  
+                                  // Close dialog
+                                  setTemplateDialogOpen(null);
+                                  
+                                  // Clear form data
+                                  setTemplateFormData(prev => {
+                                    const newData = { ...prev };
+                                    delete newData[template.id];
+                                    return newData;
+                                  });
+                                  setTemplateSelectedPatient(prev => {
+                                    const newData = { ...prev };
+                                    delete newData[template.id];
+                                    return newData;
+                                  });
+                                  
+                                  // Show success message
                                   toast({
                                     title: "Template Applied",
-                                    description: `${template.name} has been used to create a new voice note`,
+                                    description: `${template.name} has been used to create a new voice note. You can now save it.`,
                                   });
                                 }}
                               >
@@ -3728,14 +4196,26 @@ export default function VoiceDocumentation() {
                               <Button 
                                 size="sm"
                                 onClick={() => {
-                                  // Navigate to billing page with the code pre-filled
-                                  const billingCode = code.code;
-                                  const billingDescription = code.description || code.code;
-                                  const billingUrl = `/billing?addCode=${encodeURIComponent(billingCode)}&description=${encodeURIComponent(billingDescription)}`;
-                                  window.location.href = billingUrl;
+                                  // Store code information in localStorage for billing page to pick up
+                                  const billingCodeData = {
+                                    code: code.code,
+                                    description: code.description || code.code,
+                                    codeType: code.codeType || 'ICD-10', // Default to ICD-10 if not specified
+                                    source: code.source || '',
+                                    confidence: code.confidence || 0,
+                                    timestamp: Date.now()
+                                  };
+                                  
+                                  // Store in localStorage
+                                  localStorage.setItem('pendingBillingCode', JSON.stringify(billingCodeData));
+                                  
+                                  // Navigate to billing page
+                                  window.location.href = '/billing';
+                                  
+                                  // Show success toast
                                   toast({
-                                    title: "Code Added",
-                                    description: `${billingCode} has been added to billing`,
+                                    title: "Code Ready for Billing",
+                                    description: `${code.code} will be added to the invoice form`,
                                   });
                                 }}
                               >
@@ -3853,9 +4333,22 @@ export default function VoiceDocumentation() {
                           Automatically save completed recordings
                         </p>
                       </div>
-                      <Button variant="outline" size="sm">
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Enabled
+                      <Button 
+                        variant={autoSaveRecordings ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setAutoSaveRecordings(!autoSaveRecordings)}
+                      >
+                        {autoSaveRecordings ? (
+                          <>
+                            <CheckCircle className="w-4 h-4 mr-1" />
+                            Enabled
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 mr-1" />
+                            Disabled
+                          </>
+                        )}
                       </Button>
                     </div>
 
@@ -3868,9 +4361,22 @@ export default function VoiceDocumentation() {
                           Filter out ambient noise during recording
                         </p>
                       </div>
-                      <Button variant="outline" size="sm">
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Enabled
+                      <Button 
+                        variant={backgroundNoiseReduction ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setBackgroundNoiseReduction(!backgroundNoiseReduction)}
+                      >
+                        {backgroundNoiseReduction ? (
+                          <>
+                            <CheckCircle className="w-4 h-4 mr-1" />
+                            Enabled
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 mr-1" />
+                            Disabled
+                          </>
+                        )}
                       </Button>
                     </div>
                   </div>
@@ -3915,9 +4421,22 @@ export default function VoiceDocumentation() {
                           Improved recognition of medical terms
                         </p>
                       </div>
-                      <Button variant="outline" size="sm">
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Enabled
+                      <Button 
+                        variant={medicalTerminologyEnhancement ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setMedicalTerminologyEnhancement(!medicalTerminologyEnhancement)}
+                      >
+                        {medicalTerminologyEnhancement ? (
+                          <>
+                            <CheckCircle className="w-4 h-4 mr-1" />
+                            Enabled
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 mr-1" />
+                            Disabled
+                          </>
+                        )}
                       </Button>
                     </div>
 
@@ -3930,9 +4449,22 @@ export default function VoiceDocumentation() {
                           Show transcription while recording
                         </p>
                       </div>
-                      <Button variant="outline" size="sm">
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Enabled
+                      <Button 
+                        variant={realTimeTranscription ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setRealTimeTranscription(!realTimeTranscription)}
+                      >
+                        {realTimeTranscription ? (
+                          <>
+                            <CheckCircle className="w-4 h-4 mr-1" />
+                            Enabled
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 mr-1" />
+                            Disabled
+                          </>
+                        )}
                       </Button>
                     </div>
 
@@ -3968,9 +4500,22 @@ export default function VoiceDocumentation() {
                           End-to-end encryption for all audio files
                         </p>
                       </div>
-                      <Button variant="outline" size="sm">
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Enabled
+                      <Button 
+                        variant={encryptRecordings ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setEncryptRecordings(!encryptRecordings)}
+                      >
+                        {encryptRecordings ? (
+                          <>
+                            <CheckCircle className="w-4 h-4 mr-1" />
+                            Enabled
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 mr-1" />
+                            Disabled
+                          </>
+                        )}
                       </Button>
                     </div>
 
@@ -4008,20 +4553,22 @@ export default function VoiceDocumentation() {
                 </Button>
                 <Button
                   onClick={() => {
-                    // Save language setting to localStorage
+                    // Save all settings to localStorage
                     localStorage.setItem('voiceDocumentationLanguage', selectedLanguage);
+                    localStorage.setItem('voiceAutoSaveRecordings', autoSaveRecordings.toString());
+                    localStorage.setItem('voiceBackgroundNoiseReduction', backgroundNoiseReduction.toString());
+                    localStorage.setItem('voiceMedicalTerminologyEnhancement', medicalTerminologyEnhancement.toString());
+                    localStorage.setItem('voiceRealTimeTranscription', realTimeTranscription.toString());
+                    localStorage.setItem('voiceEncryptRecordings', encryptRecordings.toString());
                     
                     // Update speech recognition language if it's running
                     if (speechRecognitionRef.current) {
                       speechRecognitionRef.current.lang = selectedLanguage;
                     }
                     
-                    toast({
-                      title: "Settings Saved",
-                      description:
-                        "Voice settings have been updated successfully",
-                    });
+                    // Close settings dialog and show success modal
                     setVoiceSettingsOpen(false);
+                    setShowVoiceSettingsSuccessModal(true);
                   }}
                 >
                   <Save className="w-4 h-4 mr-2" />
@@ -4095,17 +4642,23 @@ export default function VoiceDocumentation() {
                 Cancel
               </AlertDialogCancel>
               <AlertDialogAction
-                onClick={() => {
+                onClick={async () => {
                   if (voiceNoteToDelete) {
-                    deleteVoiceNoteMutation.mutate(voiceNoteToDelete.id);
-                    setVoiceNoteDeleteDialogOpen(false);
-                    setVoiceNoteToDelete(null);
+                    console.log("[DELETE-VOICE-NOTE] Delete button clicked for note:", voiceNoteToDelete.id);
+                    try {
+                      await deleteVoiceNoteMutation.mutateAsync(voiceNoteToDelete.id);
+                      // Dialog will be closed in onSuccess callback
+                    } catch (error) {
+                      console.error("[DELETE-VOICE-NOTE] Delete failed:", error);
+                      // Keep dialog open on error so user can see the error message
+                      // Error will be shown via toast in onError callback
+                    }
                   }
                 }}
                 disabled={deleteVoiceNoteMutation.isPending}
                 className="bg-blue-600 hover:bg-blue-700"
               >
-                OK
+                {deleteVoiceNoteMutation.isPending ? "Deleting..." : "OK"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -4132,6 +4685,33 @@ export default function VoiceDocumentation() {
                 OK
               </Button>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Voice Settings Success Modal */}
+        <Dialog open={showVoiceSettingsSuccessModal} onOpenChange={setShowVoiceSettingsSuccessModal}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <div className="flex items-center justify-center mb-4">
+                <div className="h-16 w-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center">
+                  <CheckCircle className="h-10 w-10 text-green-600 dark:text-green-500" />
+                </div>
+              </div>
+              <DialogTitle className="text-center text-xl">Success!</DialogTitle>
+            </DialogHeader>
+            <div className="text-center py-4">
+              <p className="text-muted-foreground">
+                Voice settings have been updated successfully
+              </p>
+            </div>
+            <DialogFooter className="sm:justify-center">
+              <Button 
+                onClick={() => setShowVoiceSettingsSuccessModal(false)} 
+                className="w-full sm:w-auto"
+              >
+                OK
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

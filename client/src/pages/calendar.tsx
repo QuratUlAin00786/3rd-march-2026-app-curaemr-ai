@@ -11,7 +11,7 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Calendar, Plus, Users, Clock, User, X, Check, ChevronsUpDown, Phone, Mail, FileText, MapPin, Filter, FilterX, CreditCard, RefreshCw } from "lucide-react";
+import { Calendar, Plus, Users, Clock, User, X, Check, CheckCircle, ChevronsUpDown, Phone, Mail, FileText, MapPin, Filter, FilterX, CreditCard, RefreshCw } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { format, isBefore, startOfDay, addMonths, isAfter } from "date-fns";
 import { useLocation } from "wouter";
@@ -2031,18 +2031,11 @@ const getAppointmentTypeLabel = (appointment: any): string => {
         } else {
           // If payment intent creation fails, show success modal instead
           setShowSuccessModal(true);
-          toast({
-            title: "Appointment Booked",
-            description: "Appointment created. Please complete payment from the billing section.",
-          });
         }
       } catch (paymentError) {
         console.error("Failed to create payment intent:", paymentError);
+        // Show success modal instead of toast for patient users
         setShowSuccessModal(true);
-        toast({
-          title: "Appointment Booked",
-          description: "Appointment created. Please complete payment from the billing section.",
-        });
       }
     },
     onError: (error) => {
@@ -5106,26 +5099,32 @@ const getAppointmentTypeLabel = (appointment: any): string => {
         {/* Success Modal for All Users */}
         {showSuccessModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
               <div className="p-6">
                 <div className="flex flex-col items-center text-center">
-                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
-                    <Check className="h-8 w-8 text-green-600" />
+                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mb-4">
+                    <CheckCircle className="h-10 w-10 text-green-600 dark:text-green-400" />
                   </div>
-                  <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                    Appointment Successfully Created
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                    Success!
                   </h2>
-                  <p className="text-gray-600 mb-6">
-                    The appointment has been successfully created and saved.
-                  </p>
+                  {user?.role === "patient" ? (
+                    <p className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                      Your appointment has been created. You can complete payment later from the billing section.
+                    </p>
+                  ) : (
+                    <p className="text-gray-600 dark:text-gray-300 mb-6">
+                      The appointment has been successfully created and saved.
+                    </p>
+                  )}
                   <Button
                     onClick={() => {
                       setShowSuccessModal(false);
                     }}
-                    className="w-full"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white"
                     data-testid="button-close-success"
                   >
-                    Close
+                    OK
                   </Button>
                 </div>
               </div>
@@ -5770,10 +5769,8 @@ const getAppointmentTypeLabel = (appointment: any): string => {
                       // Allow closing via Cancel button
                       setStripeClientSecret("");
                       setCreatedInvoiceId(null);
-                      toast({
-                        title: "Payment Cancelled",
-                        description: "Your appointment has been created. You can complete payment later from the billing section.",
-                      });
+                      // Show success modal instead of toast for patient users
+                      setShowSuccessModal(true);
                     }}
                   />
                 </Elements>

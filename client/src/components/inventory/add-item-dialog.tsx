@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Plus, CheckCircle } from "lucide-react";
+import { Plus, CheckCircle, Edit, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,8 +18,16 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import AddCategoryDialog from "./add-category-dialog";
+import AddItemNameDialog from "./add-item-name-dialog";
 
 interface InventoryCategory {
+  id: number;
+  name: string;
+  description?: string;
+  isActive: boolean;
+}
+
+interface InventoryItemName {
   id: number;
   name: string;
   description?: string;
@@ -33,9 +41,12 @@ interface AddItemDialogProps {
 
 export default function AddItemDialog({ open, onOpenChange }: AddItemDialogProps) {
   const [showCategoryDialog, setShowCategoryDialog] = useState(false);
+  const [showItemNameDialog, setShowItemNameDialog] = useState(false);
+  const [editingItemName, setEditingItemName] = useState<InventoryItemName | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [formData, setFormData] = useState({
+    itemNameId: "",
     name: "",
     description: "",
     sku: "",
@@ -64,6 +75,33 @@ export default function AddItemDialog({ open, onOpenChange }: AddItemDialogProps
 
   const { data: categories = [] } = useQuery<InventoryCategory[]>({
     queryKey: ["/api/inventory/categories"],
+  });
+
+  // Fetch item names from API
+  const { data: itemNames = [], isLoading: itemNamesLoading } = useQuery<InventoryItemName[]>({
+    queryKey: ["/api/inventory/item-names"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/inventory/item-names");
+      
+      if (!response.ok) {
+        let errorMessage = "Failed to fetch item names";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          const text = await response.text();
+          if (text.includes("<!DOCTYPE")) {
+            errorMessage = `Server error: ${response.status} ${response.statusText}`;
+          } else {
+            errorMessage = text || errorMessage;
+          }
+        }
+        throw new Error(errorMessage);
+      }
+      
+      return response.json();
+    },
+    enabled: open, // Only fetch when dialog is open
   });
 
   const addItemMutation = useMutation({
@@ -106,9 +144,17 @@ export default function AddItemDialog({ open, onOpenChange }: AddItemDialogProps
     },
   });
 
+  // Set default item name when item names are loaded
+  useEffect(() => {
+    if (itemNames.length > 0 && !formData.itemNameId) {
+      setFormData(prev => ({ ...prev, itemNameId: itemNames[0].id.toString(), name: itemNames[0].name }));
+    }
+  }, [itemNames]);
+
   const resetForm = () => {
     setFormData({
-      name: "",
+      itemNameId: itemNames.length > 0 ? itemNames[0].id.toString() : "",
+      name: itemNames.length > 0 ? itemNames[0].name : "",
       description: "",
       sku: "",
       barcode: "",
@@ -136,10 +182,10 @@ export default function AddItemDialog({ open, onOpenChange }: AddItemDialogProps
     e.preventDefault();
     
     // Basic validation
-    if (!formData.name || !formData.sku || !formData.categoryId) {
+    if (!formData.itemNameId || !formData.name || !formData.sku || !formData.categoryId) {
       toast({
         title: "Validation Error",
-        description: "Please fill in all required fields (Name, SKU, Category).",
+        description: "Please fill in all required fields (Item Name, SKU, Category).",
         variant: "destructive",
       });
       return;
@@ -170,14 +216,69 @@ export default function AddItemDialog({ open, onOpenChange }: AddItemDialogProps
               <h3 className="text-lg font-medium">Basic Information</h3>
               
               <div>
-                <Label htmlFor="name">Item Name *</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => handleInputChange("name", e.target.value)}
-                  placeholder="e.g., Paracetamol 500mg"
-                  required
-                />
+                <Label htmlFor="itemName">Item Name *</Label>
+                <div className="flex space-x-2">
+                  <Select 
+                    value={formData.itemNameId} 
+                    onValueChange={(value) => {
+                      const selectedItemName = itemNames.find(item => item.id.toString() === value);
+                      if (selectedItemName) {
+                        handleInputChange("itemNameId", value);
+                        handleInputChange("name", selectedItemName.name);
+                      }
+                    }}
+                    disabled={itemNamesLoading || itemNames.length === 0}
+                    className="flex-1"
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={itemNamesLoading ? "Loading item names..." : itemNames.length === 0 ? "No item names available" : "Select item name"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {itemNamesLoading ? (
+                        <SelectItem value="loading" disabled>Loading item names...</SelectItem>
+                      ) : itemNames.length === 0 ? (
+                        <SelectItem value="no-items" disabled>No item names available. Please add item names first.</SelectItem>
+                      ) : (
+                        itemNames.filter(item => item.isActive).map((itemName) => (
+                          <SelectItem key={itemName.id} value={itemName.id.toString()}>
+                            {itemName.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {formData.itemNameId && (
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        const selected = itemNames.find(item => item.id.toString() === formData.itemNameId);
+                        if (selected) {
+                          setEditingItemName(selected);
+                          setShowItemNameDialog(true);
+                        }
+                      }}
+                      className="px-3"
+                      title="Edit selected item name"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                  )}
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      setEditingItemName(null);
+                      setShowItemNameDialog(true);
+                    }}
+                    className="px-3"
+                    title="Add new item name"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
 
               <div>
@@ -457,6 +558,25 @@ export default function AddItemDialog({ open, onOpenChange }: AddItemDialogProps
         <AddCategoryDialog 
           open={showCategoryDialog} 
           onOpenChange={setShowCategoryDialog} 
+        />
+
+        {/* Add/Edit Item Name Dialog */}
+        <AddItemNameDialog 
+          open={showItemNameDialog} 
+          onOpenChange={(open) => {
+            setShowItemNameDialog(open);
+            if (!open) {
+              setEditingItemName(null); // Clear edit mode when dialog closes
+            }
+          }}
+          editingItemName={editingItemName}
+          onItemNameAdded={(itemNameId, itemName) => {
+            // Update form with the new/updated item name
+            setFormData(prev => ({ ...prev, itemNameId: itemNameId.toString(), name: itemName }));
+            // Refresh item names list
+            queryClient.invalidateQueries({ queryKey: ["/api/inventory/item-names"] });
+            setEditingItemName(null);
+          }}
         />
       </DialogContent>
     </Dialog>

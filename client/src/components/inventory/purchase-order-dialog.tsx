@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, Check } from "lucide-react";
 import SimpleAddItem from "./simple-add-item";
+import AddSupplierDialog from "./add-supplier-dialog";
 
 interface InventoryItem {
   id: number;
@@ -34,16 +35,36 @@ interface POItem {
   totalPrice: string;
 }
 
+interface Supplier {
+  id: number;
+  name: string;
+  contactPerson?: string;
+  email?: string;
+  phone?: string;
+  isActive: boolean;
+}
+
 export default function PurchaseOrderDialog({ open, onOpenChange, items, onPurchaseOrderCreated }: PurchaseOrderDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
+  // Fetch suppliers from API
+  const { data: suppliers = [], isLoading: suppliersLoading } = useQuery<Supplier[]>({
+    queryKey: ["/api/inventory/suppliers"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/inventory/suppliers");
+      return response.json();
+    },
+    enabled: open, // Only fetch when dialog is open
+  });
+
+  const [showSupplierDialog, setShowSupplierDialog] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [createdPONumber, setCreatedPONumber] = useState<string | null>(null);
   const [createdPOId, setCreatedPOId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
-    supplierId: 1, // Default supplier
+    supplierId: suppliers.length > 0 ? suppliers[0].id : 0, // Default to first supplier if available
     expectedDeliveryDate: "",
     notes: "",
     taxAmount: "0.00",
@@ -56,6 +77,13 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items, onPurch
     quantity: 1,
     unitPrice: ""
   });
+
+  // Set default supplier when suppliers are loaded
+  useEffect(() => {
+    if (suppliers.length > 0 && formData.supplierId === 0) {
+      setFormData(prev => ({ ...prev, supplierId: suppliers[0].id }));
+    }
+  }, [suppliers]);
 
   const createPOMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -87,7 +115,7 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items, onPurch
 
   const resetForm = () => {
     setFormData({
-      supplierId: 1,
+      supplierId: suppliers.length > 0 ? suppliers[0].id : 0,
       expectedDeliveryDate: "",
       notes: "",
       taxAmount: "0.00",
@@ -189,16 +217,41 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items, onPurch
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="supplier" style={{ fontSize: '12px', marginBottom: '4px' }}>Supplier</Label>
-              <Select value={formData.supplierId.toString()} onValueChange={(value) => setFormData({...formData, supplierId: parseInt(value)})}>
-                <SelectTrigger className="h-9" style={{ fontSize: '12px' }}>
-                  <SelectValue placeholder="Select supplier" />
-                </SelectTrigger>
-                <SelectContent style={{ fontSize: '12px' }}>
-                  <SelectItem value="1">Halo Pharmacy</SelectItem>
-                  <SelectItem value="2">MedSupply Co.</SelectItem>
-                  <SelectItem value="3">Healthcare Solutions</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex space-x-2">
+                <Select 
+                  value={formData.supplierId > 0 ? formData.supplierId.toString() : ""} 
+                  onValueChange={(value) => setFormData({...formData, supplierId: parseInt(value)})}
+                  disabled={suppliersLoading || suppliers.length === 0}
+                  className="flex-1"
+                >
+                  <SelectTrigger className="h-9" style={{ fontSize: '12px' }}>
+                    <SelectValue placeholder={suppliersLoading ? "Loading suppliers..." : suppliers.length === 0 ? "No suppliers available" : "Select supplier"} />
+                  </SelectTrigger>
+                  <SelectContent style={{ fontSize: '12px' }}>
+                    {suppliersLoading ? (
+                      <SelectItem value="loading" disabled>Loading suppliers...</SelectItem>
+                    ) : suppliers.length === 0 ? (
+                      <SelectItem value="no-suppliers" disabled>No suppliers available. Please add suppliers first.</SelectItem>
+                    ) : (
+                      suppliers.filter(s => s.isActive).map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id.toString()}>
+                          {supplier.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setShowSupplierDialog(true)}
+                  className="px-3 h-9"
+                  title="Add new supplier"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
             <div>
               <Label htmlFor="deliveryDate" style={{ fontSize: '12px', marginBottom: '4px' }}>Expected Delivery Date</Label>
@@ -435,6 +488,18 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items, onPurch
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Add Supplier Dialog */}
+      <AddSupplierDialog 
+        open={showSupplierDialog} 
+        onOpenChange={setShowSupplierDialog}
+        onSupplierAdded={(supplierId) => {
+          // Auto-select the newly added supplier
+          setFormData(prev => ({ ...prev, supplierId }));
+          // Refresh suppliers list
+          queryClient.invalidateQueries({ queryKey: ["/api/inventory/suppliers"] });
+        }}
+      />
     </Dialog>
   );
 }

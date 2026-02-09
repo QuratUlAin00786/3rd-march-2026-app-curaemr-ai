@@ -3749,6 +3749,7 @@ function PricingManagementDashboard() {
 
 export default function BillingPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const { canCreate, canEdit, canDelete } = useRolePermissions();
   const isDoctor = isDoctorLike(user?.role);
   const [searchQuery, setSearchQuery] = useState("");
@@ -3916,7 +3917,6 @@ export default function BillingPage() {
 
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [activeTab, setActiveTab] = useState("invoices");
-  const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isInvoiceSaved, setIsInvoiceSaved] = useState(false);
   const [clinicHeader, setClinicHeader] = useState<any>(null);
@@ -4022,7 +4022,7 @@ export default function BillingPage() {
     
     // Only fetch for admin/doctor/nurse roles
     if (isAdmin || user?.role === 'doctor' || user?.role === 'nurse') {
-      fetchClinicBranding();
+    fetchClinicBranding();
     }
   }, [isAdmin, user?.role]);
 
@@ -4658,17 +4658,17 @@ export default function BillingPage() {
             }
             
             if (logoData) {
-              if (logoPosition === 'left') {
+            if (logoPosition === 'left') {
                 doc.addImage(logoData, imageFormat, logoX, 10, logoSize, logoSize);
                 textX = logoX + logoSize + 7;
-              } else if (logoPosition === 'center') {
-                const centerX = (pageWidth - logoSize) / 2;
+            } else if (logoPosition === 'center') {
+              const centerX = (pageWidth - logoSize) / 2;
                 doc.addImage(logoData, imageFormat, centerX, 10, logoSize, logoSize);
-                textX = margin;
-              } else {
+              textX = margin;
+            } else {
                 logoX = pageWidth - margin - logoSize - 130;
                 doc.addImage(logoData, imageFormat, logoX, 10, logoSize, logoSize);
-                textX = margin;
+              textX = margin;
               }
             }
           } catch (error) {
@@ -4687,7 +4687,7 @@ export default function BillingPage() {
         if (clinicName) {
           const fontSize = getAutoFontSize(clinicName, availableWidth, 14, 22);
           doc.setFontSize(fontSize);
-          doc.setFont('helvetica', 'bold');
+        doc.setFont('helvetica', 'bold');
           doc.setTextColor(66, 133, 244); // Blue color for clinic name
           doc.text(clinicName, textX, currentY, { maxWidth: availableWidth });
           currentY += fontSize * 0.4 + 2;
@@ -4695,8 +4695,8 @@ export default function BillingPage() {
         
         // Address - on separate line
         if (currentClinicHeader?.address) {
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
           doc.setTextColor(0, 0, 0); // Black for details
           doc.text(currentClinicHeader.address, textX, currentY, { maxWidth: availableWidth });
           currentY += 4;
@@ -4755,7 +4755,7 @@ export default function BillingPage() {
         const footerText = currentClinicFooter?.footerText || currentClinicFooter?.text || null;
         console.log('📝 Footer text from database:', footerText, 'Full footer:', currentClinicFooter);
         if (footerText) {
-          doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
+        doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
         }
         
         // Additional footer information from clinic_footers table - only if exists in database
@@ -5098,10 +5098,10 @@ export default function BillingPage() {
       console.log('📋 Using clinicHeader:', currentClinicHeader);
       console.log('📋 Using clinicFooter:', currentClinicFooter);
       const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 20;
-      const contentWidth = pageWidth - 2 * margin;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 20;
+    const contentWidth = pageWidth - 2 * margin;
 
       // Helper function to auto-adjust font size based on text length and available width
     const getAutoFontSize = (text: string, maxWidth: number, minSize: number = 8, maxSize: number = 24): number => {
@@ -5115,7 +5115,7 @@ export default function BillingPage() {
     };
 
       // Function to add header to page with data from clinic_headers table
-      const addHeader = () => {
+    const addHeader = () => {
         // Clean white header - no background color
         const headerHeight = 70;
         let logoX = margin;
@@ -5160,7 +5160,7 @@ export default function BillingPage() {
         
         // Status text
         doc.setFontSize(8);
-        doc.setFont('helvetica', 'bold');
+      doc.setFont('helvetica', 'bold');
         doc.setTextColor(statusTextColor[0], statusTextColor[1], statusTextColor[2]);
         doc.text(statusText, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2 + 1, { align: 'center' });
         
@@ -5228,8 +5228,8 @@ export default function BillingPage() {
         
         // Address - on separate line
         if (currentClinicHeader?.address) {
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
           doc.setTextColor(0, 0, 0); // Black for details
           doc.text(currentClinicHeader.address, textX, currentY, { maxWidth: availableWidth });
           currentY += 4;
@@ -5258,14 +5258,14 @@ export default function BillingPage() {
         }
         
         // INVOICE text on right - blue color
-        doc.setFontSize(32);
-        doc.setFont('helvetica', 'bold');
+      doc.setFontSize(32);
+      doc.setFont('helvetica', 'bold');
         doc.setTextColor(66, 133, 244); // Blue color for INVOICE
         doc.text('INVOICE', pageWidth - margin - 5, headerHeight / 2 + 8, { align: 'right' });
-      };
+    };
 
-      // Function to add footer to page
-      const addFooter = (pageNum: number) => {
+    // Function to add footer to page
+    const addFooter = (pageNum: number) => {
       const footerY = pageHeight - 20;
       
       // Footer background
@@ -5283,7 +5283,7 @@ export default function BillingPage() {
       const footerText = currentClinicFooter?.footerText || currentClinicFooter?.text || null;
       console.log('📝 Download - Footer text from database:', footerText, 'Full footer:', currentClinicFooter);
       if (footerText) {
-        doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
+      doc.text(footerText, pageWidth / 2, footerY + 2, { align: 'center' });
       }
       
       // Additional footer information from clinic_footers table - only if exists in database
@@ -5712,10 +5712,10 @@ export default function BillingPage() {
             (async (): Promise<void> => {
               try {
                 await apiRequest('PATCH', `/api/billing/invoices/${invoice.id}`, {
-                  status: 'overdue'
+              status: 'overdue'
                 });
               } catch (error) {
-                console.error(`Failed to update invoice ${invoice.id} to overdue:`, error);
+              console.error(`Failed to update invoice ${invoice.id} to overdue:`, error);
               }
             })()
           );
@@ -5734,6 +5734,53 @@ export default function BillingPage() {
       }
     }
   }, [displayInvoices, user?.role, isLoadingInvoices, queryClient]);
+
+  // Check for pending billing code from voice documentation on mount
+  useEffect(() => {
+    const pendingCodeData = localStorage.getItem('pendingBillingCode');
+    if (pendingCodeData) {
+      try {
+        const codeData = JSON.parse(pendingCodeData);
+        
+        // Check if code is recent (within last 5 minutes)
+        const codeAge = Date.now() - (codeData.timestamp || 0);
+        if (codeAge > 5 * 60 * 1000) {
+          // Code is too old, remove it
+          localStorage.removeItem('pendingBillingCode');
+          return;
+        }
+        
+        // Open the new invoice dialog
+        setShowNewInvoice(true);
+        
+        // Add the code as a line item
+        const newLineItem: LineItem = {
+          id: `pending-${Date.now()}`,
+          serviceType: 'other', // Default to 'other' for medical codes
+          code: codeData.code,
+          description: codeData.description,
+          quantity: 1,
+          unitPrice: 0, // User will need to set the price
+          total: 0,
+          readOnlyPrice: false
+        };
+        
+        setLineItems([newLineItem]);
+        
+        // Show toast notification
+        toast({
+          title: "Code Added to Invoice",
+          description: `${codeData.code} has been added to the invoice form. Please set the price and complete the invoice.`,
+        });
+        
+        // Clear the pending code
+        localStorage.removeItem('pendingBillingCode');
+      } catch (error) {
+        console.error("Error processing pending billing code:", error);
+        localStorage.removeItem('pendingBillingCode');
+      }
+    }
+  }, []); // Run only on mount
 
   // Fetch patients for new invoice dropdown
   const { data: patients, isLoading: patientsLoading } = useQuery({
@@ -5877,7 +5924,7 @@ export default function BillingPage() {
         const fullName = `${firstName} ${lastName}`.trim();
         const role = provider.role || '';
         if (fullName) {
-          return { name: fullName, role };
+        return { name: fullName, role };
         }
       }
     }
@@ -7585,7 +7632,9 @@ export default function BillingPage() {
                           <thead className="bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-gray-700">
                             <tr>
                               <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Invoice No.</th>
-                              <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Patient Name</th>
+                              {user?.role !== 'patient' && (
+                                <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Patient Name</th>
+                              )}
                               {(user?.role === 'patient' || user?.role === 'admin') && (
                                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">Provider/Doctor</th>
                               )}
@@ -7684,14 +7733,14 @@ export default function BillingPage() {
                                 </td>
                                 {(user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse' || user?.role === 'patient') && (
                                   <td className="px-3 py-3 text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap font-mono text-xs">
-                                    {(() => {
+                                  {(() => {
                                       // Get service_id directly from invoices table
                                       // Priority: invoice.serviceId (top-level from invoices.service_id column) > invoice.items[0].serviceId
                                       const serviceId = invoice.serviceId || invoice.service_id || invoice.items?.[0]?.serviceId;
                                       // Display the raw service_id from invoices table
                                       return serviceId ? String(serviceId) : '-';
-                                    })()}
-                                  </td>
+                                  })()}
+                                </td>
                                 )}
                                 {isPatient && (
                                   <td className="px-3 py-3 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap">
@@ -8370,8 +8419,11 @@ export default function BillingPage() {
                                 })();
                                 
                                 return (
-                                  <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-slate-800" data-testid={`invoice-row-${invoice.id}`}>
+                                <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-slate-800" data-testid={`invoice-row-${invoice.id}`}>
                                   <td className="px-4 py-4 text-sm font-medium text-gray-900 dark:text-gray-100">{invoice.invoiceNumber || invoice.id}</td>
+                                  {user?.role !== 'patient' && (
+                                  <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{invoice.patientName}</td>
+                                  )}
                                   <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">
                                     {(() => {
                                       // Get service_id directly from invoices table for patient role
@@ -8381,7 +8433,6 @@ export default function BillingPage() {
                                       return serviceId ? String(serviceId) : '-';
                                     })()}
                                   </td>
-                                  <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{invoice.patientName}</td>
                                   <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{doctorName}</td>
                                   <td className="px-4 py-4 text-sm">
                                     <Badge variant="outline" className="text-xs">

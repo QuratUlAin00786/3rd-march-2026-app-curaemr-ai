@@ -242,6 +242,8 @@ export default function MessagingPage() {
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [showVideoCall, setShowVideoCall] = useState(false);
   const [activeVideoCall, setActiveVideoCall] = useState(false);
+  const [showScheduledCallSuccess, setShowScheduledCallSuccess] = useState(false);
+  const [scheduledCallInfo, setScheduledCallInfo] = useState<{participantName: string, scheduledTime: string} | null>(null);
   const [callParticipant, setCallParticipant] = useState("");
   const [callDuration, setCallDuration] = useState(0);
   const [meetingInfo, setMeetingInfo] = useState<{meetingID: string, moderatorPassword: string} | null>(null);
@@ -314,6 +316,12 @@ export default function MessagingPage() {
   const [showViewCampaign, setShowViewCampaign] = useState(false);
   const [viewingCampaign, setViewingCampaign] = useState<any>(null);
   const [showViewCampaignRecipients, setShowViewCampaignRecipients] = useState(false);
+  const [showDuplicateCampaignDialog, setShowDuplicateCampaignDialog] = useState(false);
+  const [campaignToDuplicate, setCampaignToDuplicate] = useState<any>(null);
+  const [duplicateCampaignName, setDuplicateCampaignName] = useState("");
+  const [showDuplicateAnnouncementDialog, setShowDuplicateAnnouncementDialog] = useState(false);
+  const [announcementToDuplicate, setAnnouncementToDuplicate] = useState<any>(null);
+  const [duplicateAnnouncementName, setDuplicateAnnouncementName] = useState("");
   const [campaignSubTab, setCampaignSubTab] = useState<"all" | "history" | "email_history">("all");
   const [sendingCampaignId, setSendingCampaignId] = useState<number | null>(null);
   const [recipientFilter, setRecipientFilter] = useState({
@@ -349,12 +357,15 @@ export default function MessagingPage() {
   const [messagePatientSearch, setMessagePatientSearch] = useState<string>("");
   const [selectedRecipientRole, setSelectedRecipientRole] = useState<string>("");
   const [selectedRecipientUser, setSelectedRecipientUser] = useState<string>("");
+  const [selectedVideoCallParticipant, setSelectedVideoCallParticipant] = useState<any>(null);
   const [validationErrors, setValidationErrors] = useState<{
     recipientRole?: string;
     recipientName?: string;
     subject?: string;
     phoneNumber?: string;
     content?: string;
+    videoCallParticipant?: string;
+    videoCallScheduledTime?: string;
   }>({});
   const { toast } = useToast();
 
@@ -1735,7 +1746,75 @@ export default function MessagingPage() {
   };
 
   const handleCopyTemplate = (template: any) => {
-    copyTemplateMutation.mutate(template);
+    // Get current templates from cache to generate default name
+    const cachedTemplates = queryClient.getQueryData<any[]>(['/api/messaging/templates']) || [];
+    const defaultName = generateDuplicateAnnouncementName(template.name, cachedTemplates, template.id);
+    
+    setAnnouncementToDuplicate(template);
+    setDuplicateAnnouncementName(defaultName);
+    setShowDuplicateAnnouncementDialog(true);
+  };
+
+  const duplicateAnnouncementMutation = useMutation({
+    mutationFn: async ({ template, duplicateName }: { template: any; duplicateName: string }) => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/messaging/templates', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Subdomain': localStorage.getItem('user_subdomain') || 'demo',
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: duplicateName,
+          category: template.category,
+          subject: template.subject,
+          content: template.content
+        }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.error || `${response.status}: ${response.statusText}`);
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/messaging/templates'] });
+      toast({
+        title: "Announcement Duplicated",
+        description: "Announcement has been duplicated successfully.",
+      });
+      setShowDuplicateAnnouncementDialog(false);
+      setAnnouncementToDuplicate(null);
+      setDuplicateAnnouncementName("");
+    },
+    onError: (error: any) => {
+      console.error("Error duplicating announcement:", error);
+      toast({
+        title: "Failed to Duplicate Announcement",
+        description: error.message || "An error occurred while duplicating the announcement. Please try again.",
+        variant: "destructive"
+      });
+    }
+  });
+
+  const handleConfirmDuplicateAnnouncement = () => {
+    if (!duplicateAnnouncementName.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter an announcement name.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (announcementToDuplicate) {
+      duplicateAnnouncementMutation.mutate({
+        template: announcementToDuplicate,
+        duplicateName: duplicateAnnouncementName.trim()
+      });
+    }
   };
 
   const handleConfirmUseTemplate = () => {
@@ -1855,13 +1934,18 @@ export default function MessagingPage() {
 
   // Helper function to generate a unique duplicate campaign name
   const generateDuplicateCampaignName = (originalName: string, existingCampaigns: any[], excludeCampaignId?: number): string => {
-    // Remove any existing "(Copy)" or "(Copy N)" suffix
-    const baseName = originalName.replace(/\s*\(Copy(?:\s+\d+)?\)\s*$/, '').trim();
+    // Remove any existing "(Copy)", "(Copy N)", "-N", or "Follow-up N –" prefix/suffix to get the base name
+    let baseName = originalName
+      .replace(/\s*\(Copy(?:\s+\d+)?\)\s*$/, '') // Remove "(Copy)" or "(Copy N)"
+      .replace(/-\d+$/, '') // Remove "-N" pattern
+      .replace(/^Follow-up\s+\d+\s*–\s*/i, '') // Remove "Follow-up N –" prefix
+      .trim();
     
-    // Find all campaigns that start with the base name and have a "(Copy)" suffix
-    // Exclude the campaign being duplicated
-    const copyPattern = /^(.+?)\s*\(Copy(?:\s+(\d+))?\)\s*$/;
-    const existingCopies: number[] = [];
+    // Pattern to match names ending with "-N" where N is a number
+    const numberedPattern = /^(.+?)-(\d+)$/;
+    // Pattern to match "Follow-up N – [Name]" format
+    const followUpPattern = /^Follow-up\s+(\d+)\s*–\s*(.+)$/i;
+    const existingNumbers: number[] = [];
     
     existingCampaigns.forEach((c: any) => {
       // Skip the campaign being duplicated
@@ -1869,45 +1953,142 @@ export default function MessagingPage() {
         return;
       }
       
-      const match = c.name.match(copyPattern);
-      if (match) {
-        const existingBase = match[1].trim();
+      const name = c.name.trim();
+      
+      // Check for "Follow-up N – [Name]" pattern
+      const followUpMatch = name.match(followUpPattern);
+      if (followUpMatch) {
+        const existingBase = followUpMatch[2].trim();
         if (existingBase === baseName) {
-          const copyNumber = match[2] ? parseInt(match[2], 10) : 1;
-          existingCopies.push(copyNumber);
+          const number = parseInt(followUpMatch[1], 10);
+          if (!isNaN(number)) {
+            existingNumbers.push(number);
+          }
         }
       }
-    });
-    
-    // Also check if the base name itself exists (without any copy suffix)
-    // Exclude the campaign being duplicated
-    const baseNameExists = existingCampaigns.some((c: any) => {
-      if (excludeCampaignId && c.id === excludeCampaignId) {
-        return false;
+      
+      // Check for numbered pattern: "baseName-N"
+      const numberedMatch = name.match(numberedPattern);
+      if (numberedMatch) {
+        const existingBase = numberedMatch[1].trim();
+        if (existingBase === baseName) {
+          const number = parseInt(numberedMatch[2], 10);
+          if (!isNaN(number)) {
+            existingNumbers.push(number);
+          }
+        }
       }
-      return c.name.trim() === baseName;
+      
+      // Also check for old "(Copy)" pattern and convert it
+      const copyPattern = /^(.+?)\s*\(Copy(?:\s+(\d+))?\)\s*$/;
+      const copyMatch = name.match(copyPattern);
+      if (copyMatch) {
+        const existingBase = copyMatch[1].trim();
+        if (existingBase === baseName) {
+          const copyNumber = copyMatch[2] ? parseInt(copyMatch[2], 10) : 1;
+          if (!isNaN(copyNumber)) {
+            existingNumbers.push(copyNumber);
+          }
+        }
+      }
+      
+      // Check if exact base name exists (without any suffix)
+      if (name === baseName) {
+        existingNumbers.push(0); // Treat base name as number 0
+      }
     });
     
-    // Find the next available copy number
-    let nextCopyNumber = 1;
-    if (baseNameExists || existingCopies.length > 0) {
-      const maxCopyNumber = existingCopies.length > 0 ? Math.max(...existingCopies) : 0;
-      nextCopyNumber = maxCopyNumber + 1;
+    // Find the next available number
+    let nextNumber = 1;
+    if (existingNumbers.length > 0) {
+      const maxNumber = Math.max(...existingNumbers);
+      nextNumber = maxNumber + 1;
     }
     
-    // Generate the new name
-    return nextCopyNumber === 1 
-      ? `${baseName} (Copy)`
-      : `${baseName} (Copy ${nextCopyNumber})`;
+    // Generate the new name in format "Follow-up N – baseName"
+    return `Follow-up ${nextNumber} – ${baseName}`;
+  };
+
+  // Helper function to generate a unique duplicate announcement name
+  const generateDuplicateAnnouncementName = (originalName: string, existingAnnouncements: any[], excludeAnnouncementId?: number): string => {
+    // Remove any existing "(Copy)", "(Copy N)", "-N", or "Follow-up N –" prefix/suffix to get the base name
+    let baseName = originalName
+      .replace(/\s*\(Copy(?:\s+\d+)?\)\s*$/, '') // Remove "(Copy)" or "(Copy N)"
+      .replace(/-\d+$/, '') // Remove "-N" pattern
+      .replace(/^Follow-up\s+\d+\s*–\s*/i, '') // Remove "Follow-up N –" prefix
+      .trim();
+    
+    // Pattern to match names ending with "-N" where N is a number
+    const numberedPattern = /^(.+?)-(\d+)$/;
+    // Pattern to match "Follow-up N – [Name]" format
+    const followUpPattern = /^Follow-up\s+(\d+)\s*–\s*(.+)$/i;
+    const existingNumbers: number[] = [];
+    
+    existingAnnouncements.forEach((a: any) => {
+      // Skip the announcement being duplicated
+      if (excludeAnnouncementId && a.id === excludeAnnouncementId) {
+        return;
+      }
+      
+      const name = a.name.trim();
+      
+      // Check for "Follow-up N – [Name]" pattern
+      const followUpMatch = name.match(followUpPattern);
+      if (followUpMatch) {
+        const existingBase = followUpMatch[2].trim();
+        if (existingBase === baseName) {
+          const number = parseInt(followUpMatch[1], 10);
+          if (!isNaN(number)) {
+            existingNumbers.push(number);
+          }
+        }
+      }
+      
+      // Check for numbered pattern: "baseName-N"
+      const numberedMatch = name.match(numberedPattern);
+      if (numberedMatch) {
+        const existingBase = numberedMatch[1].trim();
+        if (existingBase === baseName) {
+          const number = parseInt(numberedMatch[2], 10);
+          if (!isNaN(number)) {
+            existingNumbers.push(number);
+          }
+        }
+      }
+      
+      // Also check for old "(Copy)" pattern and convert it
+      const copyPattern = /^(.+?)\s*\(Copy(?:\s+(\d+))?\)\s*$/;
+      const copyMatch = name.match(copyPattern);
+      if (copyMatch) {
+        const existingBase = copyMatch[1].trim();
+        if (existingBase === baseName) {
+          const copyNumber = copyMatch[2] ? parseInt(copyMatch[2], 10) : 1;
+          if (!isNaN(copyNumber)) {
+            existingNumbers.push(copyNumber);
+          }
+        }
+      }
+      
+      // Check if exact base name exists (without any suffix)
+      if (name === baseName) {
+        existingNumbers.push(0); // Treat base name as number 0
+      }
+    });
+    
+    // Find the next available number
+    let nextNumber = 1;
+    if (existingNumbers.length > 0) {
+      const maxNumber = Math.max(...existingNumbers);
+      nextNumber = maxNumber + 1;
+    }
+    
+    // Generate the new name in format "Follow-up N – baseName"
+    return `Follow-up ${nextNumber} – ${baseName}`;
   };
 
   const duplicateCampaignMutation = useMutation({
-    mutationFn: async (campaign: any) => {
+    mutationFn: async ({ campaign, duplicateName }: { campaign: any; duplicateName: string }) => {
       const token = localStorage.getItem('auth_token');
-      
-      // Get current campaigns from cache to check for existing names
-      const cachedCampaigns = queryClient.getQueryData<any[]>(['/api/messaging/campaigns']) || [];
-      const duplicateName = generateDuplicateCampaignName(campaign.name, cachedCampaigns, campaign.id);
       
       const response = await fetch('/api/messaging/campaigns', {
         method: 'POST',
@@ -1942,6 +2123,9 @@ export default function MessagingPage() {
         title: "Campaign Duplicated",
         description: "Campaign has been duplicated successfully.",
       });
+      setShowDuplicateCampaignDialog(false);
+      setCampaignToDuplicate(null);
+      setDuplicateCampaignName("");
     },
     onError: (error: any) => {
       console.error("Error duplicating campaign:", error);
@@ -2051,7 +2235,31 @@ export default function MessagingPage() {
   };
 
   const handleDuplicateCampaign = (campaign: any) => {
-    duplicateCampaignMutation.mutate(campaign);
+    // Get current campaigns from cache to generate default name
+    const cachedCampaigns = queryClient.getQueryData<any[]>(['/api/messaging/campaigns']) || [];
+    const defaultName = generateDuplicateCampaignName(campaign.name, cachedCampaigns, campaign.id);
+    
+    setCampaignToDuplicate(campaign);
+    setDuplicateCampaignName(defaultName);
+    setShowDuplicateCampaignDialog(true);
+  };
+
+  const handleConfirmDuplicateCampaign = () => {
+    if (!duplicateCampaignName.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a campaign name.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (campaignToDuplicate) {
+      duplicateCampaignMutation.mutate({
+        campaign: campaignToDuplicate,
+        duplicateName: duplicateCampaignName.trim()
+      });
+    }
   };
 
   const handleConfirmEditCampaign = () => {
@@ -2589,110 +2797,183 @@ export default function MessagingPage() {
 
 
   const handleStartVideoCall = async () => {
-    if (!videoCall.participant.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Please select a participant for the video call.",
-        variant: "destructive"
-      });
+    // Clear previous validation errors
+    setValidationErrors(prev => ({
+      ...prev,
+      videoCallParticipant: undefined,
+      videoCallScheduledTime: undefined
+    }));
+
+    // Validate participant
+    if (!videoCall.participant.trim() || !selectedVideoCallParticipant) {
+      setValidationErrors(prev => ({
+        ...prev,
+        videoCallParticipant: "Please select a participant for the video call."
+      }));
       return;
     }
 
-    const participantName = videoCall.participant;
-    
-    try {
-      // Create BigBlueButton meeting
-      const response = await fetch('/api/video-conference/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          meetingName: `Consultation with ${participantName}`,
-          participantName: participantName,
-          duration: parseInt(videoCall.duration),
-          maxParticipants: videoCall.type === 'team_meeting' ? 20 : 2
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create video conference');
+    // Validate scheduled time if scheduling for later
+    if (videoCall.scheduled) {
+      if (!videoCall.scheduledTime.trim()) {
+        setValidationErrors(prev => ({
+          ...prev,
+          videoCallScheduledTime: "Please select a scheduled time for the video call."
+        }));
+        return;
       }
 
-      const meetingData = await response.json();
+      // Check if scheduled time is in the future
+      const scheduledDateTime = new Date(videoCall.scheduledTime);
+      const now = new Date();
+      if (scheduledDateTime <= now) {
+        setValidationErrors(prev => ({
+          ...prev,
+          videoCallScheduledTime: "Scheduled time must be in the future."
+        }));
+        return;
+      }
 
-      // Open BigBlueButton meeting in new window
-      const meetingWindow = window.open(
-        meetingData.moderatorJoinUrl,
-        'bbb-meeting',
-        'width=1200,height=800,scrollbars=yes,resizable=yes,toolbar=no,menubar=no,location=no'
-      );
+      // For scheduled calls, save to database and send email notifications
+      try {
+        const scheduledDateTime = new Date(videoCall.scheduledTime);
+        const participant = selectedVideoCallParticipant;
+        
+        // Call API to schedule the video call
+        const response = await apiRequest('POST', '/api/video-calls/schedule', {
+          participantId: participant.id,
+          participantName: getDisplayName(participant),
+          participantEmail: participant.email,
+          participantRole: participant.role,
+          scheduledAt: scheduledDateTime.toISOString(),
+          duration: parseInt(videoCall.duration),
+          callType: videoCall.type,
+          organizationId: user?.organizationId
+        });
 
-      if (!meetingWindow) {
+        if (response.success) {
+          // Show success modal
+          setScheduledCallInfo({
+            participantName: getDisplayName(participant),
+            scheduledTime: format(scheduledDateTime, 'PPpp')
+          });
+          setShowScheduledCallSuccess(true);
+          
+          // Reset form and close dialog
+          setShowVideoCall(false);
+          setVideoCall({
+            participant: "",
+            type: "consultation",
+            duration: "30",
+            scheduled: false,
+            scheduledTime: ""
+          });
+          setSelectedVideoCallParticipant(null);
+          setSelectedRecipientRole("");
+          setSelectedRecipientUser("");
+          setVideoCallPatientSearch("");
+          setValidationErrors(prev => ({
+            ...prev,
+            videoCallParticipant: undefined,
+            videoCallScheduledTime: undefined
+          }));
+        } else {
+          throw new Error(response.error || 'Failed to schedule video call');
+        }
+      } catch (error: any) {
+        console.error('Error scheduling video call:', error);
         toast({
-          title: "Popup Blocked",
-          description: "Please allow popups for video conferencing and try again.",
+          title: "Scheduling Failed",
+          description: error?.message || "Unable to schedule video call. Please try again.",
           variant: "destructive"
+        });
+      }
+      return;
+    }
+
+    // For immediate calls, use LiveKit
+    try {
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to start a video call",
+          variant: "destructive",
         });
         return;
       }
 
-      // Close dialog and start call interface
-      setShowVideoCall(false);
-      setCallParticipant(participantName);
-      setActiveVideoCall(true);
-      setCallDuration(0);
-      
-      // Store meeting info for ending later
-      setMeetingInfo({
-        meetingID: meetingData.meetingID,
-        moderatorPassword: meetingData.moderatorPassword
-      });
-      
-      toast({
-        title: "Video Conference Started",
-        description: `BigBlueButton meeting created for ${participantName}`,
-      });
+      const participant = selectedVideoCallParticipant;
+      const fromIdentifier = buildParticipantIdentifier(user, user.role);
+      const toIdentifier = buildParticipantIdentifier(participant, participant.role);
 
-      // Start call timer
-      const timer = setInterval(() => {
-        setCallDuration(prev => prev + 1);
-      }, 1000);
-      setCallTimer(timer);
-
-      // Monitor window closure
-      const checkClosed = setInterval(() => {
-        if (meetingWindow.closed) {
-          clearInterval(checkClosed);
-          handleEndVideoCall();
-        }
-      }, 1000);
-
-      // Show connection success after delay
-      setTimeout(() => {
+      if (!fromIdentifier || !toIdentifier) {
         toast({
-          title: "Meeting Ready",
-          description: `Video conference with ${participantName} is now accessible in the new window`,
+          title: "Call Failed",
+          description: "Unable to determine participant identifiers",
+          variant: "destructive",
         });
-      }, 2000);
+        return;
+      }
 
-    } catch (error) {
-      console.error('Error creating video conference:', error);
+      const roomName = `messaging-video-${user.id}-${participant.id}-${Date.now()}`;
+
       toast({
-        title: "Connection Failed",
-        description: "Unable to create video conference. Please try again.",
+        title: "Video Call Starting",
+        description: `Connecting to video call with ${getDisplayName(participant)}`,
+      });
+
+      const liveKitRoom = await createRemoteLiveKitRoom({
+        roomId: roomName,
+        fromUsername: fromIdentifier,
+        toUsers: [
+          {
+            identifier: toIdentifier,
+            displayName: getDisplayName(participant),
+          },
+        ],
+        isVideo: true,
+        groupName: "Messaging Video Call",
+      });
+
+      const finalRoomId = liveKitRoom.roomId || roomName;
+
+      // Close dialog and start LiveKit video call
+      setShowVideoCall(false);
+      setLiveKitVideoCall({
+        roomName: finalRoomId,
+        participant,
+        token: liveKitRoom.token,
+        serverUrl: liveKitRoom.serverUrl,
+      });
+
+      // Reset form and clear validation errors only on success
+      setVideoCall({
+        participant: "",
+        type: "consultation",
+        duration: "30",
+        scheduled: false,
+        scheduledTime: ""
+      });
+      setSelectedVideoCallParticipant(null);
+      setSelectedRecipientRole("");
+      setSelectedRecipientUser("");
+      setVideoCallPatientSearch("");
+      setValidationErrors(prev => ({
+        ...prev,
+        videoCallParticipant: undefined,
+        videoCallScheduledTime: undefined
+      }));
+
+    } catch (error: any) {
+      console.error('Error creating LiveKit video call:', error);
+      const errorMessage = error?.message || "Unable to start video call. Please try again.";
+      toast({
+        title: "Call Failed",
+        description: errorMessage,
         variant: "destructive"
       });
+      // Don't reset form on error so user can try again
     }
-
-    // Reset form
-    setVideoCall({
-      participant: "",
-      type: "consultation",
-      duration: "30",
-      scheduled: false,
-      scheduledTime: ""
-    });
   };
 
   const handleEndVideoCall = async () => {
@@ -2897,7 +3178,18 @@ export default function MessagingPage() {
             )}
             Update Delivery Status
           </Button>
-          <Dialog open={showVideoCall} onOpenChange={setShowVideoCall}>
+          <Dialog open={showVideoCall} onOpenChange={(open) => {
+            setShowVideoCall(open);
+            if (!open) {
+              // Clear validation errors and selected participant when dialog closes
+              setValidationErrors(prev => ({
+                ...prev,
+                videoCallParticipant: undefined,
+                videoCallScheduledTime: undefined
+              }));
+              setSelectedVideoCallParticipant(null);
+            }
+          }}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm">
                 <Video className="h-4 w-4 mr-2" />
@@ -2918,6 +3210,7 @@ export default function MessagingPage() {
                         onValueChange={(value) => {
                           setSelectedRecipientRole(value);
                           setSelectedRecipientUser("");
+                          setSelectedVideoCallParticipant(null);
                           setVideoCall(prev => ({ ...prev, participant: "" }));
                         }}
                       >
@@ -2936,21 +3229,38 @@ export default function MessagingPage() {
                     <div className="space-y-2">
                       <Label htmlFor="selectCallName">Select Name *</Label>
                       <Select 
-                        value={selectedRecipientUser} 
+                        value={selectedVideoCallParticipant?.id?.toString() || selectedRecipientUser} 
                         onValueChange={(value) => {
                           setSelectedRecipientUser(value);
-                          setVideoCall(prev => ({ ...prev, participant: value }));
+                          // Find and store the full participant object
+                          const participant = filteredRecipients.find((r: any) => 
+                            (r.id?.toString() === value) || 
+                            (`${r.firstName} ${r.lastName}` === value)
+                          );
+                          if (participant) {
+                            setSelectedVideoCallParticipant(participant);
+                            setVideoCall(prev => ({ ...prev, participant: `${participant.firstName} ${participant.lastName}` }));
+                          } else {
+                            setVideoCall(prev => ({ ...prev, participant: value }));
+                          }
+                          // Clear validation error when user selects a participant
+                          if (validationErrors.videoCallParticipant) {
+                            setValidationErrors(prev => ({
+                              ...prev,
+                              videoCallParticipant: undefined
+                            }));
+                          }
                         }}
                         disabled={!selectedRecipientRole}
                       >
-                        <SelectTrigger data-testid="select-call-recipient-name">
+                        <SelectTrigger data-testid="select-call-recipient-name" className={validationErrors.videoCallParticipant ? "border-red-500" : ""}>
                           <SelectValue placeholder={selectedRecipientRole ? "Select a name..." : "Select role first..."} />
                         </SelectTrigger>
                         <SelectContent>
                           {filteredRecipients.map((recipient: any) => (
                             <SelectItem 
                               key={recipient.id} 
-                              value={`${recipient.firstName} ${recipient.lastName}`}
+                              value={recipient.id?.toString() || `${recipient.firstName} ${recipient.lastName}`}
                               data-testid={`call-recipient-option-${recipient.id}`}
                             >
                               <div className="flex flex-col">
@@ -2961,6 +3271,9 @@ export default function MessagingPage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {validationErrors.videoCallParticipant && (
+                        <p className="text-sm text-red-500 mt-1">{validationErrors.videoCallParticipant}</p>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -2971,7 +3284,17 @@ export default function MessagingPage() {
                         id="callParticipant"
                         placeholder="Search patients..."
                         value={videoCallPatientSearch}
-                        onChange={(e) => setVideoCallPatientSearch(e.target.value)}
+                        onChange={(e) => {
+                          setVideoCallPatientSearch(e.target.value);
+                          // Clear validation error when user types
+                          if (validationErrors.videoCallParticipant) {
+                            setValidationErrors(prev => ({
+                              ...prev,
+                              videoCallParticipant: undefined
+                            }));
+                          }
+                        }}
+                        className={validationErrors.videoCallParticipant ? "border-red-500" : ""}
                       />
                       {videoCallPatientSearch && filteredVideoCallPatients.length > 0 && (
                         <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-md shadow-lg max-h-60 overflow-auto">
@@ -2982,7 +3305,15 @@ export default function MessagingPage() {
                               onClick={() => {
                                 setSelectedVideoCallPatient(`${patient.firstName} ${patient.lastName}`);
                                 setVideoCallPatientSearch(`${patient.firstName} ${patient.lastName}`);
+                                setSelectedVideoCallParticipant(patient);
                                 setVideoCall(prev => ({ ...prev, participant: `${patient.firstName} ${patient.lastName}` }));
+                                // Clear validation error when user selects a patient
+                                if (validationErrors.videoCallParticipant) {
+                                  setValidationErrors(prev => ({
+                                    ...prev,
+                                    videoCallParticipant: undefined
+                                  }));
+                                }
                               }}
                             >
                               <div className="font-medium">{patient.firstName} {patient.lastName}</div>
@@ -2992,6 +3323,9 @@ export default function MessagingPage() {
                         </div>
                       )}
                     </div>
+                    {validationErrors.videoCallParticipant && (
+                      <p className="text-sm text-red-500 mt-1">{validationErrors.videoCallParticipant}</p>
+                    )}
                   </div>
                 )}
 
@@ -3054,8 +3388,22 @@ export default function MessagingPage() {
                         id="scheduledTime"
                         type="datetime-local"
                         value={videoCall.scheduledTime}
-                        onChange={(e) => setVideoCall(prev => ({ ...prev, scheduledTime: e.target.value }))}
+                        onChange={(e) => {
+                          setVideoCall(prev => ({ ...prev, scheduledTime: e.target.value }));
+                          // Clear validation error when user changes the scheduled time
+                          if (validationErrors.videoCallScheduledTime) {
+                            setValidationErrors(prev => ({
+                              ...prev,
+                              videoCallScheduledTime: undefined
+                            }));
+                          }
+                        }}
+                        className={validationErrors.videoCallScheduledTime ? "border-red-500" : ""}
+                        min={new Date().toISOString().slice(0, 16)}
                       />
+                      {validationErrors.videoCallScheduledTime && (
+                        <p className="text-sm text-red-500 mt-1">{validationErrors.videoCallScheduledTime}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3090,6 +3438,31 @@ export default function MessagingPage() {
               </div>
             </DialogContent>
           </Dialog>
+          
+          {/* Scheduled Call Success Modal */}
+          <Dialog open={showScheduledCallSuccess} onOpenChange={setShowScheduledCallSuccess}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <div className="flex items-center justify-center mb-4">
+                  <div className="h-16 w-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center">
+                    <CheckCircle className="h-10 w-10 text-green-600 dark:text-green-500" />
+                  </div>
+                </div>
+                <DialogTitle className="text-center text-xl">Call Scheduled</DialogTitle>
+              </DialogHeader>
+              <div className="text-center py-4">
+                {scheduledCallInfo && (
+                  <p className="text-muted-foreground">
+                    Video call with <span className="font-semibold">{scheduledCallInfo.participantName}</span> scheduled for <span className="font-semibold">{scheduledCallInfo.scheduledTime}</span>
+                  </p>
+                )}
+              </div>
+              <DialogFooter className="sm:justify-center">
+                <Button onClick={() => setShowScheduledCallSuccess(false)} className="w-full sm:w-auto">OK</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          
           <Dialog open={showNewMessage} onOpenChange={(open) => {
             setShowNewMessage(open);
             if (!open) {
@@ -4915,6 +5288,58 @@ export default function MessagingPage() {
             </div>
           )}
 
+          {/* Duplicate Campaign Dialog */}
+          <Dialog open={showDuplicateCampaignDialog} onOpenChange={(open) => {
+            setShowDuplicateCampaignDialog(open);
+            if (!open) {
+              setCampaignToDuplicate(null);
+              setDuplicateCampaignName("");
+            }
+          }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Duplicate Campaign</DialogTitle>
+                <DialogDescription>
+                  This campaign will be created as a follow-up to {campaignToDuplicate?.name || "the selected campaign"}.
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="duplicateCampaignName">Campaign Name</Label>
+                  <Input
+                    id="duplicateCampaignName"
+                    value={duplicateCampaignName}
+                    onChange={(e) => setDuplicateCampaignName(e.target.value)}
+                    placeholder="Enter campaign name"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    This follow-up email is part of the same payment reminder sequence.
+                  </p>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setShowDuplicateCampaignDialog(false);
+                    setCampaignToDuplicate(null);
+                    setDuplicateCampaignName("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleConfirmDuplicateCampaign}
+                  disabled={duplicateCampaignMutation.isPending || !duplicateCampaignName.trim()}
+                >
+                  {duplicateCampaignMutation.isPending ? "Creating..." : "Create Campaign"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           {/* Edit Campaign Dialog */}
           <Dialog open={showEditCampaign} onOpenChange={setShowEditCampaign}>
             <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -5231,6 +5656,58 @@ export default function MessagingPage() {
                   data-testid="button-confirm-delete-campaign"
                 >
                   {deleteCampaignMutation.isPending ? "Deleting..." : "Delete"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Duplicate Announcement Dialog */}
+          <Dialog open={showDuplicateAnnouncementDialog} onOpenChange={(open) => {
+            setShowDuplicateAnnouncementDialog(open);
+            if (!open) {
+              setAnnouncementToDuplicate(null);
+              setDuplicateAnnouncementName("");
+            }
+          }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Duplicate Announcement</DialogTitle>
+                <DialogDescription>
+                  This Announcement will be created as a follow-up to {announcementToDuplicate?.name || "the selected announcement"}.
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="duplicateAnnouncementName">Announcement Name</Label>
+                  <Input
+                    id="duplicateAnnouncementName"
+                    value={duplicateAnnouncementName}
+                    onChange={(e) => setDuplicateAnnouncementName(e.target.value)}
+                    placeholder="Enter announcement name"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    This follow-up email is part of the same payment reminder sequence.
+                  </p>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setShowDuplicateAnnouncementDialog(false);
+                    setAnnouncementToDuplicate(null);
+                    setDuplicateAnnouncementName("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleConfirmDuplicateAnnouncement}
+                  disabled={duplicateAnnouncementMutation.isPending || !duplicateAnnouncementName.trim()}
+                >
+                  {duplicateAnnouncementMutation.isPending ? "Creating..." : "Create Announcement"}
                 </Button>
               </DialogFooter>
             </DialogContent>

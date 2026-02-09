@@ -1469,6 +1469,16 @@ export const inventorySuppliers = pgTable("inventory_suppliers", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const inventoryItemsName = pgTable("inventory_items_name", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const inventoryPurchaseOrders = pgTable("inventory_purchase_orders", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").notNull(),
@@ -2846,6 +2856,13 @@ export const insertInventorySupplierSchema = createInsertSchema(inventorySupplie
   updatedAt: true,
 });
 
+export const insertInventoryItemsNameSchema = createInsertSchema(inventoryItemsName).omit({
+  id: true,
+  organizationId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertInventoryPurchaseOrderSchema = createInsertSchema(inventoryPurchaseOrders).omit({
   id: true,
   createdAt: true,
@@ -3159,6 +3176,9 @@ export type InsertInventoryCategory = z.infer<typeof insertInventoryCategorySche
 
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
+
+export type InventoryItemsName = typeof inventoryItemsName.$inferSelect;
+export type InsertInventoryItemsName = z.infer<typeof insertInventoryItemsNameSchema>;
 
 export type InventorySupplier = typeof inventorySuppliers.$inferSelect;
 export type InsertInventorySupplier = z.infer<typeof insertInventorySupplierSchema>;
@@ -3987,3 +4007,32 @@ export const insertOrganizationIntegrationSchema = createInsertSchema(organizati
 
 export type OrganizationIntegration = typeof organizationIntegrations.$inferSelect;
 export type InsertOrganizationIntegration = z.infer<typeof insertOrganizationIntegrationSchema>;
+
+// Scheduled Video Calls
+export const scheduledVideoCalls = pgTable("scheduled_video_calls", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").notNull(),
+  createdBy: integer("created_by").notNull(), // User who scheduled the call
+  participantId: integer("participant_id").notNull(), // Participant user/patient ID
+  participantName: text("participant_name").notNull(),
+  participantEmail: text("participant_email").notNull(),
+  participantRole: varchar("participant_role", { length: 50 }),
+  scheduledAt: timestamp("scheduled_at").notNull(),
+  duration: integer("duration").notNull().default(30), // Duration in minutes
+  callType: varchar("call_type", { length: 50 }).notNull().default("consultation"),
+  status: varchar("status", { length: 20 }).notNull().default("scheduled"), // scheduled, started, completed, cancelled, failed
+  roomName: text("room_name"), // LiveKit room name (set when call starts)
+  startedAt: timestamp("started_at"),
+  endedAt: timestamp("ended_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertScheduledVideoCallSchema = createInsertSchema(scheduledVideoCalls).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type ScheduledVideoCall = typeof scheduledVideoCalls.$inferSelect;
+export type InsertScheduledVideoCall = z.infer<typeof insertScheduledVideoCallSchema>;

@@ -299,9 +299,20 @@ export default function FinancialIntelligence() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // Fetch revenue data
+  // Fetch revenue data from API
   const { data: revenueData, isLoading: revenueLoading } = useQuery({
     queryKey: ["/api/financial/revenue", dateRange],
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch(`/api/financial/revenue?dateRange=${dateRange || 'last_6_months'}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Subdomain": getActiveSubdomain(),
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch revenue data");
+      return response.json();
+    },
     enabled: true,
   });
 
@@ -880,7 +891,25 @@ export default function FinancialIntelligence() {
   // Financial forecasts data from API
   const forecastData = forecasts || [];
 
-  const profitabilityData = [
+  // Fetch profitability data from API
+  const { data: profitabilityDataFromAPI, isLoading: profitabilityLoading } = useQuery({
+    queryKey: ["/api/financial/profitability"],
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch("/api/financial/profitability", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Subdomain": getActiveSubdomain(),
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch profitability data");
+      return response.json();
+    },
+    enabled: true,
+  });
+
+  // Fallback mock data if API fails or returns empty
+  const mockProfitabilityData = [
     {
       service: "Primary Care",
       revenue: 45000,
@@ -917,6 +946,10 @@ export default function FinancialIntelligence() {
       margin: 21.9,
     },
   ];
+
+  const profitabilityData = (profitabilityDataFromAPI && profitabilityDataFromAPI.length > 0) 
+    ? profitabilityDataFromAPI 
+    : mockProfitabilityData;
 
   // Helper functions for insurance field editing (following imaging.tsx pattern)
   const handleInsuranceFieldEdit = (insuranceId: string, fieldName: string) => {
@@ -1197,15 +1230,36 @@ export default function FinancialIntelligence() {
                       Monthly Revenue
                     </p>
                     <p className="text-2xl font-bold">
-                      {formatCurrency(162000)}
+                      {revenueLoading ? (
+                        <span className="text-gray-400">Loading...</span>
+                      ) : revenueData && revenueData.length > 0 ? (
+                        formatCurrency(revenueData[revenueData.length - 1]?.revenue || 0)
+                      ) : (
+                        formatCurrency(0)
+                      )}
                     </p>
                   </div>
                   <PoundSterling className="w-8 h-8 text-green-500" />
                 </div>
-                <div className="flex items-center mt-2 text-sm">
-                  <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
-                  <span className="text-green-600">+8.2% from last month</span>
-                </div>
+                {revenueData && revenueData.length > 1 && (
+                  <div className="flex items-center mt-2 text-sm">
+                    {revenueData[revenueData.length - 1]?.revenue > revenueData[revenueData.length - 2]?.revenue ? (
+                      <>
+                        <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
+                        <span className="text-green-600">
+                          {((revenueData[revenueData.length - 1]?.revenue - revenueData[revenueData.length - 2]?.revenue) / revenueData[revenueData.length - 2]?.revenue * 100).toFixed(1)}% from last month
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <TrendingDown className="w-4 h-4 text-red-500 mr-1" />
+                        <span className="text-red-600">
+                          {((revenueData[revenueData.length - 1]?.revenue - revenueData[revenueData.length - 2]?.revenue) / revenueData[revenueData.length - 2]?.revenue * 100).toFixed(1)}% from last month
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -1216,14 +1270,33 @@ export default function FinancialIntelligence() {
                     <p className="text-sm font-medium text-gray-600">
                       Collection Rate
                     </p>
-                    <p className="text-2xl font-bold">94%</p>
+                    <p className="text-2xl font-bold">
+                      {revenueLoading ? (
+                        <span className="text-gray-400">Loading...</span>
+                      ) : revenueData && revenueData.length > 0 ? (
+                        `${Math.round((revenueData[revenueData.length - 1]?.collections / revenueData[revenueData.length - 1]?.revenue) * 100) || 0}%`
+                      ) : (
+                        "0%"
+                      )}
+                    </p>
                   </div>
                   <Target className="w-8 h-8 text-blue-500" />
                 </div>
-                <div className="flex items-center mt-2 text-sm">
-                  <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
-                  <span className="text-green-600">+2.1% from last month</span>
-                </div>
+                {revenueData && revenueData.length > 1 && (
+                  <div className="flex items-center mt-2 text-sm">
+                    {revenueData[revenueData.length - 1]?.collections > revenueData[revenueData.length - 2]?.collections ? (
+                      <>
+                        <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
+                        <span className="text-green-600">+{((revenueData[revenueData.length - 1]?.collections - revenueData[revenueData.length - 2]?.collections) / revenueData[revenueData.length - 2]?.collections * 100).toFixed(1)}% from last month</span>
+                      </>
+                    ) : (
+                      <>
+                        <TrendingDown className="w-4 h-4 text-red-500 mr-1" />
+                        <span className="text-red-600">{((revenueData[revenueData.length - 1]?.collections - revenueData[revenueData.length - 2]?.collections) / revenueData[revenueData.length - 2]?.collections * 100).toFixed(1)}% from last month</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -1234,13 +1307,15 @@ export default function FinancialIntelligence() {
                     <p className="text-sm font-medium text-gray-600">
                       Outstanding Claims
                     </p>
-                    <p className="text-2xl font-bold">23</p>
+                    <p className="text-2xl font-bold">
+                      {claimsLoading ? (
+                        <span className="text-gray-400">Loading...</span>
+                      ) : (
+                        claims.filter((c: Claim) => c.status === "pending" || c.status === "submitted").length
+                      )}
+                    </p>
                   </div>
                   <FileText className="w-8 h-8 text-orange-500" />
-                </div>
-                <div className="flex items-center mt-2 text-sm">
-                  <TrendingDown className="w-4 h-4 text-green-500 mr-1" />
-                  <span className="text-green-600">-5 from last week</span>
                 </div>
               </CardContent>
             </Card>
@@ -1253,15 +1328,36 @@ export default function FinancialIntelligence() {
                       Net Profit
                     </p>
                     <p className="text-2xl font-bold">
-                      {formatCurrency(64000)}
+                      {revenueLoading ? (
+                        <span className="text-gray-400">Loading...</span>
+                      ) : revenueData && revenueData.length > 0 ? (
+                        formatCurrency(revenueData[revenueData.length - 1]?.profit || 0)
+                      ) : (
+                        formatCurrency(0)
+                      )}
                     </p>
                   </div>
                   <Calculator className="w-8 h-8 text-purple-500" />
                 </div>
-                <div className="flex items-center mt-2 text-sm">
-                  <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
-                  <span className="text-green-600">+12.5% from last month</span>
-                </div>
+                {revenueData && revenueData.length > 1 && (
+                  <div className="flex items-center mt-2 text-sm">
+                    {revenueData[revenueData.length - 1]?.profit > revenueData[revenueData.length - 2]?.profit ? (
+                      <>
+                        <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
+                        <span className="text-green-600">
+                          +{((revenueData[revenueData.length - 1]?.profit - revenueData[revenueData.length - 2]?.profit) / revenueData[revenueData.length - 2]?.profit * 100).toFixed(1)}% from last month
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <TrendingDown className="w-4 h-4 text-red-500 mr-1" />
+                        <span className="text-red-600">
+                          {((revenueData[revenueData.length - 1]?.profit - revenueData[revenueData.length - 2]?.profit) / revenueData[revenueData.length - 2]?.profit * 100).toFixed(1)}% from last month
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1273,30 +1369,36 @@ export default function FinancialIntelligence() {
                 <CardTitle>Revenue Trends</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={mockRevenueData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis />
-                    <Tooltip
-                      formatter={(value) => formatCurrency(Number(value))}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="revenue"
-                      stroke="#3b82f6"
-                      fill="#3b82f6"
-                      fillOpacity={0.3}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="collections"
-                      stroke="#10b981"
-                      fill="#10b981"
-                      fillOpacity={0.3}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                {revenueLoading ? (
+                  <div className="flex items-center justify-center h-[300px]">
+                    <span className="text-gray-400">Loading revenue data...</span>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <AreaChart data={revenueData || mockRevenueData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis />
+                      <Tooltip
+                        formatter={(value) => formatCurrency(Number(value))}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="revenue"
+                        stroke="#3b82f6"
+                        fill="#3b82f6"
+                        fillOpacity={0.3}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="collections"
+                        stroke="#10b981"
+                        fill="#10b981"
+                        fillOpacity={0.3}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
@@ -1305,8 +1407,13 @@ export default function FinancialIntelligence() {
                 <CardTitle>Profit Analysis</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={mockRevenueData}>
+                {revenueLoading ? (
+                  <div className="flex items-center justify-center h-[300px]">
+                    <span className="text-gray-400">Loading profit data...</span>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={revenueData || mockRevenueData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="month" />
                     <YAxis />
@@ -1316,8 +1423,9 @@ export default function FinancialIntelligence() {
                     <Bar dataKey="revenue" fill="#3b82f6" />
                     <Bar dataKey="expenses" fill="#ef4444" />
                     <Bar dataKey="profit" fill="#10b981" />
-                  </BarChart>
-                </ResponsiveContainer>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -2463,19 +2571,25 @@ export default function FinancialIntelligence() {
               <CardTitle>Service Profitability Analysis</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={profitabilityData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="service" />
-                  <YAxis />
-                  <Tooltip
-                    formatter={(value) => formatCurrency(Number(value))}
-                  />
-                  <Bar dataKey="revenue" fill="#3b82f6" />
-                  <Bar dataKey="cost" fill="#ef4444" />
-                  <Bar dataKey="profit" fill="#10b981" />
-                </BarChart>
-              </ResponsiveContainer>
+              {profitabilityLoading ? (
+                <div className="flex items-center justify-center h-[400px]">
+                  <span className="text-gray-400">Loading profitability data...</span>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={400}>
+                  <BarChart data={profitabilityData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="service" />
+                    <YAxis />
+                    <Tooltip
+                      formatter={(value) => formatCurrency(Number(value))}
+                    />
+                    <Bar dataKey="revenue" fill="#3b82f6" />
+                    <Bar dataKey="cost" fill="#ef4444" />
+                    <Bar dataKey="profit" fill="#10b981" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 

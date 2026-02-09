@@ -43,7 +43,18 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -194,6 +205,8 @@ export default function PharmacySales() {
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [discountAmount, setDiscountAmount] = useState(0);
   const [selectedPrescriptionId, setSelectedPrescriptionId] = useState<string | null>(null);
+  const [showVoidSaleDialog, setShowVoidSaleDialog] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
   
   const [feedbackModal, setFeedbackModal] = useState<{
     isOpen: boolean;
@@ -531,6 +544,8 @@ export default function PharmacySales() {
     switch (status) {
       case 'completed':
         return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">Completed</Badge>;
+      case 'sales_returned':
+        return <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">Sales returned</Badge>;
       case 'voided':
         return <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300">Voided</Badge>;
       case 'pending':
@@ -1091,12 +1106,8 @@ export default function PharmacySales() {
                   <Button
                     variant="destructive"
                     onClick={() => {
-                      const reason = prompt('Please enter a reason for voiding this sale:');
-                      if (reason && reason.length >= 5) {
-                        voidSaleMutation.mutate({ saleId: selectedSale!.id, reason });
-                      } else if (reason) {
-                        toast({ title: "Void reason must be at least 5 characters", variant: "destructive" });
-                      }
+                      setVoidReason("");
+                      setShowVoidSaleDialog(true);
                     }}
                     disabled={voidSaleMutation.isPending}
                     data-testid="button-void-sale"
@@ -1109,6 +1120,59 @@ export default function PharmacySales() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {/* Void Sale Dialog */}
+      <AlertDialog open={showVoidSaleDialog} onOpenChange={setShowVoidSaleDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Void Sale</AlertDialogTitle>
+            <AlertDialogDescription>
+              Please enter a reason for voiding this sale:
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-4">
+            <Textarea
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="Enter reason for voiding this sale..."
+              rows={4}
+              className="w-full"
+            />
+            {voidReason && voidReason.length > 0 && voidReason.length < 5 && (
+              <p className="text-sm text-red-600 mt-2">
+                Void reason must be at least 5 characters
+              </p>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setShowVoidSaleDialog(false);
+              setVoidReason("");
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (voidReason.trim().length >= 5) {
+                  voidSaleMutation.mutate({ saleId: selectedSale!.id, reason: voidReason.trim() });
+                  setShowVoidSaleDialog(false);
+                  setVoidReason("");
+                } else {
+                  toast({ 
+                    title: "Validation Error", 
+                    description: "Void reason must be at least 5 characters", 
+                    variant: "destructive" 
+                  });
+                }
+              }}
+              disabled={voidSaleMutation.isPending || voidReason.trim().length < 5}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {voidSaleMutation.isPending ? 'Voiding...' : 'Void Sale'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <FeedbackModal
         isOpen={feedbackModal.isOpen}

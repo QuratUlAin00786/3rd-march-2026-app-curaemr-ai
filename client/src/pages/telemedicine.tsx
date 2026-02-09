@@ -917,7 +917,7 @@ function PatientList() {
               </div>
 
               <div className="flex gap-2">
-                {canCreate('telemedicine') && (
+                {(canCreate('telemedicine') || user?.role === 'patient') && (
                   <Button
                     onClick={() => startLiveKitVideoCall(patient)}
                     className="flex-1"
@@ -929,7 +929,7 @@ function PatientList() {
                     Video
                   </Button>
                 )}
-                {canCreate('telemedicine') && (
+                {(canCreate('telemedicine') || user?.role === 'patient') && (
                   <Button
                     variant="outline"
                     size="sm"

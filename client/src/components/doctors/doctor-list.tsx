@@ -919,19 +919,13 @@ const bookingSummaryServiceInfo = useMemo(
           setCreatedInvoiceId(invoice.id);
           setStripeClientSecret(paymentData.clientSecret);
         } else {
+          // Show success modal instead of toast for patient users
           setIsSuccessModalOpen(true);
-          toast({
-            title: "Appointment Booked",
-            description: "Appointment created. Please complete payment from the billing section.",
-          });
         }
       } catch (paymentError) {
         console.error("Failed to create payment intent:", paymentError);
+        // Show success modal instead of toast for patient users
         setIsSuccessModalOpen(true);
-        toast({
-          title: "Appointment Booked",
-          description: "Appointment created. Please complete payment from the billing section.",
-        });
       }
     },
     onError: (error: any) => {
@@ -2073,10 +2067,8 @@ const bookingSummaryServiceInfo = useMemo(
                   onCancel={() => {
                     setStripeClientSecret("");
                     setCreatedInvoiceId(null);
-                    toast({
-                      title: "Payment Cancelled",
-                      description: "Your appointment has been created. You can complete payment later from the billing section.",
-                    });
+                    // Show success modal instead of toast for patient users
+                    setIsSuccessModalOpen(true);
                   }}
                 />
               </Elements>
@@ -2916,13 +2908,17 @@ const bookingSummaryServiceInfo = useMemo(
           
           <div className="text-center py-6">
             <div className="mx-auto w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mb-4">
-              <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
+              <CheckCircle className="w-10 h-10 text-green-600 dark:text-green-400" />
             </div>
-            <p className="text-lg font-medium text-gray-900 dark:text-white">
-              Appointment with Dr. {selectedBookingDoctor?.firstName} {selectedBookingDoctor?.lastName} has been scheduled successfully.
-            </p>
+            {user?.role === "patient" ? (
+              <p className="text-lg font-medium text-gray-900 dark:text-white">
+                Your appointment has been created. You can complete payment later from the billing section.
+              </p>
+            ) : (
+              <p className="text-lg font-medium text-gray-900 dark:text-white">
+                Appointment with Dr. {selectedBookingDoctor?.firstName} {selectedBookingDoctor?.lastName} has been scheduled successfully.
+              </p>
+            )}
           </div>
 
           <div className="flex justify-center">

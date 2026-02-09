@@ -6374,8 +6374,8 @@ const formIds = useMemo(
                               >
                                 Edit
                               </Button>
-                              {/* Hide "Open Form" button if form has been shared with patients */}
-                              {(!formSharesMap[form.id] || formSharesMap[form.id].length === 0) && (
+                              {/* Hide "Open Form" button if form has been shared with patients or user is admin/doctor/nurse */}
+                              {(!formSharesMap[form.id] || formSharesMap[form.id].length === 0) && user?.role === "patient" && (
                               <Button
                                 size="sm"
                                 variant="secondary"

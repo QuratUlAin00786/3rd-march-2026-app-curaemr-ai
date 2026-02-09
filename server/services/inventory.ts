@@ -3,6 +3,7 @@ import {
   inventoryCategories, 
   inventoryItems, 
   inventorySuppliers,
+  inventoryItemsName,
   inventoryPurchaseOrders,
   inventoryPurchaseOrderItems,
   inventoryBatches,
@@ -21,6 +22,7 @@ import {
   type InsertInventoryCategory,
   type InsertInventoryItem,
   type InsertInventorySupplier,
+  type InsertInventoryItemsName,
   type InsertInventoryPurchaseOrder,
   type InsertInventoryPurchaseOrderItem,
   type InsertInventoryBatch,
@@ -312,6 +314,57 @@ export class InventoryService {
     return supplier;
   }
 
+  // ====== ITEM NAMES MANAGEMENT ======
+  
+  async getItemNames(organizationId: number) {
+    return await db
+      .select()
+      .from(inventoryItemsName)
+      .where(and(
+        eq(inventoryItemsName.organizationId, organizationId),
+        eq(inventoryItemsName.isActive, true)
+      ))
+      .orderBy(inventoryItemsName.name);
+  }
+
+  async createItemName(itemNameData: InsertInventoryItemsName & { organizationId: number }) {
+    const [itemName] = await db
+      .insert(inventoryItemsName)
+      .values(itemNameData)
+      .returning();
+    
+    console.log(`[INVENTORY] Created item name: ${itemName.name} for organization ${itemNameData.organizationId}`);
+    return itemName;
+  }
+
+  async updateItemName(id: number, organizationId: number, updates: Partial<InsertInventoryItemsName>) {
+    const [itemName] = await db
+      .update(inventoryItemsName)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(and(
+        eq(inventoryItemsName.id, id),
+        eq(inventoryItemsName.organizationId, organizationId)
+      ))
+      .returning();
+    
+    return itemName;
+  }
+
+  async deleteItemName(id: number, organizationId: number) {
+    // Soft delete by setting isActive to false
+    const [itemName] = await db
+      .update(inventoryItemsName)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(and(
+        eq(inventoryItemsName.id, id),
+        eq(inventoryItemsName.organizationId, organizationId)
+      ))
+      .returning();
+    
+    console.log(`[INVENTORY] Deleted (deactivated) item name: ${itemName.name} for organization ${organizationId}`);
+    return itemName;
+  }
+
   // ====== PURCHASE ORDER MANAGEMENT ======
   
   async createPurchaseOrder(orderData: InsertInventoryPurchaseOrder, items: InsertInventoryPurchaseOrderItem[]) {
@@ -326,7 +379,10 @@ export class InventoryService {
       const orderItems = await tx
         .insert(inventoryPurchaseOrderItems)
         .values(items.map(item => ({
-          ...item,
+          itemId: item.itemId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
           purchaseOrderId: purchaseOrder.id,
           organizationId: orderData.organizationId
         })))
@@ -345,7 +401,7 @@ export class InventoryService {
       conditions.push(eq(inventoryPurchaseOrders.status, status));
     }
 
-    return await db
+    const orders = await db
       .select({
         id: inventoryPurchaseOrders.id,
         poNumber: inventoryPurchaseOrders.poNumber,
@@ -354,16 +410,49 @@ export class InventoryService {
         status: inventoryPurchaseOrders.status,
         totalAmount: inventoryPurchaseOrders.totalAmount,
         taxAmount: inventoryPurchaseOrders.taxAmount,
+        discountAmount: inventoryPurchaseOrders.discountAmount,
+        notes: inventoryPurchaseOrders.notes,
+        supplierId: inventoryPurchaseOrders.supplierId,
         emailSent: inventoryPurchaseOrders.emailSent,
         emailSentAt: inventoryPurchaseOrders.emailSentAt,
         supplierName: inventorySuppliers.name,
         supplierEmail: inventorySuppliers.email,
-        createdAt: inventoryPurchaseOrders.createdAt
+        createdAt: inventoryPurchaseOrders.createdAt,
+        createdBy: inventoryPurchaseOrders.createdBy,
+        approvedBy: inventoryPurchaseOrders.approvedBy,
+        approvedAt: inventoryPurchaseOrders.approvedAt
       })
       .from(inventoryPurchaseOrders)
       .leftJoin(inventorySuppliers, eq(inventoryPurchaseOrders.supplierId, inventorySuppliers.id))
       .where(and(...conditions))
       .orderBy(desc(inventoryPurchaseOrders.createdAt));
+
+    // Fetch items for each purchase order
+    const ordersWithItems = await Promise.all(orders.map(async (order) => {
+      const items = await db
+        .select({
+          id: inventoryPurchaseOrderItems.id,
+          itemId: inventoryPurchaseOrderItems.itemId,
+          itemName: inventoryItems.name,
+          quantity: inventoryPurchaseOrderItems.quantity,
+          unitPrice: inventoryPurchaseOrderItems.unitPrice,
+          totalPrice: inventoryPurchaseOrderItems.totalPrice
+        })
+        .from(inventoryPurchaseOrderItems)
+        .leftJoin(inventoryItems, eq(inventoryPurchaseOrderItems.itemId, inventoryItems.id))
+        .where(and(
+          eq(inventoryPurchaseOrderItems.purchaseOrderId, order.id),
+          eq(inventoryPurchaseOrderItems.organizationId, organizationId)
+        ))
+        .orderBy(inventoryPurchaseOrderItems.id);
+
+      return {
+        ...order,
+        itemsOrdered: items
+      };
+    }));
+
+    return ordersWithItems;
   }
 
   async getPurchaseOrderItems(purchaseOrderId: number, organizationId: number) {
@@ -436,7 +525,7 @@ export class InventoryService {
     };
   }
 
-  async sendPurchaseOrderEmail(purchaseOrderId: number, organizationId: number) {
+  async sendPurchaseOrderEmail(purchaseOrderId: number, organizationId: number, email?: string) {
     const [po] = await db
       .select({
         id: inventoryPurchaseOrders.id,
@@ -452,8 +541,15 @@ export class InventoryService {
         eq(inventoryPurchaseOrders.organizationId, organizationId)
       ));
 
-    if (!po || !po.supplierEmail) {
-      throw new Error('Purchase order not found or supplier email missing');
+    // Use provided email or fall back to supplier email from database
+    const recipientEmail = email || po?.supplierEmail;
+    
+    if (!po) {
+      throw new Error('Purchase order not found');
+    }
+    
+    if (!recipientEmail) {
+      throw new Error('Email address is required. Please provide an email address or ensure the supplier has an email configured.');
     }
 
     // Get purchase order items
@@ -470,7 +566,9 @@ export class InventoryService {
 
     // Send email to Halo Pharmacy
     const subject = `Purchase Order ${po.poNumber} - Healthcare Supplies Request`;
-    const message = `
+    
+    // Plain text version
+    const textMessage = `
 Dear ${po.supplierName || 'Halo Pharmacy Team'},
 
 Please find our purchase order details below:
@@ -489,12 +587,32 @@ Best regards,
 Cura Healthcare Team
     `.trim();
 
+    // HTML version with bold formatting
+    const htmlMessage = `
+<p>Dear ${po.supplierName || 'Halo Pharmacy Team'},</p>
+
+<p>Please find our purchase order details below:</p>
+
+<p><strong>Purchase Order Number:</strong> ${po.poNumber}<br>
+Total Amount: £${po.totalAmount}</p>
+
+<p><strong>Items Requested:</strong><br>
+${items.map(item => 
+  `- ${item.itemName}: ${item.quantity} units @ £${item.unitPrice} each = £${item.totalPrice}`
+).join('<br>')}</p>
+
+<p>Please confirm receipt and provide expected delivery timeframe.</p>
+
+<p><strong>Best regards,</strong><br>
+Cura Healthcare Team</p>
+    `.trim();
+
     try {
       await emailService.sendEmail({
-        to: po.supplierEmail,
+        to: recipientEmail,
         subject,
-        text: message,
-        html: message.replace(/\n/g, '<br>')
+        text: textMessage,
+        html: `<h2 style="font-weight: bold;">${subject}</h2>${htmlMessage}`
       });
       
       // Update purchase order as email sent
@@ -507,7 +625,7 @@ Cura Healthcare Team
         })
         .where(eq(inventoryPurchaseOrders.id, purchaseOrderId));
       
-      console.log(`[INVENTORY] Purchase order ${po.poNumber} emailed to ${po.supplierEmail}`);
+      console.log(`[INVENTORY] Purchase order ${po.poNumber} emailed to ${recipientEmail}`);
       return true;
     } catch (error) {
       console.error(`[INVENTORY] Failed to send purchase order email:`, error);
@@ -2357,13 +2475,13 @@ Cura Healthcare Team
       
       const insertReturnQuery = `
         INSERT INTO inventory_returns (
-          organization_id, return_number, original_sale_id, return_type, 
+          organization_id, return_number, original_sale_id, original_invoice_number, return_type, 
           patient_id, customer_name, customer_phone,
           subtotal_amount, total_amount, net_refund_amount, restocking_fee,
         settlement_type, return_reason, internal_notes,
           status, processed_by, initiated_by, return_date, created_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW()
         ) RETURNING *
       `;
       
@@ -2371,6 +2489,7 @@ Cura Healthcare Team
         returnData.organizationId,
         returnNumber,
         returnData.originalSaleId,
+        originalSale.invoiceNumber || null, // Store invoice number
         'sales_return',
         patientId,
         customerName,
@@ -2421,7 +2540,16 @@ Cura Healthcare Team
       // Note: inventory_return_approvals table doesn't exist in external DB
       // Approval workflow is tracked via status field on inventory_returns
 
-      console.log(`[INVENTORY] Created sales return ${returnNumber} for sale ${originalSale.saleNumber}`);
+      // Update the original sale status to "sales_returned"
+      await tx
+        .update(inventorySales)
+        .set({ 
+          status: 'sales_returned',
+          updatedAt: new Date()
+        })
+        .where(eq(inventorySales.id, returnData.originalSaleId));
+
+      console.log(`[INVENTORY] Created sales return ${returnNumber} for sale ${originalSale.saleNumber}, updated sale status to sales_returned`);
       return { ...returnRecord, items: returnItems };
     });
   }

@@ -909,7 +909,9 @@ Cura EMR Team
     prescriptionData?: any,
     clinicLogoUrl?: string,
     organizationName?: string,
-    hasAttachments: boolean = true
+    hasAttachments: boolean = true,
+    clinicHeader?: any,
+    clinicFooter?: any
   ): EmailTemplate {
     const subject = `Prescription PDF - ${patientName}`;
     const html = `
@@ -934,15 +936,16 @@ Cura EMR Team
           .header { 
             background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
             color: white;
-            padding: 20px 30px;
+            padding: 30px 40px;
             display: flex;
-            align-items: center;
-            gap: 35px;
+            align-items: flex-start;
+            gap: 25px;
             position: relative;
+            flex-wrap: nowrap;
           }
           .clinic-logo {
-            width: 80px;
-            height: 80px;
+            width: 100px;
+            height: 100px;
             border-radius: 12px;
             object-fit: contain;
             background: white;
@@ -950,31 +953,59 @@ Cura EMR Team
             flex-shrink: 0;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
           }
-          .fallback-logo {
-            background: white;
-            border-radius: 12px;
-            flex-shrink: 0;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-            border-collapse: collapse;
-          }
           .header-info {
             flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            display: block;
+            overflow: visible;
+            min-width: 0;
           }
           .clinic-name {
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 700;
-            color: white;
-            margin: 0 0 4px 0;
-            line-height: 1.1;
+            color: white !important;
+            margin: 0 0 12px 0;
+            padding: 0;
+            line-height: 1.3;
             text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            word-wrap: break-word;
+            display: block;
+            white-space: normal;
+            clear: both;
+          }
+          .clinic-details {
+            font-size: 14px;
+            color: white !important;
+            margin: 0 0 8px 0;
+            padding: 0;
+            line-height: 1.8;
+            word-wrap: break-word;
+            display: block;
+            white-space: normal;
+            clear: both;
+          }
+          .clinic-details:last-child {
+            margin-bottom: 0;
+          }
+          .clinic-details a,
+          .clinic-details a:link,
+          .clinic-details a:visited,
+          .clinic-details a:hover,
+          .clinic-details a:active {
+            color: white !important;
+            text-decoration: none;
+          }
+          .header a,
+          .header a:link,
+          .header a:visited,
+          .header a:hover,
+          .header a:active {
+            color: white !important;
+            text-decoration: none;
           }
           .clinic-tagline {
             font-size: 13px;
             color: rgba(255, 255, 255, 0.95);
-            margin: 0;
+            margin: 4px 0 0 0;
             text-transform: uppercase;
             letter-spacing: 1px;
             font-weight: 600;
@@ -1034,9 +1065,10 @@ Cura EMR Team
           }
           .footer { 
             background: #f8fafc;
-            padding: 15px 30px 10px; 
+            padding: 20px 30px; 
             text-align: center; 
             border-top: 1px solid #e5e7eb;
+            min-height: 60px;
           }
           .footer-logo {
             width: 80px;
@@ -1080,20 +1112,25 @@ Cura EMR Team
       <body>
         <div class="container">
           <div class="header">
-            ${clinicLogoUrl ? 
-              `<img src="${clinicLogoUrl}" alt="${organizationName || 'Medical Clinic'} Logo" class="clinic-logo">
-               <div class="header-info">
-                 <h1 class="clinic-name" style="color: white;">${organizationName || 'Medical Clinic'}</h1>
-                 <p class="clinic-tagline" style="color: white;">Powered by Cura EMR Platform</p>
-               </div>` :
-              `<div class="fallback-logo" style="width: 95px; height: 95px; margin-right: 20px; background: darkblue; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: black; font-size: 32px; font-weight: bold; box-shadow: 0 4px 20px rgba(74, 125, 255, 0.3);">
-                 C
-               </div>
-               <div class="header-info">
-                 <h1 class="clinic-name" style="color: color;">Cura EMR</h1>
-                 <p class="clinic-tagline" style="color:color;">AI-Powered Healthcare Platform</p>
-               </div>`
+            ${clinicHeader?.logoBase64 || clinicLogoUrl ? 
+              `<img src="${clinicLogoUrl || (clinicHeader.logoBase64.startsWith('data:') ? clinicHeader.logoBase64 : `data:image/png;base64,${clinicHeader.logoBase64}`)}" alt="${clinicHeader?.clinicName || organizationName || 'Medical Clinic'} Logo" class="clinic-logo">` :
+              ''
             }
+            <div class="header-info">
+              ${clinicHeader ? `
+                <h1 class="clinic-name" style="font-size: ${clinicHeader.clinicNameFontSize || '28px'}; font-family: ${clinicHeader.fontFamily || 'verdana'}; font-weight: ${clinicHeader.fontWeight || 'bold'}; font-style: ${clinicHeader.fontStyle || 'normal'}; text-decoration: ${clinicHeader.textDecoration || 'none'}; color: white !important; margin: 0 0 12px 0; padding: 0; display: block;">
+                  ${clinicHeader.clinicName || organizationName || 'Medical Clinic'}
+                </h1>
+                ${clinicHeader.address ? `<p class="clinic-details" style="color: white !important; margin: 0 0 8px 0; padding: 0; display: block; font-size: 14px; line-height: 1.8;">${clinicHeader.address}</p>` : ''}
+                ${clinicHeader.phone ? `<p class="clinic-details" style="color: white !important; margin: 0 0 8px 0; padding: 0; display: block; font-size: 14px; line-height: 1.8;">Phone: ${clinicHeader.phone}</p>` : ''}
+                ${clinicHeader.email ? `<p class="clinic-details" style="color: white !important; margin: 0 0 8px 0; padding: 0; display: block; font-size: 14px; line-height: 1.8;"><span style="color: white !important;">Email: </span><span style="color: white !important;">${clinicHeader.email}</span></p>` : ''}
+                ${clinicHeader.website ? `<p class="clinic-details" style="color: white !important; margin: 0 0 0 0; padding: 0; display: block; font-size: 14px; line-height: 1.8;"><span style="color: white !important;">Website: </span><span style="color: white !important;">${clinicHeader.website}</span></p>` : ''}
+              ` : `
+                <h1 class="clinic-name" style="font-size: 28px; font-family: verdana; font-weight: bold; color: white !important; margin: 0; padding: 0; display: block;">
+                  ${organizationName || 'Medical Clinic'}
+                </h1>
+              `}
+            </div>
           </div>
           
           <div class="content">
@@ -1149,18 +1186,31 @@ Cura EMR Team
             </p>
           </div>
           
-          <div class="footer">
-            ${clinicLogoUrl ? `
-              <div style="margin-bottom: 15px;">
-                <img src="${clinicLogoUrl}" alt="${organizationName || 'Clinic'} Logo" style="width: 80px; height: 80px; object-fit: contain; border-radius: 8px; background: white; padding: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+          <div class="footer" style="background-color: ${clinicFooter?.backgroundColor || '#f8fafc'}; color: ${clinicFooter?.textColor || '#9ca3af'};">
+            ${clinicFooter?.footerText ? `
+              <p class="footer-text" style="color: ${clinicFooter.textColor || '#9ca3af'};">
+                ${clinicFooter.footerText}
+              </p>
+            ` : `
+              ${clinicLogoUrl ? `
+                <div style="margin-bottom: 15px;">
+                  <img src="${clinicLogoUrl}" alt="${clinicHeader?.clinicName || organizationName || 'Clinic'} Logo" style="width: 80px; height: 80px; object-fit: contain; border-radius: 8px; background: white; padding: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                </div>
+              ` : ''}
+              <div class="footer-brand" style="color: ${clinicFooter?.textColor || '#6b7280'};">Powered by Cura EMR</div>
+              <p class="footer-text" style="color: ${clinicFooter?.textColor || '#9ca3af'};">
+                This email was automatically generated by the Cura EMR system.<br>
+                For technical support, please contact your system administrator.<br>
+                © 2025 Cura Software Limited. All rights reserved.
+              </p>
+            `}
+            ${clinicFooter?.showSocial && (clinicFooter.facebook || clinicFooter.twitter || clinicFooter.linkedin) ? `
+              <div style="margin-top: 15px; text-align: center;">
+                ${clinicFooter.facebook ? `<a href="${clinicFooter.facebook}" style="color: ${clinicFooter.textColor || '#9ca3af'}; margin: 0 10px; text-decoration: none;">Facebook</a>` : ''}
+                ${clinicFooter.twitter ? `<a href="${clinicFooter.twitter}" style="color: ${clinicFooter.textColor || '#9ca3af'}; margin: 0 10px; text-decoration: none;">Twitter</a>` : ''}
+                ${clinicFooter.linkedin ? `<a href="${clinicFooter.linkedin}" style="color: ${clinicFooter.textColor || '#9ca3af'}; margin: 0 10px; text-decoration: none;">LinkedIn</a>` : ''}
               </div>
             ` : ''}
-            <div class="footer-brand">Powered by Cura EMR</div>
-            <p class="footer-text">
-              This email was automatically generated by the Cura EMR system.<br>
-              For technical support, please contact your system administrator.<br>
-              © 2025 Cura Software Limited. All rights reserved.
-            </p>
           </div>
         </div>
       </body>

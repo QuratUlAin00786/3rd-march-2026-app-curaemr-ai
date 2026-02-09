@@ -177,13 +177,25 @@ export default function SymptomCheckerPage() {
 
   const analyzeMutation = useMutation({
     mutationFn: async (data: SymptomFormValues) => {
-      const response = await apiRequest('POST', '/api/symptom-checker/analyze', {
-        ...data,
-        duration: data.duration || undefined,
-        severity: data.severity || undefined,
-        patientId: selectedPatientId || undefined
-      });
-      return response.json();
+      try {
+        const response = await apiRequest('POST', '/api/symptom-checker/analyze', {
+          ...data,
+          duration: data.duration || undefined,
+          severity: data.severity || undefined,
+          patientId: selectedPatientId || undefined
+        });
+        
+        // apiRequest throws if response is not OK, so if we get here, response is OK
+        const result = await response.json();
+        return result;
+      } catch (error: any) {
+        console.error('API Request error:', error);
+        // Try to extract more details from the error
+        if (error.message && error.message.includes('<!DOCTYPE')) {
+          throw new Error('Server returned HTML instead of JSON. The endpoint may not be registered. Please check server logs.');
+        }
+        throw error;
+      }
     },
     onSuccess: (data) => {
       setAnalysis(data.analysis);
@@ -194,10 +206,31 @@ export default function SymptomCheckerPage() {
         description: "AI has analyzed your symptoms successfully",
       });
     },
-    onError: () => {
+    onError: (error: any) => {
+      console.error('Symptom analysis error:', error);
+      // Extract error message from error object
+      let errorMessage = "Failed to analyze symptoms. Please try again.";
+      if (error?.message) {
+        // Error message format is usually "400: {error: 'message'}" or just the message
+        const messageStr = error.message.toString();
+        if (messageStr.includes(':')) {
+          const parts = messageStr.split(':');
+          if (parts.length > 1) {
+            try {
+              const jsonPart = parts.slice(1).join(':').trim();
+              const parsed = JSON.parse(jsonPart);
+              errorMessage = parsed.error || errorMessage;
+            } catch {
+              errorMessage = parts.slice(1).join(':').trim() || errorMessage;
+            }
+          }
+        } else {
+          errorMessage = messageStr;
+        }
+      }
       toast({
         title: "Analysis Failed",
-        description: "Failed to analyze symptoms. Please try again.",
+        description: errorMessage,
         variant: "destructive"
       });
     }

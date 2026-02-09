@@ -329,7 +329,17 @@ export async function authMiddleware(req: TenantRequest, res: Response, next: Ne
 
     // Ensure user belongs to the current tenant
     if (req.tenant && payload.organizationId !== req.tenant.id) {
-      return res.status(403).json({ error: "Access denied for this organization" });
+      console.log(`[AUTH-MIDDLEWARE] ❌ Organization mismatch detected`);
+      console.log(`[AUTH-MIDDLEWARE] Token organizationId: ${payload.organizationId}`);
+      console.log(`[AUTH-MIDDLEWARE] Tenant organizationId: ${req.tenant.id}`);
+      console.log(`[AUTH-MIDDLEWARE] Tenant name: ${req.tenant.name}, Subdomain: ${req.tenant.subdomain}`);
+      console.log(`[AUTH-MIDDLEWARE] User ID: ${payload.userId}, Path: ${req.path}`);
+      console.log(`[AUTH-MIDDLEWARE] Request headers - X-Tenant-Subdomain: ${req.get("X-Tenant-Subdomain")}, Referer: ${req.get("referer")}`);
+      
+      return res.status(403).json({ 
+        error: "Access denied for this organization",
+        details: `Your account belongs to organization ${payload.organizationId}, but you're accessing organization ${req.tenant.id} (${req.tenant.name}). Please log in again with the correct subdomain.`
+      });
     }
 
     // Get user details

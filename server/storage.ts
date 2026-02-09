@@ -7812,10 +7812,71 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteVoiceNote(id: string, organizationId: number): Promise<boolean> {
-    const result = await db
-      .delete(voiceNotes)
-      .where(and(eq(voiceNotes.id, id), eq(voiceNotes.organizationId, organizationId)));
-    return result.rowCount > 0;
+    console.log(`[STORAGE] deleteVoiceNote called - id: ${id} (type: ${typeof id}), organizationId: ${organizationId} (type: ${typeof organizationId})`);
+    try {
+      // First, verify the note exists with the correct org ID
+      const [existingNote] = await db
+        .select()
+        .from(voiceNotes)
+        .where(and(eq(voiceNotes.id, id), eq(voiceNotes.organizationId, organizationId)))
+        .limit(1);
+      
+      if (!existingNote) {
+        console.log(`[STORAGE] Note not found with matching id and orgId. Checking if note exists with different orgId...`);
+        // Check if note exists with different org ID
+        const [checkNote] = await db
+          .select()
+          .from(voiceNotes)
+          .where(eq(voiceNotes.id, id))
+          .limit(1);
+        
+        if (checkNote) {
+          console.error(`[STORAGE] Note exists but with different orgId. Note orgId: ${checkNote.organizationId}, Requested orgId: ${organizationId}`);
+        } else {
+          console.log(`[STORAGE] Note does not exist in database: ${id}`);
+        }
+        return false;
+      }
+      
+      console.log(`[STORAGE] Note found, proceeding with deletion. Note:`, {
+        id: existingNote.id,
+        organizationId: existingNote.organizationId,
+        patientName: existingNote.patientName
+      });
+      
+      // Delete the note using returning() to verify deletion
+      const deletedRows = await db
+        .delete(voiceNotes)
+        .where(and(eq(voiceNotes.id, id), eq(voiceNotes.organizationId, organizationId)))
+        .returning();
+      
+      const deleted = deletedRows.length > 0;
+      
+      console.log(`[STORAGE] deleteVoiceNote result - deleted: ${deleted}, deletedRows.length: ${deletedRows.length}`);
+      
+      // Verify deletion by checking if note still exists
+      if (deleted) {
+        const [verifyNote] = await db
+          .select()
+          .from(voiceNotes)
+          .where(and(eq(voiceNotes.id, id), eq(voiceNotes.organizationId, organizationId)))
+          .limit(1);
+        
+        if (verifyNote) {
+          console.error(`[STORAGE] ERROR: Note still exists after deletion! This should not happen.`);
+          return false;
+        } else {
+          console.log(`[STORAGE] Deletion verified: Note no longer exists in database`);
+        }
+      } else {
+        console.error(`[STORAGE] Delete operation returned 0 rows. Note may not have been deleted.`);
+      }
+      
+      return deleted;
+    } catch (error) {
+      console.error(`[STORAGE] Error deleting voice note:`, error);
+      throw error;
+    }
   }
 
   // User Document Preferences Methods

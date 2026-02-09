@@ -19,7 +19,7 @@ import { messagingService } from "./messaging-service";
 import { isDoctorLike } from './utils/role-utils.js';
 // PayPal imports moved to dynamic imports to avoid initialization errors when credentials are missing
 import { gdprComplianceService } from "./services/gdpr-compliance";
-import { insertGdprConsentSchema, insertGdprDataRequestSchema, updateMedicalImageReportFieldSchema, medicationsDatabase, patientDrugInteractions, insuranceVerifications, type Appointment, organizations, subscriptions, users, User, patients, symptomChecks, quickbooksConnections, insertClinicHeaderSchema, insertClinicFooterSchema, doctorsFee, invoices, labResults, insertMessageTemplateSchema, passwordResetTokens, saasSubscriptions, organizationIntegrations, insertTreatmentSchema, insertTreatmentsInfoSchema, InsertSaaSSubscription, imagingPricing } from "../shared/schema";
+import { insertGdprConsentSchema, insertGdprDataRequestSchema, updateMedicalImageReportFieldSchema, medicationsDatabase, patientDrugInteractions, insuranceVerifications, type Appointment, organizations, subscriptions, users, User, patients, symptomChecks, quickbooksConnections, insertClinicHeaderSchema, insertClinicFooterSchema, doctorsFee, invoices, labResults, insertMessageTemplateSchema, passwordResetTokens, saasSubscriptions, organizationIntegrations, insertTreatmentSchema, insertTreatmentsInfoSchema, InsertSaaSSubscription, imagingPricing, scheduledVideoCalls, insertScheduledVideoCallSchema } from "../shared/schema";
 import * as schema from "../shared/schema";
 import { db, pool } from "./db";
 import { and, eq, sql, desc, isNull, isNotNull, or, gte, lte, ne } from "drizzle-orm";
@@ -34,6 +34,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { createNotification, createBulkNotifications } from "./notification-helper";
 import { startAppointmentReminderScheduler } from "./appointment-reminders";
+import { startVideoCallScheduler } from "./video-call-scheduler";
 import * as fs from 'fs';
 import * as fse from 'fs-extra';
 import { readFile, access, stat } from 'fs/promises';
@@ -766,6 +767,7 @@ const uploadReplaceImages = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  console.log("[ROUTE-REGISTRATION] Starting route registration...");
   
   // DEPLOYMENT HEALTH CHECK - Absolute priority for deployment success
   app.get('/api/health', (req, res) => {
@@ -4005,6 +4007,143 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   });
 
   // Check patient email availability - checks if email exists in patients, users, or organizations
+  
+  // Symptom Checker API endpoints
+  console.log("[ROUTE-REGISTRATION] Registering /api/symptom-checker/analyze endpoint");
+  
+  // Add middleware to log all requests to symptom-checker routes
+  app.use("/api/symptom-checker", (req, res, next) => {
+    console.log(`[SYMPTOM-CHECKER-MIDDLEWARE] ${req.method} ${req.path} - Original URL: ${req.originalUrl}`);
+    next();
+  });
+  
+  app.post("/api/symptom-checker/analyze", authMiddleware, async (req: TenantRequest, res) => {
+    console.log("[SYMPTOM-CHECKER] Analyze endpoint called");
+    console.log("[SYMPTOM-CHECKER] Request body:", req.body);
+    console.log("[SYMPTOM-CHECKER] User:", (req as any).user);
+    console.log("[SYMPTOM-CHECKER] Tenant:", req.tenant);
+    
+    try {
+      const userId = (req as any).user?.userId || (req as any).user?.id;
+      if (!userId) {
+        console.log("[SYMPTOM-CHECKER] No user ID found");
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const orgId = req.tenant?.id;
+      if (!orgId) {
+        console.log("[SYMPTOM-CHECKER] No organization ID found");
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      const { symptoms, symptomDescription, duration, severity, patientId } = req.body;
+      console.log("[SYMPTOM-CHECKER] Extracted data:", { symptoms, symptomDescription, duration, severity, patientId });
+
+      // Validate required fields
+      if (!symptoms || !Array.isArray(symptoms) || symptoms.length === 0) {
+        return res.status(400).json({ error: "At least one symptom is required" });
+      }
+
+      if (!symptomDescription || symptomDescription.trim().length < 10) {
+        return res.status(400).json({ error: "Symptom description must be at least 10 characters" });
+      }
+
+      // Analyze symptoms using AI service
+      const analysis = await aiService.analyzeSymptoms({
+        symptoms: symptoms as string[],
+        symptomDescription: symptomDescription as string,
+        duration: duration as string | undefined,
+        severity: severity as string | undefined,
+      });
+
+      // Save to database
+      const [symptomCheck] = await db.insert(symptomChecks).values({
+        organizationId: orgId,
+        patientId: patientId ? parseInt(patientId) : null,
+        userId: userId,
+        symptoms: symptoms as string[],
+        symptomDescription: symptomDescription as string,
+        duration: duration || null,
+        severity: severity || null,
+        aiAnalysis: analysis,
+        status: "pending"
+      }).returning();
+
+      res.json({
+        success: true,
+        analysis: analysis,
+        symptomCheckId: symptomCheck.id
+      });
+
+    } catch (error: any) {
+      console.error("[SYMPTOM-CHECKER] Error analyzing symptoms:", error);
+      console.error("[SYMPTOM-CHECKER] Error stack:", error.stack);
+      
+      // Ensure we always return JSON, not HTML
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: error.message || "Failed to analyze symptoms. Please try again.",
+          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+    }
+  });
+
+  // Test route to verify symptom-checker endpoints are accessible
+  app.get("/api/symptom-checker/test", authMiddleware, async (req: TenantRequest, res) => {
+    res.json({ success: true, message: "Symptom checker endpoint is accessible" });
+  });
+
+  app.get("/api/symptom-checker/history", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const userId = (req as any).user?.userId || (req as any).user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const orgId = req.tenant?.id;
+      if (!orgId) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      // Get symptom check history for the user
+      const history = await db
+        .select()
+        .from(symptomChecks)
+        .where(
+          and(
+            eq(symptomChecks.organizationId, orgId),
+            eq(symptomChecks.userId, userId)
+          )
+        )
+        .orderBy(desc(symptomChecks.createdAt))
+        .limit(50);
+
+      // If patientId is provided, also include patient info
+      const historyWithPatients = await Promise.all(
+        history.map(async (check) => {
+          if (check.patientId) {
+            const [patient] = await db
+              .select()
+              .from(patients)
+              .where(eq(patients.id, check.patientId))
+              .limit(1);
+            return { ...check, patient };
+          }
+          return check;
+        })
+      );
+
+      res.json(historyWithPatients);
+
+    } catch (error: any) {
+      console.error("Error fetching symptom check history:", error);
+      res.status(500).json({ 
+        error: error.message || "Failed to fetch symptom check history" 
+      });
+    }
+  });
+
   app.get("/api/patients/check-email", authMiddleware, async (req: TenantRequest, res) => {
     try {
       const { email } = req.query;
@@ -7132,20 +7271,194 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   app.get("/api/financial/revenue", authMiddleware, requireRole(["admin", "finance", "doctor", "nurse", "patient"]), async (req: TenantRequest, res) => {
     try {
       const { dateRange } = req.query;
+      const organizationId = req.tenant?.id;
       
-      // Mock revenue data - in production this would come from actual billing data
-      const mockRevenueData = [
-        { month: "Jan", revenue: 125000, expenses: 85000, profit: 40000, collections: 118000, target: 130000 },
-        { month: "Feb", revenue: 135000, expenses: 88000, profit: 47000, collections: 128000, target: 130000 },
-        { month: "Mar", revenue: 142000, expenses: 92000, profit: 50000, collections: 135000, target: 135000 },
-        { month: "Apr", revenue: 138000, expenses: 90000, profit: 48000, collections: 132000, target: 135000 },
-        { month: "May", revenue: 155000, expenses: 95000, profit: 60000, collections: 148000, target: 140000 },
-        { month: "Jun", revenue: 162000, expenses: 98000, profit: 64000, collections: 156000, target: 145000 }
-      ];
+      if (!organizationId) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      // Calculate date range
+      const now = new Date();
+      let startDate = new Date();
+      let endDate = new Date();
+      let monthsToShow = 6; // Default to last 6 months
+
+      switch (dateRange) {
+        case 'last_month':
+          startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          endDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+          monthsToShow = 1;
+          break;
+        case 'last_3_months':
+          startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+          monthsToShow = 3;
+          break;
+        case 'last_6_months':
+          startDate = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+          monthsToShow = 6;
+          break;
+        case 'last_year':
+          startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+          monthsToShow = 12;
+          break;
+        case 'this_year':
+          startDate = new Date(now.getFullYear(), 0, 1);
+          monthsToShow = now.getMonth() + 1;
+          break;
+        default:
+          // Default to last 6 months
+          startDate = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+          monthsToShow = 6;
+      }
+
+      // Fetch invoices for the date range
+      const allInvoices = await db
+        .select()
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.organizationId, organizationId),
+            gte(invoices.dateOfService, startDate),
+            lte(invoices.dateOfService, endDate)
+          )
+        )
+        .orderBy(invoices.dateOfService);
+
+      // Group invoices by month and calculate metrics
+      const monthlyData: Record<string, {
+        revenue: number;
+        collections: number;
+        invoiceCount: number;
+      }> = {};
+
+      // Initialize all months in range
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      for (let i = 0; i < monthsToShow; i++) {
+        const monthDate = new Date(now.getFullYear(), now.getMonth() - (monthsToShow - 1 - i), 1);
+        const monthKey = `${monthNames[monthDate.getMonth()]}`;
+        monthlyData[monthKey] = {
+          revenue: 0,
+          collections: 0,
+          invoiceCount: 0
+        };
+      }
+
+      // Process invoices and aggregate by month
+      allInvoices.forEach((invoice) => {
+        const invoiceDate = new Date(invoice.dateOfService);
+        const monthKey = monthNames[invoiceDate.getMonth()];
+        
+        if (monthlyData[monthKey]) {
+          const totalAmount = parseFloat(invoice.totalAmount.toString()) || 0;
+          const paidAmount = parseFloat(invoice.paidAmount.toString()) || 0;
+          
+          monthlyData[monthKey].revenue += totalAmount;
+          monthlyData[monthKey].collections += paidAmount;
+          monthlyData[monthKey].invoiceCount += 1;
+        }
+      });
+
+      // Calculate expenses (estimate as 60% of revenue, or use actual expense data if available)
+      // In a real system, you'd have an expenses table
+      const expenseRatio = 0.6; // 60% of revenue as expenses (adjustable)
+
+      // Format data for frontend
+      const revenueData = Object.entries(monthlyData).map(([month, data]) => {
+        const expenses = data.revenue * expenseRatio;
+        const profit = data.revenue - expenses;
+        const target = data.revenue * 1.1; // Target is 10% above actual revenue
+
+        return {
+          month,
+          revenue: Math.round(data.revenue * 100) / 100,
+          expenses: Math.round(expenses * 100) / 100,
+          profit: Math.round(profit * 100) / 100,
+          collections: Math.round(data.collections * 100) / 100,
+          target: Math.round(target * 100) / 100,
+          invoiceCount: data.invoiceCount
+        };
+      });
+
+      // Sort by month order (Jan, Feb, Mar, etc.)
+      const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      revenueData.sort((a, b) => {
+        return monthOrder.indexOf(a.month) - monthOrder.indexOf(b.month);
+      });
+
+      console.log(`[FINANCIAL-REVENUE] Fetched revenue data for ${revenueData.length} months, total invoices: ${allInvoices.length}`);
       
-      res.json(mockRevenueData);
-    } catch (error) {
+      res.json(revenueData);
+    } catch (error: any) {
+      console.error("[FINANCIAL-REVENUE] Error fetching revenue data:", error);
       handleRouteError(error, "fetch revenue data", res);
+    }
+  });
+
+  // Get profitability data by service type
+  app.get("/api/financial/profitability", authMiddleware, requireRole(["admin", "finance", "doctor", "nurse"]), async (req: TenantRequest, res) => {
+    try {
+      const organizationId = req.tenant?.id;
+      
+      if (!organizationId) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      // Fetch invoices grouped by service type
+      const invoicesByService = await db
+        .select({
+          serviceType: invoices.serviceType,
+          revenue: sql<number>`SUM(CAST(${invoices.totalAmount} AS DECIMAL))`,
+          collections: sql<number>`SUM(CAST(${invoices.paidAmount} AS DECIMAL))`,
+          count: sql<number>`COUNT(*)`,
+        })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.organizationId, organizationId),
+            isNotNull(invoices.serviceType)
+          )
+        )
+        .groupBy(invoices.serviceType);
+
+      // Calculate profitability for each service type
+      // Cost is estimated as 60% of revenue (adjustable)
+      const expenseRatio = 0.6;
+      
+      const profitabilityData = invoicesByService.map((service) => {
+        const revenue = parseFloat(service.revenue.toString()) || 0;
+        const cost = revenue * expenseRatio;
+        const profit = revenue - cost;
+        const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+
+        // Map service types to readable names
+        const serviceNameMap: Record<string, string> = {
+          'appointments': 'Primary Care',
+          'labResults': 'Diagnostic Testing',
+          'imaging': 'Imaging Services',
+          'other': 'Other Services',
+          'consultation': 'Consultations',
+          'procedure': 'Procedures',
+        };
+
+        return {
+          service: serviceNameMap[service.serviceType || 'other'] || service.serviceType || 'Other',
+          revenue: Math.round(revenue * 100) / 100,
+          cost: Math.round(cost * 100) / 100,
+          profit: Math.round(profit * 100) / 100,
+          margin: Math.round(margin * 10) / 10,
+          count: parseInt(service.count.toString()) || 0,
+        };
+      });
+
+      // Sort by revenue descending
+      profitabilityData.sort((a, b) => b.revenue - a.revenue);
+
+      console.log(`[FINANCIAL-PROFITABILITY] Fetched profitability data for ${profitabilityData.length} service types`);
+      
+      res.json(profitabilityData);
+    } catch (error: any) {
+      console.error("[FINANCIAL-PROFITABILITY] Error fetching profitability data:", error);
+      handleRouteError(error, "fetch profitability data", res);
     }
   });
 
@@ -14845,8 +15158,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           }
           
           if ((campaign.type === 'email' || campaign.type === 'both') && recipient.email) {
-            const { sendEmail } = await import('./services/email-service');
-            const emailResult = await sendEmail({
+            try {
+              const emailResult = await emailService.sendEmail({
               to: recipient.email,
               subject: campaign.subject || 'Campaign Message',
               text: campaign.content
@@ -14857,11 +15170,16 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                 .replace(/\[LastName\]/gi, recipient.name?.split(' ').slice(1).join(' ') || '')}</p>`
             });
             
-            if (emailResult.success) {
+              // emailService.sendEmail returns a boolean directly
+              if (emailResult === true) {
               deliveryLog.push({ recipient: recipient.name, email: recipient.email, status: 'sent', type: 'email' });
               totalSent++;
             } else {
-              deliveryLog.push({ recipient: recipient.name, email: recipient.email, status: 'failed', error: emailResult.error, type: 'email' });
+                deliveryLog.push({ recipient: recipient.name, email: recipient.email, status: 'failed', error: 'Email sending failed', type: 'email' });
+                totalFailed++;
+              }
+            } catch (emailErr: any) {
+              deliveryLog.push({ recipient: recipient.name, email: recipient.email, status: 'failed', error: emailErr.message || 'Email sending failed', type: 'email' });
               totalFailed++;
             }
           }
@@ -16871,38 +17189,16 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         return res.status(401).json({ error: "User not authenticated" });
       }
 
+      const orgId = req.tenant!.id;
+      console.log(`[GET-VOICE-NOTES] Fetching voice notes for orgId: ${orgId}`);
+
       // Get voice notes from database storage
-      const notes = await storage.getVoiceNotesByOrganization(req.tenant!.id);
+      const notes = await storage.getVoiceNotesByOrganization(orgId);
       
-      // If no notes exist, create a sample note for backwards compatibility
-      if (notes.length === 0) {
-        const sampleNote = {
-          id: "note_sample_" + Date.now(),
-          organizationId: req.tenant!.id,
-          patientId: "158",
-          patientName: "Imran Mubashir",
-          providerId: "1",
-          providerName: "Dr. Provider",
-          type: "consultation",
-          status: "completed",
-          recordingDuration: 120,
-          transcript: "Patient presents with chest pain. Vital signs stable. Recommended further cardiac evaluation.",
-          confidence: 0.94,
-          medicalTerms: [
-            { term: "chest pain", confidence: 0.95, category: "symptom" },
-            { term: "cardiac evaluation", confidence: 0.93, category: "procedure" }
-          ],
-          structuredData: {
-            chiefComplaint: ["Chest pain"] as [string, ...string[]],
-            assessment: ["Possible cardiac involvement"] as [string, ...string[]],
-            plan: ["EKG, troponin levels, cardiology consult"] as [string, ...string[]]
-          }
-        };
-        
-        await storage.createVoiceNote(sampleNote);
-        const updatedNotes = await storage.getVoiceNotesByOrganization(req.tenant!.id);
-        return res.json(updatedNotes);
-      }
+      console.log(`[GET-VOICE-NOTES] Found ${notes.length} voice notes for orgId: ${orgId}`);
+      
+      // Removed sample note creation - it was causing deleted notes to reappear
+      // If you need sample data, create it manually or through the UI
 
       res.json(notes);
     } catch (error) {
@@ -17014,25 +17310,43 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       }
 
       const noteId = req.params.id;
-      console.log("DELETE request for noteId:", noteId);
+      const orgId = req.tenant!.id;
+      console.log(`[DELETE-VOICE-NOTE] DELETE request for noteId: ${noteId}, orgId: ${orgId}`);
       
       // Check if note exists before deletion
-      const existingNote = await storage.getVoiceNote(noteId, req.tenant!.id);
+      const existingNote = await storage.getVoiceNote(noteId, orgId);
       if (!existingNote) {
-        console.log("Voice note not found in database:", noteId);
+        console.log(`[DELETE-VOICE-NOTE] Voice note not found in database: ${noteId}, orgId: ${orgId}`);
         return res.status(404).json({ error: "Voice note not found" });
       }
 
+      console.log(`[DELETE-VOICE-NOTE] Note found, attempting deletion. Note details:`, {
+        id: existingNote.id,
+        organizationId: existingNote.organizationId,
+        patientName: existingNote.patientName
+      });
+
       // Delete the note from database
-      const deleted = await storage.deleteVoiceNote(noteId, req.tenant!.id);
+      const deleted = await storage.deleteVoiceNote(noteId, orgId);
+      
+      console.log(`[DELETE-VOICE-NOTE] Deletion result: ${deleted ? 'SUCCESS' : 'FAILED'}`);
       
       if (!deleted) {
-        return res.status(404).json({ error: "Voice note not found" });
+        console.error(`[DELETE-VOICE-NOTE] Deletion returned false. Note ID: ${noteId}, Org ID: ${orgId}`);
+        return res.status(404).json({ error: "Voice note not found or could not be deleted" });
       }
       
-      console.log("Successfully deleted note:", noteId);
+      // Verify deletion by trying to fetch the note again
+      const verifyNote = await storage.getVoiceNote(noteId, orgId);
+      if (verifyNote) {
+        console.error(`[DELETE-VOICE-NOTE] WARNING: Note still exists after deletion! Note ID: ${noteId}`);
+        return res.status(500).json({ error: "Note deletion failed - note still exists" });
+      }
+      
+      console.log(`[DELETE-VOICE-NOTE] Successfully deleted and verified note: ${noteId}`);
       
       res.status(200).json({ 
+        success: true,
         message: "Voice note deleted successfully", 
         deletedNoteId: noteId 
       });
@@ -20941,14 +21255,36 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       // Create the meeting
       const createUrl = `${BBB_URL}api/create?${createParams.toString()}&checksum=${createChecksum}`;
       
-      const createResponse = await fetch(createUrl, { method: 'GET' });
-      const createXML = await createResponse.text();
+      console.log(`[BBB] Creating meeting: ${meetingID}, URL: ${createUrl.replace(BBB_SECRET, 'SECRET_HIDDEN')}`);
+      
+      let createResponse;
+      let createXML;
+      try {
+        createResponse = await fetch(createUrl, { method: 'GET' });
+        createXML = await createResponse.text();
+        console.log(`[BBB] Response status: ${createResponse.status}, XML: ${createXML.substring(0, 500)}`);
+      } catch (fetchError: any) {
+        console.error(`[BBB] Network error fetching create URL:`, fetchError);
+        throw new Error(`Network error: Unable to reach BigBlueButton server. ${fetchError.message}`);
+      }
 
       // Parse XML response to check if meeting was created successfully
       const isSuccess = createXML.includes('<returncode>SUCCESS</returncode>');
       
       if (!isSuccess) {
-        throw new Error('Failed to create BigBlueButton meeting');
+        // Try to extract error message from XML
+        let errorMessage = 'Failed to create BigBlueButton meeting';
+        const messageMatch = createXML.match(/<message>(.*?)<\/message>/i);
+        const returnCodeMatch = createXML.match(/<returncode>(.*?)<\/returncode>/i);
+        
+        if (messageMatch) {
+          errorMessage = `BigBlueButton error: ${messageMatch[1]}`;
+        } else if (returnCodeMatch && returnCodeMatch[1] !== 'SUCCESS') {
+          errorMessage = `BigBlueButton returned: ${returnCodeMatch[1]}`;
+        }
+        
+        console.error(`[BBB] Meeting creation failed. XML response:`, createXML);
+        throw new Error(errorMessage);
       }
 
       // Generate join URLs for moderator and attendee
@@ -20988,7 +21324,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         maxParticipants: meetingData.maxParticipants
       });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating BigBlueButton meeting:", error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ 
@@ -20996,7 +21332,13 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           details: error.errors.map(e => `${e.path.join('.')}: ${e.message}`)
         });
       }
-      res.status(500).json({ error: "Failed to create video conference" });
+      // Return the actual error message if available
+      const errorMessage = error?.message || "Failed to create video conference";
+      const statusCode = error?.status || 500;
+      res.status(statusCode).json({ 
+        error: errorMessage,
+        details: error?.stack || undefined
+      });
     }
   });
 
@@ -21030,6 +21372,144 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("Error ending BigBlueButton meeting:", error);
       res.status(500).json({ error: "Failed to end video conference" });
+    }
+  });
+
+  // Schedule video call endpoint
+  app.post("/api/video-calls/schedule", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const payload = z.object({
+        participantId: z.number(),
+        participantName: z.string(),
+        participantEmail: z.string().email(),
+        participantRole: z.string(),
+        scheduledAt: z.string().datetime(),
+        duration: z.number().int().positive(),
+        callType: z.string().default("consultation"),
+        organizationId: z.number().optional()
+      }).parse(req.body);
+
+      const userId = (req as any).user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const orgId = payload.organizationId || req.tenant?.id;
+      if (!orgId) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      // Validate scheduled time is in the future
+      const scheduledDateTime = new Date(payload.scheduledAt);
+      const now = new Date();
+      if (scheduledDateTime <= now) {
+        return res.status(400).json({ error: "Scheduled time must be in the future" });
+      }
+
+      // Get current user details for email
+      const currentUser = await storage.getUserById(userId);
+      if (!currentUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Save scheduled video call to database
+      const [scheduledCall] = await db.insert(scheduledVideoCalls).values({
+        organizationId: orgId,
+        createdBy: userId,
+        participantId: payload.participantId,
+        participantName: payload.participantName,
+        participantEmail: payload.participantEmail,
+        participantRole: payload.participantRole,
+        scheduledAt: scheduledDateTime,
+        duration: payload.duration,
+        callType: payload.callType,
+        status: "scheduled"
+      }).returning();
+
+      // Send email notifications to both users
+      const scheduledTimeFormatted = scheduledDateTime.toLocaleString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+
+      const currentUserName = `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() || currentUser.email;
+      const participantName = payload.participantName;
+
+      // Email to current user (scheduler)
+      try {
+        await emailService.sendEmail({
+          to: currentUser.email,
+          subject: `Video Call Scheduled: ${participantName}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #4F46E5;">Video Call Scheduled</h2>
+              <p>Hello ${currentUserName},</p>
+              <p>You have successfully scheduled a video call:</p>
+              <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <p><strong>Participant:</strong> ${participantName}</p>
+                <p><strong>Scheduled Time:</strong> ${scheduledTimeFormatted}</p>
+                <p><strong>Duration:</strong> ${payload.duration} minutes</p>
+                <p><strong>Call Type:</strong> ${payload.callType}</p>
+              </div>
+              <p>You will receive a reminder before the scheduled time.</p>
+              <p>Best regards,<br>Cura EMR Platform</p>
+            </div>
+          `,
+          text: `Video Call Scheduled\n\nHello ${currentUserName},\n\nYou have successfully scheduled a video call:\n\nParticipant: ${participantName}\nScheduled Time: ${scheduledTimeFormatted}\nDuration: ${payload.duration} minutes\nCall Type: ${payload.callType}\n\nYou will receive a reminder before the scheduled time.\n\nBest regards,\nCura EMR Platform`
+        });
+      } catch (emailError) {
+        console.error("Error sending email to scheduler:", emailError);
+      }
+
+      // Email to participant
+      try {
+        await emailService.sendEmail({
+          to: payload.participantEmail,
+          subject: `Video Call Scheduled: ${currentUserName}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #4F46E5;">Video Call Scheduled</h2>
+              <p>Hello ${participantName},</p>
+              <p>You have a video call scheduled:</p>
+              <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <p><strong>With:</strong> ${currentUserName}</p>
+                <p><strong>Scheduled Time:</strong> ${scheduledTimeFormatted}</p>
+                <p><strong>Duration:</strong> ${payload.duration} minutes</p>
+                <p><strong>Call Type:</strong> ${payload.callType}</p>
+              </div>
+              <p>You will receive a reminder before the scheduled time.</p>
+              <p>Best regards,<br>Cura EMR Platform</p>
+            </div>
+          `,
+          text: `Video Call Scheduled\n\nHello ${participantName},\n\nYou have a video call scheduled:\n\nWith: ${currentUserName}\nScheduled Time: ${scheduledTimeFormatted}\nDuration: ${payload.duration} minutes\nCall Type: ${payload.callType}\n\nYou will receive a reminder before the scheduled time.\n\nBest regards,\nCura EMR Platform`
+        });
+      } catch (emailError) {
+        console.error("Error sending email to participant:", emailError);
+      }
+
+      res.json({
+        success: true,
+        scheduledCall: {
+          id: scheduledCall.id,
+          scheduledAt: scheduledCall.scheduledAt,
+          participantName: scheduledCall.participantName
+        }
+      });
+
+    } catch (error: any) {
+      console.error("Error scheduling video call:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: error.errors.map(e => `${e.path.join('.')}: ${e.message}`)
+        });
+      }
+      res.status(500).json({ error: error.message || "Failed to schedule video call" });
     }
   });
 
@@ -21824,15 +22304,47 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const organization = await storage.getOrganization(req.tenant!.id);
       const organizationName = organization?.brandName || organization?.name;
       
-      // Get clinic logo from clinic_headers table
+      // Get clinic header and footer data from database
+      let clinicHeader: any = undefined;
+      let clinicFooter: any = undefined;
       let clinicLogoUrl: string | undefined;
+      
       try {
-        const clinicHeader = await storage.getActiveClinicHeader(req.tenant!.id);
-        clinicLogoUrl = clinicHeader?.logoBase64 || undefined;
-        console.log('[PRESCRIPTION-EMAIL] Clinic logo from clinic_headers:', clinicLogoUrl ? 'Logo found' : 'No logo');
+        clinicHeader = await storage.getActiveClinicHeader(req.tenant!.id);
+        if (clinicHeader) {
+          console.log('[PRESCRIPTION-EMAIL] Clinic header found:', {
+            clinicName: clinicHeader.clinicName,
+            hasLogo: !!clinicHeader.logoBase64,
+            address: clinicHeader.address,
+            phone: clinicHeader.phone,
+            email: clinicHeader.email
+          });
+          
+          // Convert base64 logo to data URL if it exists
+          if (clinicHeader.logoBase64) {
+            // Check if it's already a data URL
+            if (clinicHeader.logoBase64.startsWith('data:')) {
+              clinicLogoUrl = clinicHeader.logoBase64;
+            } else {
+              // Assume PNG if no format specified, or try to detect from base64
+              clinicLogoUrl = `data:image/png;base64,${clinicHeader.logoBase64}`;
+            }
+            console.log('[PRESCRIPTION-EMAIL] Logo URL prepared:', clinicLogoUrl ? 'Yes' : 'No');
+          }
+        } else {
+          console.log('[PRESCRIPTION-EMAIL] No active clinic header found for organization');
+        }
       } catch (error) {
-        console.log('[PRESCRIPTION-EMAIL] Could not fetch clinic header logo:', error);
-        clinicLogoUrl = undefined;
+        console.log('[PRESCRIPTION-EMAIL] Could not fetch clinic header:', error);
+        clinicHeader = undefined;
+      }
+
+      try {
+        clinicFooter = await storage.getActiveClinicFooter(req.tenant!.id);
+        console.log('[PRESCRIPTION-EMAIL] Clinic footer from clinic_footers:', clinicFooter ? 'Footer found' : 'No footer');
+      } catch (error) {
+        console.log('[PRESCRIPTION-EMAIL] Could not fetch clinic footer:', error);
+        clinicFooter = undefined;
       }
 
       // Prepare attachments array including user uploaded files
@@ -21850,7 +22362,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         });
       }
 
-      // Generate professional HTML email template with clinic logo and branding
+      // Generate professional HTML email template with clinic header and footer data
       // Always hide "PDF Attachment Included" section as per user requirement
       const emailTemplate = emailService.generatePrescriptionEmail(
         patientName || 'Patient',
@@ -21858,7 +22370,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         undefined, // prescriptionData - not needed for this basic email
         clinicLogoUrl,
         organizationName,
-        false // hasAttachments - always false to hide the attachment notice section
+        false, // hasAttachments - always false to hide the attachment notice section
+        clinicHeader, // Pass clinic header data
+        clinicFooter  // Pass clinic footer data
       );
 
       // TODO: In a real implementation, generate and add prescription PDF here
@@ -24811,6 +25325,155 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     }
   });
 
+  // Get item names
+  app.get("/api/inventory/item-names", authMiddleware, requireRole(["admin", "doctor", "nurse", "receptionist", "pharmacist"]), async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant?.id) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+      
+      const itemNames = await inventoryService.getItemNames(req.tenant.id);
+      res.json(itemNames);
+    } catch (error: any) {
+      console.error("[INVENTORY] Error fetching item names:", error);
+      res.status(500).json({ 
+        error: error.message || "Failed to fetch item names" 
+      });
+    }
+  });
+
+  // Create item name
+  app.post("/api/inventory/item-names", authMiddleware, requireRole(["admin"]), async (req: TenantRequest, res) => {
+    try {
+      console.log("[INVENTORY] Creating item name, body:", req.body);
+      console.log("[INVENTORY] Tenant ID:", req.tenant?.id);
+      
+      if (!req.tenant?.id) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      const itemNameData = z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+      }).parse(req.body);
+
+      const itemName = await inventoryService.createItemName({
+        ...itemNameData,
+        organizationId: req.tenant.id
+      });
+
+      console.log("[INVENTORY] Item name created successfully:", itemName);
+      res.status(201).json(itemName);
+    } catch (error: any) {
+      console.error("[INVENTORY] Error creating item name:", error);
+      
+      // Handle Zod validation errors
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: "Validation error", 
+          details: error.errors 
+        });
+      }
+      
+      res.status(500).json({ 
+        error: error.message || "Failed to create item name" 
+      });
+    }
+  });
+
+  // Update item name
+  app.patch("/api/inventory/item-names/:id", authMiddleware, requireRole(["admin"]), async (req: TenantRequest, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Validate ID parameter
+      const itemNameId = parseInt(id);
+      if (isNaN(itemNameId)) {
+        return res.status(400).json({ error: "Invalid item name ID" });
+      }
+      
+      if (!req.tenant?.id) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      // Parse and validate request body
+      let itemNameData;
+      try {
+        itemNameData = z.object({
+          name: z.string().min(1).optional(),
+          description: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }).parse(req.body);
+      } catch (parseError) {
+        if (parseError instanceof z.ZodError) {
+          return res.status(400).json({ 
+            error: "Validation error", 
+            details: parseError.errors 
+          });
+        }
+        throw parseError;
+      }
+
+      // Update the item name
+      const itemName = await inventoryService.updateItemName(
+        itemNameId,
+        req.tenant.id,
+        itemNameData
+      );
+
+      if (!itemName) {
+        return res.status(404).json({ error: "Item name not found or you don't have permission to update it" });
+      }
+
+      return res.json(itemName);
+    } catch (error: any) {
+      console.error("[INVENTORY] Error updating item name:", error);
+      
+      // Ensure we always return JSON, even on errors
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: "Validation error", 
+          details: error.errors 
+        });
+      }
+      
+      // Check if response was already sent
+      if (res.headersSent) {
+        return;
+      }
+      
+      return res.status(500).json({ 
+        error: error.message || "Failed to update item name" 
+      });
+    }
+  });
+
+  // Delete item name (soft delete)
+  app.delete("/api/inventory/item-names/:id", authMiddleware, requireRole(["admin"]), async (req: TenantRequest, res) => {
+    try {
+      const { id } = req.params;
+      if (!req.tenant?.id) {
+        return res.status(400).json({ error: "Organization ID is required" });
+      }
+
+      const itemName = await inventoryService.deleteItemName(
+        parseInt(id),
+        req.tenant.id
+      );
+
+      if (!itemName) {
+        return res.status(404).json({ error: "Item name not found" });
+      }
+
+      res.json({ message: "Item name deleted successfully", itemName });
+    } catch (error: any) {
+      console.error("[INVENTORY] Error deleting item name:", error);
+      res.status(500).json({ 
+        error: error.message || "Failed to delete item name" 
+      });
+    }
+  });
+
   // Purchase Orders
   app.get("/api/inventory/purchase-orders", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
     try {
@@ -24879,16 +25542,20 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   app.post("/api/inventory/purchase-orders/:id/send-email", authMiddleware, requireRole(["admin", "doctor", "nurse"]), async (req: TenantRequest, res) => {
     try {
       const purchaseOrderId = parseInt(req.params.id);
+      const { email } = req.body;
       
-      await inventoryService.sendPurchaseOrderEmail(purchaseOrderId, req.tenant!.id);
+      // Email is optional - if not provided, will use supplier email from database
+      const emailToUse = email && email.trim() ? email.trim() : undefined;
+      
+      await inventoryService.sendPurchaseOrderEmail(purchaseOrderId, req.tenant!.id, emailToUse);
       
       res.json({ 
         success: true, 
-        message: "Purchase order sent to Halo Pharmacy successfully" 
+        message: "Purchase order sent successfully" 
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error sending purchase order email:", error);
-      res.status(500).json({ error: "Failed to send purchase order email" });
+      res.status(500).json({ error: error.message || "Failed to send purchase order email" });
     }
   });
 
@@ -27848,6 +28515,7 @@ Cura EMR Team
   
   // Start appointment reminder scheduler
   startAppointmentReminderScheduler();
+  startVideoCallScheduler();
   
   // HTML Generator for PDF Reports
   function generateReportHTML(study: any, reportFormData: any = {}) {

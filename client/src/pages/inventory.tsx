@@ -1550,13 +1550,14 @@ export default function Inventory() {
                         <TableHead>Status</TableHead>
                         <TableHead>Total Amount</TableHead>
                         <TableHead>Items Ordered</TableHead>
+                        <TableHead>Quantity</TableHead>
                         <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {poLoading ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-8">
+                          <TableCell colSpan={8} className="text-center py-8">
                             <div className="flex items-center justify-center">
                               <RefreshCw className="h-4 w-4 animate-spin mr-2" />
                               Loading purchase orders...
@@ -1566,14 +1567,16 @@ export default function Inventory() {
                       ) : purchaseOrders.length === 0 ? (
                         <TableRow>
                           <TableCell
-                            colSpan={7}
+                            colSpan={8}
                             className="text-center py-8 text-gray-500"
                           >
                             No purchase orders found
                           </TableCell>
                         </TableRow>
                       ) : (
-                        purchaseOrders.map((po) => (
+                        purchaseOrders.map((po) => {
+                          const totalQuantity = po.itemsOrdered?.reduce((sum, item) => sum + (item.quantity || 0), 0) || 0;
+                          return (
                           <TableRow key={po.id}>
                             <TableCell className="font-mono font-medium">
                               {po.poNumber}
@@ -1600,6 +1603,11 @@ export default function Inventory() {
                             <TableCell>
                               <div className="text-sm">
                                 {po.itemsOrdered?.length || 0} items
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm font-medium">
+                                {totalQuantity}
                               </div>
                             </TableCell>
                             <TableCell>
@@ -1638,7 +1646,8 @@ export default function Inventory() {
                               </div>
                             </TableCell>
                           </TableRow>
-                        ))
+                          );
+                        })
                       )}
                     </TableBody>
                   </Table>
@@ -2257,7 +2266,7 @@ export default function Inventory() {
 
                 {/* Supplier Information */}
                 <div className="p-4 border rounded-lg">
-                  <h3 className="font-semibold mb-3 flex items-center">
+                  <h3 className="text-sm font-semibold mb-3 flex items-center">
                     <Building2 className="h-4 w-4 mr-2" />
                     Supplier Information
                   </h3>
@@ -2289,7 +2298,7 @@ export default function Inventory() {
 
                 {/* Financial Information */}
                 <div className="p-4 border rounded-lg">
-                  <h3 className="font-semibold mb-3 flex items-center">
+                  <h3 className="text-sm font-semibold mb-3 flex items-center">
                     <FileText className="h-4 w-4 mr-2" />
                     Financial Summary
                   </h3>
