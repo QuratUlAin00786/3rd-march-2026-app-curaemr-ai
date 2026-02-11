@@ -546,6 +546,9 @@ export default function PrescriptionsPage() {
   const [showPharmacySuccessDialog, setShowPharmacySuccessDialog] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showSavePdfSuccessModal, setShowSavePdfSuccessModal] = useState(false);
+  const [showGenericSuccessModal, setShowGenericSuccessModal] = useState(false);
+  const [successModalTitle, setSuccessModalTitle] = useState("");
+  const [successModalMessage, setSuccessModalMessage] = useState("");
   const [createdPrescriptionDetails, setCreatedPrescriptionDetails] = useState<any>(null);
   const [selectedPrescriptionId, setSelectedPrescriptionId] =
     useState<string>("");
@@ -567,6 +570,9 @@ export default function PrescriptionsPage() {
   const [diagnosisSearchOpen, setDiagnosisSearchOpen] = useState(false);
   const [medicationSearchOpen, setMedicationSearchOpen] = useState<{[key: number]: boolean}>({});
   const [dosageSearchOpen, setDosageSearchOpen] = useState<{[key: number]: boolean}>({});
+  const [useInventoryItems, setUseInventoryItems] = useState<{[key: number]: boolean}>({});
+  const [selectedInventoryItems, setSelectedInventoryItems] = useState<{[key: number]: number[]}>({});
+  const [inventorySearchOpen, setInventorySearchOpen] = useState<{[key: number]: boolean}>({});
   const queryClient = useQueryClient();
 
   // Fetch roles from the roles table filtered by organization_id
@@ -594,6 +600,21 @@ export default function PrescriptionsPage() {
   const { data: clinicFooter } = useQuery({
     queryKey: ["/api/clinic-footers"],
     enabled: !!user,
+  });
+
+  // Fetch inventory items
+  const { data: inventoryItems = [], isLoading: inventoryItemsLoading } = useQuery({
+    queryKey: ["/api/inventory/items"],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest("GET", "/api/inventory/items");
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error("Inventory items fetch error:", error);
+        return [];
+      }
+    },
   });
 
   // Status editing state
@@ -635,10 +656,7 @@ export default function PrescriptionsPage() {
     onSuccess: () => {
       // Auto refresh - invalidate and refetch prescriptions
       queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
-      toast({
-        title: "Status Updated",
-        description: "Prescription status has been updated successfully.",
-      });
+      showSuccessModalPopup("Status Updated", "Prescription status has been updated successfully.");
       setEditingStatusId(null);
       setTempStatus("");
     },
@@ -701,7 +719,27 @@ export default function PrescriptionsPage() {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
 
   // Form state for prescription editing
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    patientId: string;
+    patientName: string;
+    providerId: string;
+    diagnosis: string;
+    medications: Array<{
+      name: string;
+      dosage: string;
+      frequency: string;
+      duration: string;
+      quantity: string;
+      refills: string;
+      instructions: string;
+      genericAllowed: boolean;
+      inventoryItemId?: number; // Track which inventory item this medication is from
+    }>;
+    pharmacyName: string;
+    pharmacyAddress: string;
+    pharmacyPhone: string;
+    pharmacyEmail: string;
+  }>({
     patientId: "",
     patientName: "",
     providerId: "",
@@ -734,6 +772,7 @@ export default function PrescriptionsPage() {
       quantity?: string;
       refills?: string;
       instructions?: string;
+      inventoryItems?: string;
     }>;
     general?: string;
   }>({ medications: [] });
@@ -1740,10 +1779,7 @@ export default function PrescriptionsPage() {
       return response.json();
     },
     onSuccess: () => {
-      toast({
-        title: "Success",
-        description: "Prescription deleted successfully",
-      });
+      showSuccessModalPopup("Success", "Prescription deleted successfully");
       queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
     },
     onError: (error: any) => {
@@ -1804,14 +1840,33 @@ export default function PrescriptionsPage() {
     setShowViewDetails(true);
   };
 
+  // Function to show success modal with green tick
+  const showSuccessModalPopup = (title: string, message: string) => {
+    setSuccessModalTitle(title);
+    setSuccessModalMessage(message);
+    setShowGenericSuccessModal(true);
+  };
+
   const { toast } = useToast();
 
   // Form validation helper functions
   const validateMedication = (medication: any, index: number) => {
     const errors: any = {};
 
-    if (!medication.name.trim()) {
-      errors.name = "Medication name is required";
+    // Check if this is an inventory-based medication
+    if (medication.inventoryItemId) {
+      // Inventory item is already selected, just need to validate other fields
+      if (!medication.name.trim()) {
+        errors.name = "Inventory item name is required";
+      }
+    } else if (useInventoryItems[index]) {
+      // Checkbox is checked but no item selected yet
+      errors.inventoryItems = "Please select an inventory item";
+    } else {
+      // Regular medication name validation
+      if (!medication.name.trim()) {
+        errors.name = "Medication name is required";
+      }
     }
 
     if (!medication.dosage.trim()) {
@@ -1860,12 +1915,12 @@ export default function PrescriptionsPage() {
       errors.medications[index] = medErrors;
     });
 
-    // Check if at least one medication has a name
-    const hasValidMedication = formData.medications.some((med) =>
-      med.name.trim(),
-    );
+    // Check if at least one medication is valid (either has name or inventory item)
+    const hasValidMedication = formData.medications.some((med) => {
+      return med.name.trim() || med.inventoryItemId;
+    });
     if (!hasValidMedication) {
-      errors.general = "At least one medication with a name is required";
+      errors.general = "At least one medication is required";
     }
 
     // Check required fields
@@ -1902,6 +1957,9 @@ export default function PrescriptionsPage() {
 
   // Medication management helper functions
   const addMedication = () => {
+    const newIndex = formData.medications.length;
+    const globalInventoryChecked = Object.values(useInventoryItems).some(v => v);
+    
     setFormData((prev) => ({
       ...prev,
       medications: [
@@ -1924,6 +1982,14 @@ export default function PrescriptionsPage() {
       ...prev,
       medications: [...prev.medications, {}],
     }));
+
+    // If global checkbox is checked, set it for the new medication too
+    if (globalInventoryChecked) {
+      setUseInventoryItems((prev) => ({
+        ...prev,
+        [newIndex]: true,
+      }));
+    }
   };
 
   const removeMedication = (index: number) => {
@@ -1938,6 +2004,55 @@ export default function PrescriptionsPage() {
         ...prev,
         medications: prev.medications.filter((_, i) => i !== index),
       }));
+
+      // Clean up inventory state for removed medication
+      setUseInventoryItems((prev) => {
+        const newState = { ...prev };
+        delete newState[index];
+        // Reindex remaining medications
+        const reindexed: {[key: number]: boolean} = {};
+        Object.keys(newState).forEach((key) => {
+          const oldIndex = parseInt(key);
+          if (oldIndex > index) {
+            reindexed[oldIndex - 1] = newState[oldIndex];
+          } else if (oldIndex < index) {
+            reindexed[oldIndex] = newState[oldIndex];
+          }
+        });
+        return reindexed;
+      });
+
+      setSelectedInventoryItems((prev) => {
+        const newState = { ...prev };
+        delete newState[index];
+        // Reindex remaining medications
+        const reindexed: {[key: number]: number[]} = {};
+        Object.keys(newState).forEach((key) => {
+          const oldIndex = parseInt(key);
+          if (oldIndex > index) {
+            reindexed[oldIndex - 1] = newState[oldIndex];
+          } else if (oldIndex < index) {
+            reindexed[oldIndex] = newState[oldIndex];
+          }
+        });
+        return reindexed;
+      });
+
+      setInventorySearchOpen((prev) => {
+        const newState = { ...prev };
+        delete newState[index];
+        // Reindex remaining medications
+        const reindexed: {[key: number]: boolean} = {};
+        Object.keys(newState).forEach((key) => {
+          const oldIndex = parseInt(key);
+          if (oldIndex > index) {
+            reindexed[oldIndex - 1] = newState[oldIndex];
+          } else if (oldIndex < index) {
+            reindexed[oldIndex] = newState[oldIndex];
+          }
+        });
+        return reindexed;
+      });
     }
   };
 
@@ -2304,11 +2419,7 @@ export default function PrescriptionsPage() {
       // Show success message in modal
       setSignatureSaved(true);
 
-      toast({
-        title: "✓ Success",
-        description: `Prescription signed, PDF saved, and status updated to "completed" successfully.`,
-        duration: 3000,
-      });
+      showSuccessModalPopup("Success", `Prescription signed, PDF saved, and status updated to "completed" successfully.`);
 
       // Check if we need to proceed with print or save after signing
       if (pendingAction === "print") {
@@ -3095,10 +3206,7 @@ export default function PrescriptionsPage() {
       };
     }
 
-    toast({
-      title: "Printing Prescription",
-      description: "Prescription sent to printer successfully",
-    });
+    showSuccessModalPopup("Printing Prescription", "Prescription sent to printer successfully");
   };
 
   const handleSendToPharmacy = (prescriptionId: string) => {
@@ -3215,11 +3323,7 @@ export default function PrescriptionsPage() {
       // Update the prescription queries to refresh data
       queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
 
-      toast({
-        title: "✓ Success",
-        description: `Prescription PDF saved and status updated to "completed" successfully.`,
-        duration: 3000,
-      });
+      showSuccessModalPopup("Success", `Prescription PDF saved and status updated to "completed" successfully.`);
 
       // Step 4: Open PDF viewer popup
       if (updatedPrescription) {
@@ -6068,7 +6172,15 @@ export default function PrescriptionsPage() {
       {/* Create/Edit Prescription Dialog - Moved outside Tabs for accessibility from both tabs */}
       <Dialog
         open={showNewPrescription}
-        onOpenChange={setShowNewPrescription}
+        onOpenChange={(open) => {
+          setShowNewPrescription(open);
+          if (!open) {
+            // Clear inventory state when dialog closes
+            setUseInventoryItems({});
+            setSelectedInventoryItems({});
+            setInventorySearchOpen({});
+          }
+        }}
       >
                   <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
@@ -6434,98 +6546,259 @@ export default function PrescriptionsPage() {
                           >
                             <div className="flex justify-between items-start">
                               <h4 className="font-medium text-md">
-                                Medication {index + 1}
+                                {medication.inventoryItemId 
+                                  ? `Inventory Item ${index + 1}`
+                                  : `Medication ${index + 1}`}
                               </h4>
-                              {formData.medications.length > 1 && (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => removeMedication(index)}
-                                  data-testid={`button-remove-medication-${index}`}
-                                  className="text-red-500 hover:text-red-700"
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              )}
+                              <div className="flex items-center gap-4">
+                                {!medication.inventoryItemId && (
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      id={`use-inventory-items-${index}`}
+                                      checked={useInventoryItems[index] || false}
+                                      onChange={(e) => {
+                                        setUseInventoryItems((prev) => ({
+                                          ...prev,
+                                          [index]: e.target.checked,
+                                        }));
+                                        if (!e.target.checked) {
+                                          // Clear medication name if it was from inventory
+                                          if (medication.inventoryItemId) {
+                                            updateMedication(index, "name", "");
+                                            updateMedication(index, "inventoryItemId", undefined);
+                                          }
+                                        }
+                                      }}
+                                      className="h-4 w-4"
+                                    />
+                                    <Label htmlFor={`use-inventory-items-${index}`} className="text-sm font-normal cursor-pointer">
+                                      Inventory Item
+                                    </Label>
+                                  </div>
+                                )}
+                                {formData.medications.length > 1 && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => removeMedication(index)}
+                                    data-testid={`button-remove-medication-${index}`}
+                                    className="text-red-500 hover:text-red-700"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
                               <div>
-                                <Label htmlFor={`medication-name-${index}`}>
-                                  Medication Name *
-                                </Label>
-                                <Popover
-                                  open={medicationSearchOpen[index] || false}
-                                  onOpenChange={(open) =>
-                                    setMedicationSearchOpen((prev) => ({
-                                      ...prev,
-                                      [index]: open,
-                                    }))
-                                  }
-                                >
-                                  <PopoverTrigger asChild>
-                                    <Button
-                                      variant="outline"
-                                      role="combobox"
-                                      aria-expanded={medicationSearchOpen[index] || false}
-                                      className="w-full justify-between"
-                                      data-testid={`input-medication-name-${index}`}
-                                    >
+                                {medication.inventoryItemId ? (
+                                  <>
+                                    <Label htmlFor={`inventory-item-name-${index}`}>
+                                      Inventory Item Name *
+                                    </Label>
+                                    <div className="flex items-center h-10 px-3 py-2 border border-input bg-background rounded-md text-sm ring-offset-background">
                                       <span className="truncate">
-                                        {medication.name || "Select or type medication..."}
+                                        {inventoryItems.find((item: any) => item.id === medication.inventoryItemId)?.name || medication.name}
+                                        {inventoryItems.find((item: any) => item.id === medication.inventoryItemId)?.brandName 
+                                          ? ` (${inventoryItems.find((item: any) => item.id === medication.inventoryItemId)?.brandName})`
+                                          : ""}
                                       </span>
-                                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                                    </Button>
-                                  </PopoverTrigger>
-                                  <PopoverContent className="w-[400px] p-0" align="start">
-                                    <Command shouldFilter={false}>
-                                      <CommandInput
-                                        placeholder="Search or type custom medication..."
-                                        value={medication.name}
-                                        onValueChange={(value) =>
-                                          updateMedication(index, "name", value)
-                                        }
-                                      />
-                                      <CommandEmpty>
-                                        Press Enter to use "{medication.name}" as custom medication
-                                      </CommandEmpty>
-                                      <CommandGroup className="max-h-64 overflow-auto">
-                                        {COMMON_MEDICATIONS.filter((med) =>
-                                          med.toLowerCase().includes(medication.name.toLowerCase())
-                                        ).map((med) => (
-                                          <CommandItem
-                                            key={med}
-                                            value={med}
-                                            onSelect={() => {
-                                              updateMedication(index, "name", med);
-                                              setMedicationSearchOpen((prev) => ({
-                                                ...prev,
-                                                [index]: false,
-                                              }));
-                                            }}
-                                          >
-                                            <Check
-                                              className={`mr-2 h-4 w-4 ${
-                                                medication.name === med
-                                                  ? "opacity-100"
-                                                  : "opacity-0"
-                                              }`}
-                                            />
-                                            {med}
-                                          </CommandItem>
-                                        ))}
-                                      </CommandGroup>
-                                    </Command>
-                                  </PopoverContent>
-                                </Popover>
-                                {formErrors.medications[index]?.name && (
-                                  <p
-                                    className="text-red-500 text-sm mt-1"
-                                    data-testid={`error-medication-name-${index}`}
-                                  >
-                                    {formErrors.medications[index].name}
-                                  </p>
+                                    </div>
+                                  </>
+                                ) : useInventoryItems[index] ? (
+                                  <>
+                                    <Label htmlFor={`inventory-item-${index}`}>
+                                      Inventory Item Name *
+                                    </Label>
+                                    <Popover
+                                      open={inventorySearchOpen[index] || false}
+                                      onOpenChange={(open) =>
+                                        setInventorySearchOpen((prev) => ({
+                                          ...prev,
+                                          [index]: open,
+                                        }))
+                                      }
+                                    >
+                                      <PopoverTrigger asChild>
+                                        <Button
+                                          variant="outline"
+                                          role="combobox"
+                                          aria-expanded={inventorySearchOpen[index] || false}
+                                          className="w-full justify-between"
+                                          data-testid={`input-inventory-item-${index}`}
+                                          disabled={inventoryItemsLoading}
+                                        >
+                                          <span className="truncate">
+                                            Select inventory item...
+                                          </span>
+                                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-[400px] p-0" align="start">
+                                        <Command shouldFilter={false}>
+                                          <CommandInput
+                                            placeholder="Search inventory items..."
+                                          />
+                                          <CommandEmpty>
+                                            No inventory items found
+                                          </CommandEmpty>
+                                          <CommandGroup className="max-h-64 overflow-auto">
+                                            {inventoryItems
+                                              .filter((item: any) => {
+                                                // Don't show items that are already selected in other medication entries
+                                                return !formData.medications.some(
+                                                  (med) => med.inventoryItemId === item.id
+                                                );
+                                              })
+                                              .map((item: any) => (
+                                                <CommandItem
+                                                  key={item.id}
+                                                  value={item.id.toString()}
+                                                  onSelect={() => {
+                                                    // Create a new medication entry for this inventory item
+                                                    const newMedication = {
+                                                      name: item.name,
+                                                      dosage: "",
+                                                      frequency: "",
+                                                      duration: "",
+                                                      quantity: "",
+                                                      refills: "",
+                                                      instructions: "",
+                                                      genericAllowed: true,
+                                                      inventoryItemId: item.id,
+                                                    };
+                                                    
+                                                    // If this is the current entry, replace it; otherwise add a new one
+                                                    if (useInventoryItems[index] && !medication.inventoryItemId) {
+                                                      // Replace current entry
+                                                      setFormData((prev) => ({
+                                                        ...prev,
+                                                        medications: prev.medications.map((med, i) =>
+                                                          i === index ? newMedication : med
+                                                        ),
+                                                      }));
+                                                      // Clear the checkbox state for this index
+                                                      setUseInventoryItems((prev) => {
+                                                        const newState = { ...prev };
+                                                        delete newState[index];
+                                                        return newState;
+                                                      });
+                                                    } else {
+                                                      // Add new entry after current one
+                                                      setFormData((prev) => ({
+                                                        ...prev,
+                                                        medications: [
+                                                          ...prev.medications.slice(0, index + 1),
+                                                          newMedication,
+                                                          ...prev.medications.slice(index + 1),
+                                                        ],
+                                                      }));
+                                                    }
+                                                    
+                                                    setInventorySearchOpen((prev) => ({
+                                                      ...prev,
+                                                      [index]: false,
+                                                    }));
+                                                  }}
+                                                >
+                                                  <Check className="mr-2 h-4 w-4 opacity-0" />
+                                                  {item.name} {item.brandName ? `(${item.brandName})` : ""}
+                                                </CommandItem>
+                                              ))}
+                                          </CommandGroup>
+                                        </Command>
+                                      </PopoverContent>
+                                    </Popover>
+                                    {formErrors.medications[index]?.inventoryItems && (
+                                      <p
+                                        className="text-red-500 text-sm mt-1"
+                                        data-testid={`error-inventory-item-${index}`}
+                                      >
+                                        {formErrors.medications[index].inventoryItems}
+                                      </p>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <Label htmlFor={`medication-name-${index}`}>
+                                      Medication Name *
+                                    </Label>
+                                    <Popover
+                                      open={medicationSearchOpen[index] || false}
+                                      onOpenChange={(open) =>
+                                        setMedicationSearchOpen((prev) => ({
+                                          ...prev,
+                                          [index]: open,
+                                        }))
+                                      }
+                                    >
+                                      <PopoverTrigger asChild>
+                                        <Button
+                                          variant="outline"
+                                          role="combobox"
+                                          aria-expanded={medicationSearchOpen[index] || false}
+                                          className="w-full justify-between"
+                                          data-testid={`input-medication-name-${index}`}
+                                        >
+                                          <span className="truncate">
+                                            {medication.name || "Select or type medication..."}
+                                          </span>
+                                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-[400px] p-0" align="start">
+                                        <Command shouldFilter={false}>
+                                          <CommandInput
+                                            placeholder="Search or type custom medication..."
+                                            value={medication.name}
+                                            onValueChange={(value) =>
+                                              updateMedication(index, "name", value)
+                                            }
+                                          />
+                                          <CommandEmpty>
+                                            Press Enter to use "{medication.name}" as custom medication
+                                          </CommandEmpty>
+                                          <CommandGroup className="max-h-64 overflow-auto">
+                                            {COMMON_MEDICATIONS.filter((med) =>
+                                              med.toLowerCase().includes(medication.name.toLowerCase())
+                                            ).map((med) => (
+                                              <CommandItem
+                                                key={med}
+                                                value={med}
+                                                onSelect={() => {
+                                                  updateMedication(index, "name", med);
+                                                  setMedicationSearchOpen((prev) => ({
+                                                    ...prev,
+                                                    [index]: false,
+                                                  }));
+                                                }}
+                                              >
+                                                <Check
+                                                  className={`mr-2 h-4 w-4 ${
+                                                    medication.name === med
+                                                      ? "opacity-100"
+                                                      : "opacity-0"
+                                                  }`}
+                                                />
+                                                {med}
+                                              </CommandItem>
+                                            ))}
+                                          </CommandGroup>
+                                        </Command>
+                                      </PopoverContent>
+                                    </Popover>
+                                    {formErrors.medications[index]?.name && (
+                                      <p
+                                        className="text-red-500 text-sm mt-1"
+                                        data-testid={`error-medication-name-${index}`}
+                                      >
+                                        {formErrors.medications[index].name}
+                                      </p>
+                                    )}
+                                  </>
                                 )}
                               </div>
                               <div>
@@ -6929,17 +7202,32 @@ export default function PrescriptionsPage() {
 
                             // Filter out empty medications and prepare data with proper type conversion
                             const validMedications = formData.medications
-                              .filter((med) => med.name.trim())
-                              .map((med) => ({
-                                name: med.name.trim(),
-                                dosage: med.dosage.trim(),
-                                frequency: med.frequency.trim(),
-                                duration: med.duration.trim(),
-                                quantity: parseInt(med.quantity) || 0,
-                                refills: parseInt(med.refills) || 0,
-                                instructions: med.instructions.trim(),
-                                genericAllowed: med.genericAllowed,
-                              }));
+                              .filter((med) => {
+                                // Filter out medications without names (unless they have inventory item ID)
+                                return med.name.trim() || med.inventoryItemId;
+                              })
+                              .map((med) => {
+                                const baseMedication = {
+                                  name: med.name.trim(),
+                                  dosage: med.dosage.trim(),
+                                  frequency: med.frequency.trim(),
+                                  duration: med.duration.trim(),
+                                  quantity: parseInt(med.quantity) || 0,
+                                  refills: parseInt(med.refills) || 0,
+                                  instructions: med.instructions.trim(),
+                                  genericAllowed: med.genericAllowed,
+                                };
+
+                                // Add inventory item ID if this medication is from inventory
+                                if (med.inventoryItemId) {
+                                  return {
+                                    ...baseMedication,
+                                    inventoryItemId: med.inventoryItemId,
+                                  };
+                                }
+
+                                return baseMedication;
+                              });
 
                             // Get the selected provider ID and the logged-in user ID
                             const selectedProviderId = parseInt(
@@ -8236,6 +8524,40 @@ export default function PrescriptionsPage() {
               className="bg-medical-blue hover:bg-blue-700 mt-4"
             >
               Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Generic Success Modal with Green Tick */}
+      <Dialog open={showGenericSuccessModal} onOpenChange={setShowGenericSuccessModal}>
+        <DialogContent className="max-w-md">
+          <div className="flex flex-col items-center text-center py-6">
+            {/* Green checkmark icon */}
+            <div className="w-20 h-20 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mb-6">
+              <CheckCircle className="h-12 w-12 text-green-600 dark:text-green-400" />
+            </div>
+
+            {/* Title */}
+            <h2 className="text-2xl font-bold text-green-600 dark:text-green-400 mb-2">
+              {successModalTitle}
+            </h2>
+
+            {/* Message */}
+            <p className="text-gray-600 dark:text-gray-300 mb-6">
+              {successModalMessage}
+            </p>
+
+            {/* Done Button */}
+            <Button
+              onClick={() => {
+                setShowGenericSuccessModal(false);
+                setSuccessModalTitle("");
+                setSuccessModalMessage("");
+              }}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Done
             </Button>
           </div>
         </DialogContent>

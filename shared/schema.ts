@@ -1903,6 +1903,35 @@ export const messageTemplates = pgTable("message_templates", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// User Conversation Favorites - Tracks which conversations each user has favorited
+export const userConversationFavorites = pgTable("user_conversation_favorites", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").notNull(),
+  userId: integer("user_id").notNull(),
+  conversationId: varchar("conversation_id", { length: 50 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Message Tags - Tags that can be applied to messages
+export const messageTags = pgTable("message_tags", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").notNull(),
+  name: varchar("name", { length: 50 }).notNull(),
+  color: varchar("color", { length: 20 }).default("blue"), // blue, red, green, yellow, purple, etc.
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: integer("created_by").notNull(),
+});
+
+// Message Tag Assignments - Junction table linking messages to tags
+export const messageTagAssignments = pgTable("message_tag_assignments", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").notNull(),
+  messageId: varchar("message_id", { length: 50 }).notNull(),
+  tagId: integer("tag_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: integer("created_by").notNull(),
+});
+
 // SaaS Relations
 export const saasSubscriptionsRelations = relations(saasSubscriptions, ({ one, many }) => ({
   organization: one(organizations, {

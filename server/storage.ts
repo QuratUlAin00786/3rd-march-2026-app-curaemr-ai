@@ -1,6 +1,6 @@
 import { isDoctorLike } from './utils/role-utils.js';
 import { 
-  organizations, users, patients, medicalRecords, appointments, invoices, payments, aiInsights, subscriptions, patientCommunications, consultations, notifications, prescriptions, documents, medicalImages, clinicalPhotos, labResults, riskAssessments, claims, revenueRecords, insuranceVerifications, clinicalProcedures, emergencyProtocols, medicationsDatabase, roles, staffShifts, doctorDefaultShifts, gdprConsents, gdprDataRequests, gdprAuditTrail, gdprProcessingActivities, conversations as conversationsTable, messages, messageCampaigns, messageTemplates, voiceNotes, saasOwners, saasPackages, saasSubscriptions, saasPayments, saasInvoices, saasSettings, chatbotConfigs, chatbotSessions, chatbotMessages, chatbotAnalytics, musclePositions, userDocumentPreferences, letterDrafts, forecastModels, financialForecasts, quickbooksConnections, quickbooksSyncLogs, quickbooksCustomerMappings, quickbooksInvoiceMappings, quickbooksPaymentMappings, quickbooksAccountMappings, quickbooksItemMappings, quickbooksSyncConfigs, doctorsFee, labTestPricing, imagingPricing, treatments, treatmentsInfo, clinicHeaders, clinicFooters, symptomChecks,   forms, formSections, formFields, formShares, formShareLogs, formResponses, formResponseValues, prescriptionShareLogs,
+  organizations, users, patients, medicalRecords, appointments, invoices, payments, aiInsights, subscriptions, patientCommunications, consultations, notifications, prescriptions, documents, medicalImages, clinicalPhotos, labResults, riskAssessments, claims, revenueRecords, insuranceVerifications, clinicalProcedures, emergencyProtocols, medicationsDatabase, roles, staffShifts, doctorDefaultShifts, gdprConsents, gdprDataRequests, gdprAuditTrail, gdprProcessingActivities, conversations as conversationsTable, messages, messageCampaigns, messageTemplates, userConversationFavorites, messageTags, messageTagAssignments, voiceNotes, saasOwners, saasPackages, saasSubscriptions, saasPayments, saasInvoices, saasSettings, chatbotConfigs, chatbotSessions, chatbotMessages, chatbotAnalytics, musclePositions, userDocumentPreferences, letterDrafts, forecastModels, financialForecasts, quickbooksConnections, quickbooksSyncLogs, quickbooksCustomerMappings, quickbooksInvoiceMappings, quickbooksPaymentMappings, quickbooksAccountMappings, quickbooksItemMappings, quickbooksSyncConfigs, doctorsFee, labTestPricing, imagingPricing, treatments, treatmentsInfo, clinicHeaders, clinicFooters, symptomChecks,   forms, formSections, formFields, formShares, formShareLogs, formResponses, formResponseValues, prescriptionShareLogs,
   type Organization, type InsertOrganization,
   type User, type InsertUser,
   type Role, type InsertRole,
@@ -319,6 +319,7 @@ export interface IStorage {
   markConversationMessagesAsRead(conversationId: string, userId: number, organizationId: number): Promise<void>;
   sendMessage(messageData: any, organizationId: number): Promise<any>;
   deleteConversation(conversationId: string, organizationId: number): Promise<boolean>;
+  toggleConversationFavorite(conversationId: string, userId: number, organizationId: number): Promise<boolean>;
   getMessageCampaigns(organizationId: number): Promise<any[]>;
   createMessageCampaign(campaignData: any, organizationId: number): Promise<any>;
   updateMessageCampaign(campaignId: number, campaignData: any, organizationId: number): Promise<any>;
@@ -326,6 +327,12 @@ export interface IStorage {
   createMessageTemplate(templateData: any, organizationId: number): Promise<any>;
   updateMessageTemplate(templateId: number, templateData: any, organizationId: number): Promise<any>;
   deleteMessageTemplate(templateId: number, organizationId: number): Promise<boolean>;
+  // Message Tags
+  getMessageTags(organizationId: number): Promise<any[]>;
+  createMessageTag(tagData: { name: string; color?: string; organizationId: number; createdBy: number }): Promise<any>;
+  getMessageTagsForMessage(messageId: string, organizationId: number): Promise<any[]>;
+  addTagToMessage(messageId: string, tagId: number, userId: number, organizationId: number): Promise<boolean>;
+  removeTagFromMessage(messageId: string, tagId: number, organizationId: number): Promise<boolean>;
   
   // Integrations
   getIntegrations(organizationId: number): Promise<any[]>;
@@ -3315,14 +3322,60 @@ export class DatabaseStorage implements IStorage {
         .from(messages)
         .where(and(...unreadQuery));
       
+      // Check if this conversation is favorited by the current user
+      let isFavorite = false;
+      if (currentUserId !== undefined) {
+        const favorite = await db.select()
+          .from(userConversationFavorites)
+          .where(and(
+            eq(userConversationFavorites.conversationId, conv.id),
+            eq(userConversationFavorites.userId, currentUserId),
+            eq(userConversationFavorites.organizationId, organizationId)
+          ))
+          .limit(1);
+        isFavorite = favorite.length > 0;
+      }
+      
       return {
         ...conv,
         participants: updatedParticipants,
-        unreadCount: unreadMessages.length // Use actual unread count
+        unreadCount: unreadMessages.length, // Use actual unread count
+        isFavorite
       };
     }));
 
     return conversationsWithNames;
+  }
+
+  async toggleConversationFavorite(conversationId: string, userId: number, organizationId: number): Promise<boolean> {
+    // Check if favorite already exists
+    const existingFavorite = await db.select()
+      .from(userConversationFavorites)
+      .where(and(
+        eq(userConversationFavorites.conversationId, conversationId),
+        eq(userConversationFavorites.userId, userId),
+        eq(userConversationFavorites.organizationId, organizationId)
+      ))
+      .limit(1);
+
+    if (existingFavorite.length > 0) {
+      // Remove favorite
+      await db.delete(userConversationFavorites)
+        .where(and(
+          eq(userConversationFavorites.conversationId, conversationId),
+          eq(userConversationFavorites.userId, userId),
+          eq(userConversationFavorites.organizationId, organizationId)
+        ));
+      return false; // Now unfavorited
+    } else {
+      // Add favorite
+      await db.insert(userConversationFavorites).values({
+        conversationId,
+        userId,
+        organizationId,
+      });
+      return true; // Now favorited
+    }
   }
 
   async getMessages(conversationId: string, organizationId: number): Promise<any[]> {
@@ -3336,7 +3389,37 @@ export class DatabaseStorage implements IStorage {
       .orderBy(asc(messages.timestamp));
 
     console.log(`💬 GET MESSAGES - Database: ${storedMessages.length} found for conversation ${conversationId}`);
-    return storedMessages;
+    
+    // Get tags for each message (with error handling in case tag tables don't exist yet)
+    const messagesWithTags = await Promise.all(storedMessages.map(async (msg) => {
+      try {
+        const messageTags = await db.select({
+          id: messageTagAssignments.tagId,
+          name: messageTags.name,
+          color: messageTags.color,
+        })
+          .from(messageTagAssignments)
+          .innerJoin(messageTags, eq(messageTagAssignments.tagId, messageTags.id))
+          .where(and(
+            eq(messageTagAssignments.messageId, msg.id),
+            eq(messageTagAssignments.organizationId, organizationId)
+          ));
+        
+        return {
+          ...msg,
+          tags: messageTags.map(t => ({ id: t.id, name: t.name, color: t.color }))
+        };
+      } catch (error: any) {
+        // If tag tables don't exist or there's an error, return message without tags
+        console.warn(`⚠️ Error fetching tags for message ${msg.id}:`, error.message);
+        return {
+          ...msg,
+          tags: []
+        };
+      }
+    }));
+    
+    return messagesWithTags;
   }
 
   async markConversationMessagesAsRead(conversationId: string, userId: number, organizationId: number): Promise<void> {
@@ -8961,6 +9044,125 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(desc(prescriptionShareLogs.sharedAt));
+  }
+
+  // Message Tags implementations
+  async getMessageTags(organizationId: number): Promise<any[]> {
+    try {
+      const tags = await db.select()
+        .from(messageTags)
+        .where(eq(messageTags.organizationId, organizationId))
+        .orderBy(asc(messageTags.name));
+      return tags;
+    } catch (error: any) {
+      // If tag tables don't exist yet, return empty array
+      if (error.message && (error.message.includes('does not exist') || error.message.includes('relation'))) {
+        console.warn('⚠️ Tag tables do not exist yet. Please run migration 0009_add_message_tags.sql');
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async createMessageTag(tagData: { name: string; color?: string; organizationId: number; createdBy: number }): Promise<any> {
+    // Check if tag with same name already exists
+    const existingTag = await db.select()
+      .from(messageTags)
+      .where(and(
+        eq(messageTags.organizationId, tagData.organizationId),
+        eq(messageTags.name, tagData.name)
+      ))
+      .limit(1);
+
+    if (existingTag.length > 0) {
+      return existingTag[0];
+    }
+
+    const [newTag] = await db.insert(messageTags).values({
+      organizationId: tagData.organizationId,
+      name: tagData.name,
+      color: tagData.color || 'blue',
+      createdBy: tagData.createdBy,
+    }).returning();
+
+    return newTag;
+  }
+
+  async getMessageTagsForMessage(messageId: string, organizationId: number): Promise<any[]> {
+    try {
+      const tags = await db.select({
+        id: messageTagAssignments.tagId,
+        name: messageTags.name,
+        color: messageTags.color,
+      })
+        .from(messageTagAssignments)
+        .innerJoin(messageTags, eq(messageTagAssignments.tagId, messageTags.id))
+        .where(and(
+          eq(messageTagAssignments.messageId, messageId),
+          eq(messageTagAssignments.organizationId, organizationId)
+        ));
+      
+      return tags;
+    } catch (error: any) {
+      // If tag tables don't exist yet, return empty array
+      if (error.message && (error.message.includes('does not exist') || error.message.includes('relation'))) {
+        console.warn('⚠️ Tag tables do not exist yet. Please run migration 0009_add_message_tags.sql');
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async addTagToMessage(messageId: string, tagId: number, userId: number, organizationId: number): Promise<boolean> {
+    try {
+      // Check if tag assignment already exists
+      const existing = await db.select()
+        .from(messageTagAssignments)
+        .where(and(
+          eq(messageTagAssignments.messageId, messageId),
+          eq(messageTagAssignments.tagId, tagId),
+          eq(messageTagAssignments.organizationId, organizationId)
+        ))
+        .limit(1);
+
+      if (existing.length > 0) {
+        return true; // Already tagged
+      }
+
+      await db.insert(messageTagAssignments).values({
+        messageId,
+        tagId,
+        organizationId,
+        createdBy: userId,
+      });
+
+      return true;
+    } catch (error: any) {
+      // If tag tables don't exist yet, throw a helpful error
+      if (error.message && (error.message.includes('does not exist') || error.message.includes('relation'))) {
+        throw new Error('Tag tables do not exist. Please run migration 0009_add_message_tags.sql');
+      }
+      throw error;
+    }
+  }
+
+  async removeTagFromMessage(messageId: string, tagId: number, organizationId: number): Promise<boolean> {
+    try {
+      await db.delete(messageTagAssignments)
+        .where(and(
+          eq(messageTagAssignments.messageId, messageId),
+          eq(messageTagAssignments.tagId, tagId),
+          eq(messageTagAssignments.organizationId, organizationId)
+        ));
+      
+      return true;
+    } catch (error: any) {
+      // If tag tables don't exist yet, throw a helpful error
+      if (error.message && (error.message.includes('does not exist') || error.message.includes('relation'))) {
+        throw new Error('Tag tables do not exist. Please run migration 0009_add_message_tags.sql');
+      }
+      throw error;
+    }
   }
 }
 

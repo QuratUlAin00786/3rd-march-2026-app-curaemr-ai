@@ -19,10 +19,10 @@ import { messagingService } from "./messaging-service";
 import { isDoctorLike } from './utils/role-utils.js';
 // PayPal imports moved to dynamic imports to avoid initialization errors when credentials are missing
 import { gdprComplianceService } from "./services/gdpr-compliance";
-import { insertGdprConsentSchema, insertGdprDataRequestSchema, updateMedicalImageReportFieldSchema, medicationsDatabase, patientDrugInteractions, insuranceVerifications, type Appointment, organizations, subscriptions, users, User, patients, symptomChecks, quickbooksConnections, insertClinicHeaderSchema, insertClinicFooterSchema, doctorsFee, invoices, labResults, insertMessageTemplateSchema, passwordResetTokens, saasSubscriptions, organizationIntegrations, insertTreatmentSchema, insertTreatmentsInfoSchema, InsertSaaSSubscription, imagingPricing, scheduledVideoCalls, insertScheduledVideoCallSchema } from "../shared/schema";
+import { insertGdprConsentSchema, insertGdprDataRequestSchema, updateMedicalImageReportFieldSchema, medicationsDatabase, patientDrugInteractions, insuranceVerifications, type Appointment, organizations, subscriptions, users, User, patients, symptomChecks, quickbooksConnections, insertClinicHeaderSchema, insertClinicFooterSchema, doctorsFee, invoices, labResults, insertMessageTemplateSchema, passwordResetTokens, saasSubscriptions, organizationIntegrations, insertTreatmentSchema, insertTreatmentsInfoSchema, InsertSaaSSubscription, imagingPricing, scheduledVideoCalls, insertScheduledVideoCallSchema, messages } from "../shared/schema";
 import * as schema from "../shared/schema";
 import { db, pool } from "./db";
-import { and, eq, sql, desc, isNull, isNotNull, or, gte, lte, ne } from "drizzle-orm";
+import { and, eq, sql, desc, asc, isNull, isNotNull, or, gte, lte, ne } from "drizzle-orm";
 import { processAppointmentBookingChat, generateAppointmentSummary } from "./anthropic";
 import { inventoryService } from "./services/inventory";
 import { pharmacyService } from "./services/pharmacy";
@@ -14553,9 +14553,37 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         }
       }
       
-      const messages = await storage.getMessages(conversationId, req.tenant!.id);
-      console.log(`🔍 API GET MESSAGES - Returning ${messages.length} messages for conversation ${conversationId}`);
-      res.json(messages);
+      try {
+        const messages = await storage.getMessages(conversationId, req.tenant!.id);
+        console.log(`🔍 API GET MESSAGES - Returning ${messages.length} messages for conversation ${conversationId}`);
+        res.json(messages);
+      } catch (error: any) {
+        console.error(`❌ Error fetching messages for conversation ${conversationId}:`, error);
+        // If it's a table doesn't exist error, try to return messages without tags
+        if (error.message && (error.message.includes('does not exist') || error.message.includes('relation') || error.message.includes('table'))) {
+          console.log('⚠️ Tag tables may not exist yet, fetching messages without tags...');
+          try {
+            const messagesWithoutTags = await db.select()
+              .from(messages)
+              .where(and(
+                eq(messages.conversationId, conversationId),
+                eq(messages.organizationId, req.tenant!.id)
+              ))
+              .orderBy(asc(messages.timestamp));
+            
+            const messagesWithEmptyTags = messagesWithoutTags.map((msg: any) => ({
+              ...msg,
+              tags: []
+            }));
+            
+            res.json(messagesWithEmptyTags);
+            return;
+          } catch (fallbackError: any) {
+            console.error('❌ Fallback query also failed:', fallbackError);
+          }
+        }
+        res.status(500).json({ error: "Failed to fetch messages", details: error.message });
+      }
     } catch (error) {
       console.error("Error fetching messages:", error);
       res.status(500).json({ error: "Failed to fetch messages" });
@@ -15056,6 +15084,111 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("🗑️ ERROR DELETING CONVERSATION:", error);
       res.status(500).json({ error: "Failed to delete conversation" });
+    }
+  });
+
+  // Toggle conversation favorite endpoint
+  app.post("/api/messaging/conversations/:conversationId/favorite", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const conversationId = req.params.conversationId;
+      const userId = req.user?.id;
+      const organizationId = req.tenant!.id;
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+      
+      console.log(`⭐ TOGGLE FAVORITE REQUEST: conversation=${conversationId}, user=${userId}`);
+      
+      const isFavorite = await storage.toggleConversationFavorite(conversationId, userId, organizationId);
+      
+      console.log(`⭐ FAVORITE TOGGLED: conversation=${conversationId}, isFavorite=${isFavorite}`);
+      res.json({ success: true, isFavorite, message: isFavorite ? "Conversation favorited" : "Conversation unfavorited" });
+    } catch (error) {
+      console.error("⭐ ERROR TOGGLING FAVORITE:", error);
+      res.status(500).json({ error: "Failed to toggle favorite" });
+    }
+  });
+
+  // Message Tags endpoints
+  app.get("/api/messaging/tags", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const tags = await storage.getMessageTags(req.tenant!.id);
+      res.json(tags);
+    } catch (error) {
+      console.error("Error fetching message tags:", error);
+      res.status(500).json({ error: "Failed to fetch message tags" });
+    }
+  });
+
+  app.post("/api/messaging/tags", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      const { name, color } = req.body;
+      if (!name) {
+        return res.status(400).json({ error: "Tag name is required" });
+      }
+
+      const tag = await storage.createMessageTag({
+        name,
+        color: color || 'blue',
+        organizationId: req.tenant!.id,
+        createdBy: userId,
+      });
+
+      res.json(tag);
+    } catch (error) {
+      console.error("Error creating message tag:", error);
+      res.status(500).json({ error: "Failed to create message tag" });
+    }
+  });
+
+  app.get("/api/messaging/messages/:messageId/tags", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const messageId = req.params.messageId;
+      const tags = await storage.getMessageTagsForMessage(messageId, req.tenant!.id);
+      res.json(tags);
+    } catch (error) {
+      console.error("Error fetching message tags:", error);
+      res.status(500).json({ error: "Failed to fetch message tags" });
+    }
+  });
+
+  app.post("/api/messaging/messages/:messageId/tags", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const messageId = req.params.messageId;
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      const { tagId } = req.body;
+      if (!tagId) {
+        return res.status(400).json({ error: "Tag ID is required" });
+      }
+
+      await storage.addTagToMessage(messageId, tagId, userId, req.tenant!.id);
+      res.json({ success: true, message: "Tag added to message" });
+    } catch (error) {
+      console.error("Error adding tag to message:", error);
+      res.status(500).json({ error: "Failed to add tag to message" });
+    }
+  });
+
+  app.delete("/api/messaging/messages/:messageId/tags/:tagId", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const messageId = req.params.messageId;
+      const tagId = parseInt(req.params.tagId);
+      
+      await storage.removeTagFromMessage(messageId, tagId, req.tenant!.id);
+      res.json({ success: true, message: "Tag removed from message" });
+    } catch (error) {
+      console.error("Error removing tag from message:", error);
+      res.status(500).json({ error: "Failed to remove tag from message" });
     }
   });
 

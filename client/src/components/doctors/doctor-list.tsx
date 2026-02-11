@@ -2081,13 +2081,9 @@ const bookingSummaryServiceInfo = useMemo(
       <Dialog 
         open={isBookingOpen} 
         onOpenChange={(open) => {
-          // Prevent closing on outside click - only close via X button or Cancel
-          // Don't allow closing via onOpenChange (which triggers on backdrop click)
-          // Only allow explicit closes via button handlers
-          if (open) {
-            setIsBookingOpen(true);
-          }
-          // If open is false, ignore it - user must click X or Cancel button
+          // Allow closing via close button (X) or Cancel button
+          // Backdrop and Escape key closing are prevented via onPointerDownOutside and onEscapeKeyDown
+          setIsBookingOpen(open);
         }}
       >
         <DialogContent

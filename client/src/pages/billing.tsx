@@ -9904,7 +9904,28 @@ export default function BillingPage() {
                           <SelectItem value="loading" disabled>Loading...</SelectItem>
                         ) : availableAppointments.length > 0 ? (
                           availableAppointments.map((appointment: any) => {
-                            const appointmentText = `${appointment.appointmentId || `APT-${appointment.id}`} - ${appointment.title || "Consultation"}`;
+                            // Format datetime for display
+                            let datetimeStr = '';
+                            if (appointment.scheduledAt) {
+                              try {
+                                const scheduledDate = new Date(appointment.scheduledAt);
+                                const dateStr = scheduledDate.toLocaleDateString('en-US', { 
+                                  year: 'numeric', 
+                                  month: 'short', 
+                                  day: 'numeric' 
+                                });
+                                const timeStr = scheduledDate.toLocaleTimeString('en-US', { 
+                                  hour: '2-digit', 
+                                  minute: '2-digit',
+                                  hour12: true 
+                                });
+                                datetimeStr = ` - ${dateStr} ${timeStr}`;
+                              } catch (e) {
+                                // Fallback if date parsing fails
+                                datetimeStr = '';
+                              }
+                            }
+                            const appointmentText = `${appointment.appointmentId || `APT-${appointment.id}`} - ${appointment.title || "Consultation"}${datetimeStr}`;
                             return (
                               <SelectItem 
                                 key={appointment.id} 

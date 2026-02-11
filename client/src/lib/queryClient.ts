@@ -3,14 +3,6 @@ import { isPermissionError, showPermissionDenied } from "./permission-error-hand
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
-const DEFAULT_DEV_API = (() => {
-  if (typeof window !== "undefined") {
-    const protocol = window.location.protocol === "https:" ? "https" : "http";
-    return `${protocol}://localhost:1100`;
-  }
-  return "http://localhost:1100";
-})();
-
 export function buildUrl(path: string) {
   if (path.startsWith("http")) {
     return path;
@@ -18,8 +10,10 @@ export function buildUrl(path: string) {
   if (API_BASE_URL) {
     return `${API_BASE_URL.replace(/\/$/, "")}${path}`;
   }
+  // In development, use relative paths since the server serves both frontend and backend
+  // This avoids connection refused errors when the port doesn't match
   if (import.meta.env.DEV) {
-    return `${DEFAULT_DEV_API}${path}`;
+    return path;
   }
   return path;
 }

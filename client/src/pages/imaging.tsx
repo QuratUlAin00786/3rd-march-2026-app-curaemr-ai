@@ -5015,45 +5015,134 @@ export default function ImagingPage() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 justify-center">
+                    <div className="flex items-center gap-2 justify-center flex-wrap">
                       {/* Show blue Eye icon for Order Study tab, regular Eye and Edit for others */}
                       {user?.role !== 'patient' && (
                         <>
                           {activeTab === "order-study" ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedPrescriptionStudy(study);
-                                setShowPrescriptionDialog(true);
-                              }}
-                              title="View Prescription"
-                            >
-                              <Eye className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                            </Button>
-                          ) : activeTab !== 'imaging-results' ? (
                             <>
+                              {/* Save icon - always show, function handles signature check */}
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleViewStudy(study)}
+                                onClick={() => handleGenerateImagePrescription(study.id)}
+                                className="border-green-200 text-green-600 hover:bg-green-50 hover:border-green-300"
+                                data-testid={`button-save-prescription-card-${study.id}`}
+                                title="Save/Generate Prescription"
                               >
-                                <Eye className="h-4 w-4" />
+                                <Save className="h-4 w-4" />
                               </Button>
+                              {/* E-Sign icon for Order Study tab */}
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleViewStudy(study)}
+                                onClick={() => handleESignClick(study.id)}
+                                className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
+                                data-testid={`button-esign-card-${study.id}`}
+                                title="Electronic Signature"
                               >
-                                <Edit className="h-4 w-4" />
+                                <PenTool className="h-4 w-4" />
                               </Button>
                             </>
-                          ) : null}
+                          ) : (
+                            <>
+                              {/* Hide Eye icon in Generate Report tab - it's in View/Download column */}
+                              {activeTab !== 'generate-report' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (activeTab === 'imaging-results') {
+                                      // For Imaging Results tab, open PDF in list view dialog
+                                      viewPDFReportInDialog(study);
+                                    } else {
+                                      // For other tabs, use the regular view study handler
+                                      handleViewStudy(study);
+                                    }
+                                  }}
+                                  className={activeTab === 'imaging-results' ? "border-gray-200 text-gray-600 hover:bg-gray-50" : ""}
+                                  data-testid={`button-view-card-${study.id}`}
+                                  title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}
+                                >
+                                  <Eye className={`h-4 w-4 ${activeTab === 'imaging-results' ? "text-gray-600 dark:text-gray-400" : ""}`} />
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleViewStudy(study)}
+                                className={activeTab === 'imaging-results' ? "border-gray-200 text-gray-600 hover:bg-gray-50" : ""}
+                                data-testid={`button-edit-card-${study.id}`}
+                                title="Edit Study"
+                              >
+                                <Edit className={`h-4 w-4 ${activeTab === 'imaging-results' ? "text-gray-600 dark:text-gray-400" : ""}`} />
+                              </Button>
+                            </>
+                          )}
                         </>
                       )}
 
-                      {/* PDF Report Download and View Icons */}
-                      {study.reportFileName && (
+                      {/* Save icon - only in Generate Report tab */}
+                      {user?.role !== 'patient' && activeTab === 'generate-report' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleGenerateReport(study.id)}
+                          className="border-yellow-200 text-yellow-600 hover:bg-yellow-50 hover:border-yellow-300"
+                          data-testid={`button-save-report-card-${study.id}`}
+                          title="Save/Generate Report"
+                        >
+                          <Save className="h-4 w-4" />
+                        </Button>
+                      )}
+
+                      {/* E-Sign icon - hide from Generate Report, Imaging Results, and Order Study tabs (Order Study has its own e-sign icon) */}
+                      {user?.role !== 'patient' && activeTab !== 'generate-report' && activeTab !== 'imaging-results' && activeTab !== 'order-study' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleESignClick(study.id)}
+                          className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
+                          data-testid={`button-esign-card-${study.id}`}
+                          title="Electronic Signature"
+                        >
+                          <PenTool className="h-4 w-4" />
+                        </Button>
+                      )}
+
+                      {/* MoreVertical icon (Details) - for imaging-results tab */}
+                      {user?.role !== 'patient' && activeTab === "imaging-results" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedStudyDetails(study);
+                            setShowDetailsDialog(true);
+                          }}
+                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
+                          data-testid={`button-details-card-${study.id}`}
+                          title="View Details"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      )}
+
+                      {/* Download icon - hidden for Imaging Results tab and Order Study tab */}
+                      {user?.role !== 'patient' && activeTab !== "imaging-results" && activeTab !== "order-study" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDownloadStudy(study.id)}
+                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
+                          data-testid={`button-download-card-${study.id}`}
+                          title="Download Study"
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      )}
+
+                      {/* PDF Report Download and View Icons - Hide Eye icon for Generate Report tab */}
+                      {study.reportFileName && activeTab !== 'generate-report' && (
                         <>
                           <Button
                             variant="outline"
@@ -5115,7 +5204,7 @@ export default function ImagingPage() {
                               }
                             }}
                             title="View PDF Report"
-                            data-testid="button-view-pdf-report"
+                            data-testid="button-view-pdf-report-card"
                             className="border-gray-200 text-black hover:bg-gray-50 hover:border-gray-300"
                           >
                             <Eye className="h-4 w-4" />
@@ -5125,7 +5214,7 @@ export default function ImagingPage() {
                             size="sm"
                             onClick={() => handleShareStudy(study, 'report')}
                             title="Share PDF Report"
-                            data-testid="button-share-pdf-report"
+                            data-testid="button-share-pdf-report-card"
                             className="border-gray-200 text-black hover:bg-gray-50 hover:border-gray-300"
                           >
                             <Send className="h-4 w-4" />
@@ -5140,7 +5229,8 @@ export default function ImagingPage() {
                           size="sm"
                           onClick={() => handleShareStudy(study, 'prescription')}
                           title="Share Image Prescription"
-                          data-testid="button-share-prescription"
+                          data-testid="button-share-prescription-card"
+                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
                         >
                           <Send className="h-4 w-4" />
                         </Button>
@@ -5153,7 +5243,8 @@ export default function ImagingPage() {
                           size="sm"
                           onClick={() => handleShareStudy(study, 'report')}
                           title="Share Imaging Report"
-                          data-testid="button-share-report"
+                          data-testid="button-share-report-card"
+                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
                         >
                           <Share2 className="h-4 w-4" />
                         </Button>
@@ -5166,36 +5257,9 @@ export default function ImagingPage() {
                           size="sm"
                           onClick={() => handleGenerateReport(study.id)}
                           title="Generate Report"
+                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
                         >
                           <FileText className="h-4 w-4" />
-                        </Button>
-                      )}
-                      
-                      {/* Image Prescription button - hidden as requested */}
-                      {false && user?.role !== 'patient' && activeTab === 'order-study' && (!study.signatureData || String(study.signatureData).trim() === "") && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleGenerateImagePrescription(study.id)}
-                          title="Generate Image Prescription"
-                          data-testid="button-image-prescription"
-                          className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
-                        >
-                          <Save className="h-4 w-4" />
-                        </Button>
-                      )}
-                      
-                      {/* E-Sign icon - for non-patient users, hide from Generate Report and Imaging Results tabs */}
-                      {user?.role !== 'patient' && activeTab !== 'generate-report' && activeTab !== 'imaging-results' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleESignClick(study.id)}
-                          title="Electronic Signature"
-                          data-testid={`button-esign-card-${study.id}`}
-                          className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
-                        >
-                          <PenTool className="h-4 w-4" />
                         </Button>
                       )}
                       
@@ -5204,10 +5268,15 @@ export default function ImagingPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleDeleteStudy(study.id)}
-                          className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+                          onClick={() => {
+                            setStudyToDelete(study);
+                            setShowDeleteDialog(true);
+                          }}
+                          className={`border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 ${activeTab === 'imaging-results' ? "h-5 w-5 p-0" : ""}`}
+                          data-testid={`button-delete-card-${study.id}`}
+                          title="Delete Study"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className={`h-4 w-4 ${activeTab === 'imaging-results' ? "h-2.5 w-2.5" : ""}`} />
                         </Button>
                       )}
                     </div>

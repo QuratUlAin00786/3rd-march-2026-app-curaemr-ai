@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,7 +45,8 @@ import {
   Forward,
   Tag,
   X,
-  Calendar
+  Calendar,
+  ChevronDown
 } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -82,6 +83,11 @@ interface Message {
   }>;
   isStarred: boolean;
   threadId?: string;
+  tags?: Array<{
+    id: number;
+    name: string;
+    color: string;
+  }>;
 }
 
 interface Conversation {
@@ -95,6 +101,7 @@ interface Conversation {
   lastMessage: Message;
   unreadCount: number;
   isPatientConversation: boolean;
+  isFavorite?: boolean;
 }
 
 // Campaign name suggestions organized by category
@@ -216,8 +223,56 @@ interface Campaign {
   template: string;
 }
 
+// Format timestamp showing local time when message was sent (no timezone conversion)
+const formatTimestampNoConversion = (timestamp: string): string => {
+  if (!timestamp) return "";
+  
+  try {
+    // Parse the timestamp - JavaScript Date automatically handles timezone
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "";
+    
+    // Use local time methods to display the time as it appears in user's timezone
+    // These methods automatically convert UTC to local timezone
+    const month = date.getMonth();
+    const day = date.getDate();
+    const year = date.getFullYear();
+    const hour = date.getHours();
+    const minute = date.getMinutes();
+    
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthName = monthNames[month];
+    
+    // Format hour with AM/PM
+    const period = hour >= 12 ? 'pm' : 'am';
+    const displayHour = hour % 12 || 12;
+    
+    // Check if date is today
+    const today = new Date();
+    const isToday = date.getDate() === today.getDate() && 
+                    date.getMonth() === today.getMonth() && 
+                    date.getFullYear() === today.getFullYear();
+    
+    // If today, show just time. Otherwise show date and time
+    if (isToday) {
+      return `${displayHour}:${minute.toString().padStart(2, '0')} ${period}`;
+    }
+    
+    return `${monthName} ${day} ${displayHour}:${minute.toString().padStart(2, '0')} ${period}`;
+  } catch {
+    return "";
+  }
+};
+
 export default function MessagingPage() {
   const { canCreate, canEdit, canDelete } = useRolePermissions();
+  
+  // Helper function to show success dialog
+  const showSuccess = (title: string, message: string) => {
+    setSuccessTitle(title);
+    setSuccessMessage(message);
+    setShowSuccessDialog(true);
+  };
   const [, setLocation] = useLocation();
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   
@@ -333,6 +388,20 @@ export default function MessagingPage() {
   const [campaignToDelete, setCampaignToDelete] = useState<any>(null);
   const [showDeleteTemplate, setShowDeleteTemplate] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<any>(null);
+  const [showNoRecipientsDialog, setShowNoRecipientsDialog] = useState(false);
+  const [showUnfavoriteDialog, setShowUnfavoriteDialog] = useState(false);
+  const [unfavoritedConversationName, setUnfavoritedConversationName] = useState<string>("");
+  const [showFavoriteDialog, setShowFavoriteDialog] = useState(false);
+  const [favoritedConversationName, setFavoritedConversationName] = useState<string>("");
+  const [showTagDialog, setShowTagDialog] = useState(false);
+  const [taggedMessageContent, setTaggedMessageContent] = useState<string>("");
+  const [taggedMessageId, setTaggedMessageId] = useState<string>("");
+  const [selectedTags, setSelectedTags] = useState<number[]>([]);
+  const [newTagName, setNewTagName] = useState<string>("");
+  const [newTagColor, setNewTagColor] = useState<string>("blue");
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
+  const [successTitle, setSuccessTitle] = useState<string>("");
+  const [successMessage, setSuccessMessage] = useState<string>("");
   const [showCallInProgress, setShowCallInProgress] = useState(false);
   const [callInProgressParticipant, setCallInProgressParticipant] = useState<string>("");
   const [newMessage, setNewMessage] = useState({
@@ -681,8 +750,10 @@ export default function MessagingPage() {
   // Bypass React Query completely for messages to avoid cache issues
   const [messages, setMessages] = useState<any[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   
-  const fetchMessages = useCallback(async (conversationId: string) => {
+  const fetchMessages = useCallback(async (conversationId: string, preserveExisting: boolean = false) => {
     if (!conversationId) return;
     
     setMessagesLoading(true);
@@ -693,16 +764,63 @@ export default function MessagingPage() {
       const data = await response.json();
       console.log('🔥 DIRECT FETCH COMPLETED:', data.length, 'messages');
       console.log('🔥 MESSAGE IDS:', data.map((m: any) => m.id));
-      setMessages(data);
+      
+      // Normalize timestamp field - server may return createdAt or timestamp
+      // Ensure all messages have a consistent timestamp field and preserve any
+      // existing timestamps for messages already in state to avoid visible jumps
+      setMessages(prev => {
+        const prevById = new Map(prev.map(m => [m.id, m]));
+
+        const normalized = (data as any[]).map((m: any) => {
+          const existing = prevById.get(m.id);
+          const serverTs = m.timestamp || m.createdAt || null;
+          return {
+            ...m,
+            // Prefer existing timestamp (e.g. optimistic timestamp) if present,
+            // fall back to server timestamp, then to \"now\".
+            timestamp: existing?.timestamp || serverTs || new Date().toISOString(),
+          };
+        });
+
+        if (preserveExisting) {
+          // Merge: keep any messages that are not in the latest payload (defensive),
+          // then sort by timestamp.
+          const incomingIds = new Set(normalized.map(m => m.id));
+          const leftovers = prev.filter(m => !incomingIds.has(m.id));
+          const merged = [...leftovers, ...normalized].sort((a, b) => {
+            const timeA = new Date(a.timestamp).getTime();
+            const timeB = new Date(b.timestamp).getTime();
+            return timeA - timeB;
+          });
+          return merged;
+        }
+
+        // Non-preserving path: just use normalized server data, sorted by timestamp.
+        return normalized.sort((a, b) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeA - timeB;
+        });
+      });
       
       // Refresh conversations list to update unread counts after marking messages as read
       // Use a small delay to ensure the backend has processed the read status
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['/api/messaging/conversations'] });
       }, 500);
-    } catch (error) {
-      console.error('Error fetching messages:', error);
-      setMessages([]);
+    } catch (error: any) {
+      // Handle connection errors gracefully
+      if (error?.message?.includes("Failed to fetch") || error?.message?.includes("ERR_CONNECTION_REFUSED")) {
+        console.warn('Connection error fetching messages (server may be starting):', error);
+        if (!preserveExisting) {
+          setMessages([]);
+        }
+      } else {
+        console.error('Error fetching messages:', error);
+        if (!preserveExisting) {
+          setMessages([]);
+        }
+      }
     } finally {
       setMessagesLoading(false);
     }
@@ -716,6 +834,17 @@ export default function MessagingPage() {
       setMessages([]);
     }
   }, [selectedConversation, fetchMessages]);
+
+  // Auto-scroll to bottom when messages change or new message is sent
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      // Small delay to ensure DOM is updated
+      const timer = setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [messages, selectedConversation]);
 
   const { data: campaigns = [], isLoading: campaignsLoading, error: campaignsError } = useQuery({
     queryKey: ['/api/messaging/campaigns'],
@@ -761,6 +890,16 @@ export default function MessagingPage() {
     }
   });
 
+  // Fetch message tags
+  const { data: messageTags = [], isLoading: tagsLoading, refetch: refetchTags } = useQuery({
+    queryKey: ['/api/messaging/tags'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/messaging/tags');
+      const data = await response.json();
+      return data;
+    }
+  });
+
   const { data: analytics = {}, isLoading: analyticsLoading } = useQuery({
     queryKey: ['/api/messaging/analytics'],
     queryFn: async () => {
@@ -779,6 +918,8 @@ export default function MessagingPage() {
     }
   });
 
+  const [smsRefreshLoading, setSmsRefreshLoading] = useState(false);
+  
   const { data: smsMessages = [], isLoading: smsLoading, refetch: refetchSmsMessages } = useQuery({
     queryKey: ['/api/messaging/sms-messages'],
     queryFn: async () => {
@@ -794,7 +935,8 @@ export default function MessagingPage() {
       });
       if (!response.ok) throw new Error(`${response.status}: ${response.statusText}`);
       return response.json();
-    }
+    },
+    staleTime: 0
   });
 
   const resetNewMessage = () => {
@@ -915,10 +1057,7 @@ export default function MessagingPage() {
           description = `Voice call with text-to-speech message initiated successfully to ${variables.phoneNumber || 'recipient'}.`;
         }
         
-        toast({
-          title: title,
-          description: description,
-        });
+        showSuccess(title, description);
       }
       // Conversation message success is handled in handleSendConversationMessage
     },
@@ -944,6 +1083,38 @@ export default function MessagingPage() {
         variant: "destructive"
       });
     }
+  });
+
+  const toggleFavoriteMutation = useMutation({
+    mutationFn: async ({ conversationId, conversationName }: { conversationId: string; conversationName: string }) => {
+      const response = await apiRequest('POST', `/api/messaging/conversations/${conversationId}/favorite`);
+      const data = await response.json();
+      return { ...data, conversationName };
+    },
+    onSuccess: (data) => {
+      // Refetch conversations to update favorite status
+      queryClient.invalidateQueries({ queryKey: ['/api/messaging/conversations'] });
+      
+      // Show success toast for favoriting, modal for unfavoriting
+      if (data.isFavorite) {
+        toast({
+          title: "Conversation Favorited",
+          description: `Your conversation "${data.conversationName}" is favorited now`,
+        });
+      } else {
+        // Show modal popup for unfavorite
+        setUnfavoritedConversationName(data.conversationName);
+        setShowUnfavoriteDialog(true);
+      }
+    },
+    onError: (error) => {
+      console.error('Error toggling favorite:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update favorite status",
+        variant: "destructive",
+      });
+    },
   });
 
   const deleteConversationMutation = useMutation({
@@ -987,10 +1158,7 @@ export default function MessagingPage() {
     onSuccess: (data, conversationId) => {
       console.log('🗑️ CONVERSATION DELETED SUCCESS:', conversationId);
       
-      toast({
-        title: "Conversation Deleted",
-        description: "The conversation has been permanently deleted.",
-      });
+      showSuccess("Conversation Deleted", "The conversation has been permanently deleted.");
     },
     onError: (err, conversationId, context) => {
       // Rollback on error
@@ -1012,50 +1180,6 @@ export default function MessagingPage() {
       // setTimeout(() => {
       //   refetchConversations();
       // }, 50);
-    }
-  });
-
-  const updateDeliveryStatusMutation = useMutation({
-    mutationFn: async () => {
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch('/api/messaging/update-delivery-status', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-Subdomain': localStorage.getItem('user_subdomain') || 'demo',
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include',
-        body: JSON.stringify({})
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error(errorData.error || `${response.status}: ${response.statusText}`);
-      }
-      return response.json();
-    },
-    onSuccess: (data) => {
-      console.log('🔄 DELIVERY STATUS UPDATE SUCCESS:', data);
-      
-      // Refresh messages and conversations to show updated delivery statuses
-      if (selectedConversation) {
-        fetchMessages(selectedConversation);
-      }
-      // refetchConversations();
-      
-      toast({
-        title: "Delivery Status Updated",
-        description: `Updated delivery status for ${data.updatedCount || 0} pending messages.`,
-      });
-    },
-    onError: (error: any) => {
-      console.error('Delivery status update failed:', error);
-      toast({
-        title: "Update Failed",
-        description: error.message || "Failed to update delivery status. Please try again.",
-        variant: "destructive"
-      });
     }
   });
 
@@ -1562,10 +1686,7 @@ export default function MessagingPage() {
         subject: "",
         content: ""
       });
-      toast({
-        title: "Template Created",
-        description: "Your message template has been created successfully.",
-      });
+      showSuccess("Template Created", "Your message template has been created successfully.");
     },
     onError: (error: any) => {
       console.error("Error creating template:", error);
@@ -1627,10 +1748,7 @@ export default function MessagingPage() {
       setSelectedTemplate(null);
       setSelectedRecipients([]);
       setRecipientFilter({ role: "all", searchName: "" });
-      toast({
-        title: "Template Sent",
-        description: data.message || `Email sent successfully to ${data.successCount} recipients.`,
-      });
+      showSuccess("Template Sent", data.message || `Email sent successfully to ${data.successCount} recipients.`);
     },
     onError: (error: any) => {
       console.error("Error sending template:", error);
@@ -1671,10 +1789,7 @@ export default function MessagingPage() {
         subject: "",
         content: ""
       });
-      toast({
-        title: "Template Updated",
-        description: "Your message template has been updated successfully.",
-      });
+      showSuccess("Template Updated", "Your message template has been updated successfully.");
     },
     onError: (error: any) => {
       console.error("Error updating template:", error);
@@ -1712,10 +1827,7 @@ export default function MessagingPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/messaging/templates'] });
-      toast({
-        title: "Template Copied",
-        description: "Template has been copied successfully.",
-      });
+      showSuccess("Template Copied", "Template has been copied successfully.");
     },
     onError: (error: any) => {
       console.error("Error copying template:", error);
@@ -1781,10 +1893,7 @@ export default function MessagingPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/messaging/templates'] });
-      toast({
-        title: "Announcement Duplicated",
-        description: "Announcement has been duplicated successfully.",
-      });
+      showSuccess("Announcement Duplicated", "Announcement has been duplicated successfully.");
       setShowDuplicateAnnouncementDialog(false);
       setAnnouncementToDuplicate(null);
       setDuplicateAnnouncementName("");
@@ -1917,10 +2026,7 @@ export default function MessagingPage() {
         recipientCount: 0,
         recipients: []
       });
-      toast({
-        title: "Campaign Updated",
-        description: "Your campaign has been updated successfully.",
-      });
+      showSuccess("Campaign Updated", "Your campaign has been updated successfully.");
     },
     onError: (error: any) => {
       console.error("Error updating campaign:", error);
@@ -2119,10 +2225,7 @@ export default function MessagingPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/messaging/campaigns'] });
-      toast({
-        title: "Campaign Duplicated",
-        description: "Campaign has been duplicated successfully.",
-      });
+      showSuccess("Campaign Duplicated", "Campaign has been duplicated successfully.");
       setShowDuplicateCampaignDialog(false);
       setCampaignToDuplicate(null);
       setDuplicateCampaignName("");
@@ -2299,10 +2402,7 @@ export default function MessagingPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/messaging/campaigns'] });
-      toast({
-        title: "Campaign Deleted",
-        description: "Campaign has been deleted successfully.",
-      });
+      showSuccess("Campaign Deleted", "Campaign has been deleted successfully.");
     },
     onError: (error: any) => {
       console.error("Error deleting campaign:", error);
@@ -2355,10 +2455,7 @@ export default function MessagingPage() {
         deliveryLog: data.deliveryLog || []
       });
       setShowCampaignSummary(true);
-      toast({
-        title: "Campaign Sent",
-        description: `Successfully sent to ${data.totalSent} recipients.`,
-      });
+      showSuccess("Campaign Sent", `Successfully sent to ${data.totalSent} recipients.`);
     },
     onError: (error: any) => {
       setSendingCampaignId(null);
@@ -2368,6 +2465,10 @@ export default function MessagingPage() {
         description: error.message || "An error occurred while sending the campaign.",
         variant: "destructive"
       });
+    },
+    onSettled: () => {
+      // Always reset sending campaign ID when mutation completes (success or error)
+      setSendingCampaignId(null);
     }
   });
 
@@ -2378,7 +2479,7 @@ export default function MessagingPage() {
       event.preventDefault();
     }
     
-    // Prevent sending if already sending this campaign
+    // Prevent sending if already sending this specific campaign
     if (sendingCampaignId === campaign.id) {
       return;
     }
@@ -2388,15 +2489,12 @@ export default function MessagingPage() {
                           (campaign.recipientCount && campaign.recipientCount > 0);
     
     if (!hasRecipients) {
-      toast({
-        title: "Failed to Send Campaign",
-        description: "No recipients in this campaign. Please add recipients before sending.",
-        variant: "destructive"
-      });
+      setShowNoRecipientsDialog(true);
       return;
     }
     
     // Allow resending even if status is 'sent' (that's what "Resend Campaign" is for)
+    // Set the sending campaign ID immediately to prevent multiple clicks
     setSendingCampaignId(campaign.id);
     sendCampaignMutation.mutate(campaign.id);
   };
@@ -2420,10 +2518,7 @@ export default function MessagingPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/messaging/templates'] });
-      toast({
-        title: "Template Deleted",
-        description: "Template has been deleted successfully.",
-      });
+      showSuccess("Template Deleted", "Template has been deleted successfully.");
     },
     onError: (error: any) => {
       console.error("Error deleting template:", error);
@@ -2460,8 +2555,9 @@ export default function MessagingPage() {
     // Reduced polling interval to prevent UI blinking
     const messagePollingInterval = setInterval(() => {
       // Only poll if user is on messaging page and WebSocket is not connected
+      // Use preserveExisting=true to avoid flicker and preserve timestamps
       if (selectedConversation && fetchMessages) {
-        fetchMessages(selectedConversation);
+        fetchMessages(selectedConversation, true); // preserveExisting=true to maintain timestamps
       }
       
       // Less frequent conversation refresh to reduce API calls
@@ -2505,9 +2601,10 @@ export default function MessagingPage() {
           console.log('🔍 Extracted conversationId for WebSocket:', messageConversationId);
           
           // Force immediate refresh of current conversation if it matches
+          // Use preserveExisting=true to avoid flicker and preserve optimistic timestamps
           if (selectedConversation && messageConversationId === selectedConversation && fetchMessages) {
             console.log('🔥 IMMEDIATE REFETCH - Current conversation matches WebSocket message');
-            fetchMessages(selectedConversation);
+            fetchMessages(selectedConversation, true); // preserveExisting=true to maintain timestamps
           }
           
           // Always refresh conversations to update sidebar
@@ -2635,6 +2732,8 @@ export default function MessagingPage() {
     
     // Store a temporary message ID for optimistic update
     const tempMessageId = `temp-${Date.now()}`;
+    // Create timestamp in local time to avoid timezone conversion issues
+    const now = new Date();
     const optimisticMessage = {
       id: tempMessageId,
       senderId: currentUser?.id,
@@ -2644,7 +2743,7 @@ export default function MessagingPage() {
       recipientName: '',
       subject: '',
       content: messageContent,
-      timestamp: new Date().toISOString(),
+      timestamp: now.toISOString(), // Use ISO string but ensure it's from local Date object
       isRead: false,
       priority: 'normal' as const,
       type: 'internal' as const,
@@ -2712,6 +2811,20 @@ export default function MessagingPage() {
       setMessages(prev => {
         // Remove the temporary message and add the real one
         const filtered = prev.filter(m => m.id !== tempMessageId);
+        const optimisticMsg = prev.find(m => m.id === tempMessageId);
+        
+        // Always preserve the optimistic timestamp to avoid timezone conversion issues
+        // The optimistic timestamp was created when user sent the message and displayed correctly
+        // Server timestamp might be in UTC and cause timezone conversion that changes the display
+        const optimisticTimestamp = optimisticMsg?.timestamp;
+        
+        // Check for both timestamp and createdAt fields from server
+        const serverTimestamp = responseData.timestamp || responseData.createdAt || null;
+        
+        // Use optimistic timestamp if available (maintains what user saw), otherwise use server timestamp
+        // If neither exists, use current time
+        const finalTimestamp = optimisticTimestamp || serverTimestamp || new Date().toISOString();
+        
         const realMessage = {
           id: responseData.id,
           senderId: responseData.senderId || currentUser?.id,
@@ -2721,14 +2834,30 @@ export default function MessagingPage() {
           recipientName: responseData.recipientName,
           subject: responseData.subject || '',
           content: responseData.content || messageContent,
-          timestamp: responseData.timestamp || new Date().toISOString(),
+          timestamp: finalTimestamp, // Preserve optimistic timestamp to prevent timezone conversion
           isRead: false,
           priority: responseData.priority || 'normal',
           type: responseData.type || 'internal',
-          isStarred: false
+          isStarred: false,
+          tags: responseData.tags || [] // Include tags if present
         };
-        return [...filtered, realMessage];
+        
+        // Sort messages by timestamp to maintain order
+        const updated = [...filtered, realMessage].sort((a, b) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeA - timeB;
+        });
+        return updated;
       });
+      
+      // Immediately refetch to get any real-time updates and ensure consistency
+      // Use preserveExisting to avoid flicker
+      if (selectedConversation) {
+        setTimeout(() => {
+          fetchMessages(selectedConversation, true);
+        }, 500);
+      }
       
       // Update conversations cache for persistence
       const currentConversations = queryClient.getQueryData(['/api/messaging/conversations']) as any[] || [];
@@ -2762,20 +2891,12 @@ export default function MessagingPage() {
       }
       
       // Refetch messages to ensure we have the latest data from server (with a small delay to ensure server has processed)
-      console.log('🔥 FORCE IMMEDIATE UI UPDATE: Triggering direct fetch after send');
-      setTimeout(async () => {
-        if (selectedConversation && fetchMessages) {
-          console.log('🔥 Using direct fetch for immediate message visibility');
-          await fetchMessages(selectedConversation);
-          console.log('🔥 DIRECT FETCH COMPLETED after message send');
-        }
-      }, 500);
+      // Don't refetch immediately - the optimistic update already shows the message
+      // Only refetch if needed for consistency, but preserve the current messages
+      console.log('🔥 MESSAGE SENT SUCCESSFULLY - Keeping optimistic update');
       
       // Show success notification
-      toast({
-        title: "Message Sent",
-        description: "Your message has been sent successfully.",
-      });
+      showSuccess("Message Sent", "Your message has been sent successfully.");
       
     } catch (error: any) {
       // Remove the optimistic message since send failed
@@ -3164,20 +3285,6 @@ export default function MessagingPage() {
             >
               💊 Prescription Ready
             </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => updateDeliveryStatusMutation.mutate()}
-            disabled={updateDeliveryStatusMutation.isPending}
-            title="Update delivery status for pending messages"
-          >
-            {updateDeliveryStatusMutation.isPending ? (
-              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Update Delivery Status
-          </Button>
           <Dialog open={showVideoCall} onOpenChange={(open) => {
             setShowVideoCall(open);
             if (!open) {
@@ -3732,6 +3839,32 @@ export default function MessagingPage() {
           </Dialog>
         </div>
 
+      {/* Success Dialog - Global */}
+      <Dialog open={showSuccessDialog} onOpenChange={setShowSuccessDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
+              </div>
+              <DialogTitle className="text-lg">{successTitle || "Success"}</DialogTitle>
+            </div>
+            <DialogDescription className="pt-2">
+              {successMessage}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button 
+              variant="default" 
+              onClick={() => setShowSuccessDialog(false)}
+              className="w-full"
+            >
+              OK
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Messaging Content */}
       <div className="flex-1 overflow-hidden h-[calc(100vh-180px)] p-[30px]">
       <Tabs defaultValue="conversations" className="w-full h-full flex flex-col">
@@ -3745,30 +3878,32 @@ export default function MessagingPage() {
           <div className="grid grid-cols-12 gap-4 h-full">
             {/* Conversations List */}
             <div className="col-span-4 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col overflow-hidden">
-              <div className="p-3 border-b border-gray-200 dark:border-slate-600 flex-shrink-0">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 h-4 w-4" />
-                    <Input
-                      placeholder="Search conversations..."
-                      className="pl-10"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                  </div>
+              <div className="p-4 border-b border-gray-200 dark:border-slate-600 flex-shrink-0">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">All Messages</h2>
+                  <Select value={messageFilter} onValueChange={setMessageFilter}>
+                    <SelectTrigger className="w-[140px] h-9">
+                      <SelectValue />
+                      <ChevronDown className="h-4 w-4 ml-2" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Messages</SelectItem>
+                      <SelectItem value="unread">Unread</SelectItem>
+                      <SelectItem value="patients">Patients</SelectItem>
+                      <SelectItem value="staff">Staff Only</SelectItem>
+                      <SelectItem value="starred">Starred</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Select value={messageFilter} onValueChange={setMessageFilter}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Filter messages" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Messages</SelectItem>
-                    <SelectItem value="unread">Unread</SelectItem>
-                    <SelectItem value="patients">Patients</SelectItem>
-                    <SelectItem value="staff">Staff Only</SelectItem>
-                    <SelectItem value="starred">Starred</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 h-4 w-4" />
+                  <Input
+                    placeholder="Search conversations..."
+                    className="pl-10"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
               </div>
 
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -3778,79 +3913,98 @@ export default function MessagingPage() {
                     {/* Show existing conversations first */}
                     {filteredConversations && filteredConversations.length > 0 && (
                       <div className="mb-4">
-                        <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 px-1">📩 Click conversation below to send messages:</h3>
-                        {filteredConversations.map((conversation: Conversation) => (
-                          <div
-                            key={conversation.id}
-                            className={`p-4 rounded-xl cursor-pointer mb-3 transition-all duration-200 border-2 shadow-sm ${
-                              selectedConversation === conversation.id
-                                ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800 shadow-md'
-                                : 'hover:bg-green-50 dark:hover:bg-green-900/30 border-green-300 dark:border-green-700 hover:border-green-500 dark:hover:border-green-500 bg-white dark:bg-slate-700 hover:shadow-md'
-                            }`}
-                            onClick={() => {
-                              console.log('🔥 CONVERSATION SELECTED:', conversation.id);
-                              console.log('🔥 Setting selectedConversation to:', conversation.id);
-                              setSelectedConversation(conversation.id);
-                            }}
-                          >
-                            <div className="flex items-start gap-4 relative">
-                              <div className="relative flex-shrink-0">
-                                <Avatar className="h-12 w-12 border-2 border-white dark:border-slate-600 shadow-sm">
-                                  <AvatarFallback className="bg-green-500 text-white text-lg font-semibold">
-                                    {String(getOtherParticipant(conversation)?.name || 'U').charAt(0).toUpperCase()}
-                                  </AvatarFallback>
-                                </Avatar>
-                                {conversation.unreadCount > 0 && (
-                                  <Badge variant="destructive" className="absolute -top-2 -right-2 text-xs min-w-[22px] h-6 flex items-center justify-center p-1 shadow-sm">
-                                    {conversation.unreadCount}
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-start justify-between mb-2">
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-semibold text-base text-gray-900 dark:text-gray-100 truncate leading-tight">
-                                      {(() => {
-                                        const otherParticipant = getOtherParticipant(conversation);
-                                        if (otherParticipant?.name && otherParticipant.name !== 'undefined') {
-                                          return otherParticipant.name;
-                                        }
-                                        if (otherParticipant?.id && otherParticipant.id !== 'undefined') {
-                                          return `User ${otherParticipant.id}`;
-                                        }
-                                        return 'Unknown User';
-                                      })()}
-                                    </h4>
-                                    <div className="flex items-center gap-2 mt-1">
-                                      <Badge variant="secondary" className="text-xs px-2 py-1">
-                                        {getOtherParticipant(conversation)?.role || 'user'}
+                        <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-4 px-1">📩 Click conversation below to send messages:</h3>
+                        <div className="space-y-3">
+                          {filteredConversations.map((conversation: Conversation) => {
+                            const otherParticipant = getOtherParticipant(conversation);
+                            const participantName = otherParticipant?.name && otherParticipant.name !== 'undefined' 
+                              ? otherParticipant.name 
+                              : otherParticipant?.id && otherParticipant.id !== 'undefined'
+                              ? `User ${otherParticipant.id}`
+                              : 'Unknown User';
+                            const participantRole = otherParticipant?.role || 'user';
+                            const lastMessageDate = conversation.lastMessage?.timestamp 
+                              ? new Date(conversation.lastMessage.timestamp).toLocaleDateString('en-US', { 
+                                  month: 'numeric', 
+                                  day: 'numeric', 
+                                  year: 'numeric' 
+                                })
+                              : '';
+                            
+                            return (
+                              <div
+                                key={conversation.id}
+                                className={`p-4 rounded-lg cursor-pointer transition-all duration-200 ${
+                                  selectedConversation === conversation.id
+                                    ? 'border-2 border-blue-500 bg-blue-50/50 dark:bg-blue-900/20'
+                                    : 'border border-green-200 dark:border-green-700 bg-white dark:bg-slate-700 hover:border-green-300 dark:hover:border-green-600 hover:shadow-sm'
+                                }`}
+                                onClick={() => {
+                                  console.log('🔥 CONVERSATION SELECTED:', conversation.id);
+                                  console.log('🔥 Setting selectedConversation to:', conversation.id);
+                                  setSelectedConversation(conversation.id);
+                                }}
+                              >
+                                <div className="flex items-start gap-3">
+                                  {/* Avatar */}
+                                  <div className="relative flex-shrink-0">
+                                    <Avatar className="h-10 w-10">
+                                      <AvatarFallback className="bg-green-500 text-white text-sm font-semibold">
+                                        {String(participantName).charAt(0).toUpperCase()}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    {conversation.unreadCount > 0 && (
+                                      <Badge variant="destructive" className="absolute -top-1 -right-1 text-xs min-w-[18px] h-5 flex items-center justify-center p-0.5">
+                                        {conversation.unreadCount}
                                       </Badge>
-                                      <span className="text-xs text-gray-400 dark:text-gray-500">
-                                        {conversation.lastMessage?.timestamp ? new Date(conversation.lastMessage.timestamp).toLocaleDateString() : ''}
-                                      </span>
-                                    </div>
+                                    )}
                                   </div>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 w-8 p-0 ml-3 text-red-600 border-red-300 hover:text-white hover:bg-red-600 hover:border-red-600 dark:text-red-400 dark:border-red-600 dark:hover:bg-red-700 dark:hover:text-white flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (window.confirm(`Delete conversation with ${getOtherParticipant(conversation)?.name || 'Unknown User'}? This action cannot be undone.`)) {
-                                        handleDeleteConversation(conversation.id);
-                                      }
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
+                                  
+                                  {/* Content */}
+                                  <div className="flex-1 min-w-0">
+                                    {/* Name and Delete Button */}
+                                    <div className="flex items-start justify-between mb-1">
+                                      <h4 className="font-semibold text-base text-gray-900 dark:text-gray-100 truncate">
+                                        {participantName}
+                                      </h4>
+                                      <button
+                                        className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-600 flex-shrink-0 ml-2 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (window.confirm(`Delete conversation with ${participantName}? This action cannot be undone.`)) {
+                                            handleDeleteConversation(conversation.id);
+                                          }
+                                        }}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                    
+                                    {/* Role Badge and Date */}
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <Badge 
+                                        className="bg-purple-500 text-white text-xs px-2 py-0.5 font-normal"
+                                        variant="secondary"
+                                      >
+                                        {participantRole}
+                                      </Badge>
+                                      {lastMessageDate && (
+                                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                                          {lastMessageDate}
+                                        </span>
+                                      )}
+                                    </div>
+                                    
+                                    {/* Last Message */}
+                                    <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1">
+                                      {conversation.lastMessage?.content || "No messages yet"}
+                                    </p>
+                                  </div>
                                 </div>
-                                <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-2 leading-relaxed">
-                                  {conversation.lastMessage?.content || "No messages yet"}
-                                </p>
                               </div>
-                            </div>
-                          </div>
-                        ))}
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
 
@@ -3864,19 +4018,17 @@ export default function MessagingPage() {
                 </ScrollArea>
 
                 {/* Fixed bottom section - excluded from scroll */}
-                <div className="p-[30px] pt-4 border-t border-gray-200 dark:border-slate-600 flex-shrink-0 bg-white dark:bg-slate-800">
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 px-1">Or create new conversation:</p>
+                <div className="p-4 pt-3 border-t border-gray-200 dark:border-slate-600 flex-shrink-0 bg-white dark:bg-slate-800">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Or create new conversation:</p>
                   <div
-                    className="p-2 rounded-lg cursor-pointer transition-colors border border-dashed border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-25 dark:hover:bg-slate-700"
+                    className="p-3 rounded-lg cursor-pointer transition-all border-2 border-dashed border-gray-300 dark:border-slate-500 hover:border-gray-400 dark:hover:border-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700/50"
                     onClick={() => setShowNewMessage(true)}
                   >
                     <div className="flex items-center gap-2">
-                      <div className="h-6 w-6 rounded-full bg-gray-100 dark:bg-slate-600 flex items-center justify-center">
-                        <Plus className="h-3 w-3 text-gray-500 dark:text-gray-400" />
+                      <div className="h-8 w-8 rounded-full bg-gray-100 dark:bg-slate-600 flex items-center justify-center flex-shrink-0">
+                        <Plus className="h-4 w-4 text-gray-500 dark:text-gray-400" />
                       </div>
-                      <div>
-                        <p className="text-xs text-gray-600 dark:text-gray-300">New Message</p>
-                      </div>
+                      <p className="text-sm text-gray-600 dark:text-gray-300 font-medium">New Message</p>
                     </div>
                   </div>
                 </div>
@@ -3942,15 +4094,39 @@ export default function MessagingPage() {
                       >
                         <Video className="h-4 w-4" />
                       </Button>
-                      <Button variant="outline" size="sm">
-                        <Star className="h-4 w-4" />
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => {
+                          if (selectedConversation) {
+                            const conv = conversations.find((c: Conversation) => c.id === selectedConversation);
+                            const otherParticipant = conv ? getOtherParticipant(conv) : null;
+                            const conversationName = otherParticipant?.name || "Unknown";
+                            toggleFavoriteMutation.mutate({ 
+                              conversationId: selectedConversation,
+                              conversationName 
+                            });
+                          }
+                        }}
+                        disabled={toggleFavoriteMutation.isPending}
+                      >
+                        {(() => {
+                          const conv = conversations.find((c: Conversation) => c.id === selectedConversation);
+                          const isFavorite = conv?.isFavorite || false;
+                          const isLoading = toggleFavoriteMutation.isPending;
+                          return (
+                            <Star 
+                              className={`h-4 w-4 ${isFavorite ? "fill-yellow-500 text-yellow-500" : ""} ${isLoading ? "opacity-50" : ""}`} 
+                            />
+                          );
+                        })()}
                       </Button>
                     </div>
                   </div>
 
                   {/* Messages */}
                   <ScrollArea className="flex-1 overflow-y-auto">
-                    <div className="space-y-4 p-4">
+                    <div ref={messagesContainerRef} className="space-y-4 p-4">
                       {(() => {
                         console.log('🔥 RENDERING MESSAGES - Count:', messages.length);
                         console.log('🔥 RENDERING MESSAGES - Data:', JSON.stringify(messages, null, 2));
@@ -3964,23 +4140,99 @@ export default function MessagingPage() {
                       ) : (
                         messages.map((message: Message, index: number) => {
                           console.log(`🔥 RENDERING MESSAGE ${index}:`, message.id, message.content);
+                          // Determine if message is sent by current user
+                          const isSentByCurrentUser = currentUser && (
+                            String(message.senderId) === String(currentUser.id) ||
+                            message.senderName === `${currentUser.firstName} ${currentUser.lastName}` ||
+                            message.senderName === 'You'
+                          );
+                          
                           return (
-                            <div key={message.id} className="flex gap-3 border-l-4 border-blue-200 pl-2 py-2" style={{ backgroundColor: '#f8f9fa', minHeight: '60px' }}>
-                              <Avatar className="h-8 w-8">
-                                <AvatarFallback className="text-xs bg-blue-500 text-white">
-                                  {message.senderName?.charAt(0) || 'U'}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="font-medium text-sm text-gray-900 dark:text-gray-100">{message.senderName}</span>
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                                    {format(new Date(message.timestamp), 'MMM d, HH:mm')}
-                                  </span>
-                                  <div className={`w-2 h-2 rounded-full ${getPriorityColor(message.priority)}`}></div>
-                                </div>
-                                <div className="bg-blue-50 dark:bg-slate-700 rounded-lg p-3 border border-blue-200">
-                                  <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{message.content}</p>
+                            <div 
+                              key={message.id} 
+                              className={`flex gap-3 mb-4 transition-all duration-200 group ${
+                                isSentByCurrentUser ? 'flex-row-reverse' : 'flex-row'
+                              }`}
+                            >
+                              {/* Avatar - only show for received messages */}
+                              {!isSentByCurrentUser && (
+                                <Avatar className="h-8 w-8 flex-shrink-0">
+                                  <AvatarFallback className="text-xs bg-gray-400 text-white">
+                                    {message.senderName?.charAt(0) || 'U'}
+                                  </AvatarFallback>
+                                </Avatar>
+                              )}
+                              
+                              {/* Message Container */}
+                              <div className={`flex flex-col ${isSentByCurrentUser ? 'items-end' : 'items-start'}`} style={{ maxWidth: '70%' }}>
+                                {/* Sender Name and Timestamp - only for received messages */}
+                                {!isSentByCurrentUser && (
+                                  <div className="flex items-center gap-2 mb-1 px-1">
+                                    <span className="font-medium text-xs text-gray-600 dark:text-gray-400">{message.senderName}</span>
+                                    <span className="text-xs text-gray-400 dark:text-gray-500">
+                                      {formatTimestampNoConversion(message.timestamp)}
+                                    </span>
+                                  </div>
+                                )}
+                                
+                                {/* Message Bubble */}
+                                <div 
+                                  className={`rounded-2xl px-4 py-2.5 shadow-sm transition-all duration-200 ${
+                                    isSentByCurrentUser 
+                                      ? 'bg-blue-600 text-white rounded-br-md' // Outgoing: blue with sharper left corners
+                                      : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-md' // Incoming: gray with sharper right corners
+                                  }`}
+                                >
+                                  <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                                  
+                                  {/* Timestamp for sent messages - shown below message */}
+                                  {isSentByCurrentUser && (
+                                    <div className="text-xs text-blue-100 dark:text-blue-300 mt-1 text-right">
+                                      {formatTimestampNoConversion(message.timestamp)}
+                                    </div>
+                                  )}
+                                  {message.tags && message.tags.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-2">
+                                      {message.tags.map((tag) => {
+                                        // Use lighter colors for tags on sent messages (blue background)
+                                        const colorMap: Record<string, { bg: string; text: string; border: string }> = isSentByCurrentUser ? {
+                                          blue: { bg: 'rgba(255, 255, 255, 0.3)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                          red: { bg: 'rgba(255, 200, 200, 0.4)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                          green: { bg: 'rgba(200, 255, 200, 0.4)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                          yellow: { bg: 'rgba(255, 255, 200, 0.4)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                          purple: { bg: 'rgba(255, 200, 255, 0.4)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                          orange: { bg: 'rgba(255, 220, 200, 0.4)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                          pink: { bg: 'rgba(255, 200, 220, 0.4)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                          gray: { bg: 'rgba(255, 255, 255, 0.25)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.5)' },
+                                        } : {
+                                          blue: { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd' },
+                                          red: { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' },
+                                          green: { bg: '#dcfce7', text: '#166534', border: '#86efac' },
+                                          yellow: { bg: '#fef9c3', text: '#854d0e', border: '#fde047' },
+                                          purple: { bg: '#f3e8ff', text: '#6b21a8', border: '#c084fc' },
+                                          orange: { bg: '#ffedd5', text: '#9a3412', border: '#fdba74' },
+                                          pink: { bg: '#fce7f3', text: '#9f1239', border: '#f9a8d4' },
+                                          gray: { bg: '#f3f4f6', text: '#374151', border: '#d1d5db' },
+                                        };
+                                        const colors = colorMap[tag.color] || (isSentByCurrentUser ? colorMap.blue : colorMap.blue);
+                                        return (
+                                          <Badge
+                                            key={tag.id}
+                                            variant="secondary"
+                                            className="text-xs"
+                                            style={{
+                                              backgroundColor: colors.bg,
+                                              color: colors.text,
+                                              borderColor: colors.border,
+                                            }}
+                                          >
+                                            <Tag className="h-2 w-2 mr-1" />
+                                            {tag.name}
+                                          </Badge>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
                                   {message.attachments && message.attachments.length > 0 && (
                                     <div className="mt-2 space-y-2">
                                       {message.attachments.map((attachment) => {
@@ -4009,17 +4261,31 @@ export default function MessagingPage() {
                                                 />
                                               </div>
                                             ) : (
-                                              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                                              <div className={`flex items-center gap-2 text-xs ${
+                                                isSentByCurrentUser 
+                                                  ? 'text-blue-100 dark:text-blue-200' 
+                                                  : 'text-gray-700 dark:text-gray-300'
+                                              }`}>
                                                 <Paperclip className="h-3 w-3" />
                                                 <a 
                                                   href={attachment.url} 
                                                   target="_blank" 
                                                   rel="noopener noreferrer"
-                                                  className="hover:underline break-words"
+                                                  className={`hover:underline break-words ${
+                                                    isSentByCurrentUser 
+                                                      ? 'text-blue-50 hover:text-white' 
+                                                      : 'text-gray-900 dark:text-gray-100 hover:text-blue-600'
+                                                  }`}
                                                 >
                                                   {attachment.name}
                                                 </a>
-                                                <span className="text-gray-500 dark:text-gray-400 whitespace-nowrap">({(attachment.size / 1024).toFixed(1)} KB)</span>
+                                                <span className={`whitespace-nowrap ${
+                                                  isSentByCurrentUser 
+                                                    ? 'text-blue-200 dark:text-blue-300' 
+                                                    : 'text-gray-500 dark:text-gray-400'
+                                                }`}>
+                                                  ({(attachment.size / 1024).toFixed(1)} KB)
+                                                </span>
                                               </div>
                                             )}
                                           </div>
@@ -4028,15 +4294,22 @@ export default function MessagingPage() {
                                     </div>
                                   )}
                                 </div>
-                              </div>
-                              <div className="flex-shrink-0">
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                      <MoreVertical className="h-4 w-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
+                                
+                                {/* Dropdown Menu - positioned relative to message bubble */}
+                                <div className={`mt-1 ${isSentByCurrentUser ? 'self-end' : 'self-start'}`}>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button 
+                                        variant="ghost" 
+                                        size="sm" 
+                                        className={`h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity ${
+                                          isSentByCurrentUser ? 'text-blue-400 hover:text-blue-300' : 'text-gray-400 hover:text-gray-500'
+                                        }`}
+                                      >
+                                        <MoreVertical className="h-3 w-3" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                  <DropdownMenuContent align={isSentByCurrentUser ? "end" : "start"}>
                                     <DropdownMenuItem 
                                       onSelect={(e) => {
                                         e.preventDefault();
@@ -4054,8 +4327,36 @@ export default function MessagingPage() {
                                       <Forward className="mr-2 h-4 w-4" />
                                       Forward
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => {
-                                      toast({ title: "Tag", description: `Tagging message: ${message.content.substring(0, 30)}...` });
+                                    <DropdownMenuItem onClick={async () => {
+                                      // Show modal popup with message content
+                                      const messagePreview = message.content.length > 50 
+                                        ? `${message.content.substring(0, 50)}...` 
+                                        : message.content;
+                                      setTaggedMessageContent(messagePreview);
+                                      setTaggedMessageId(message.id);
+                                      
+                                      // Load existing tags for this message
+                                      try {
+                                        const existingTags = message.tags?.map((t: any) => t.id) || [];
+                                        setSelectedTags(existingTags);
+                                        
+                                        // Also try to fetch from server to ensure we have latest
+                                        try {
+                                          const response = await apiRequest('GET', `/api/messaging/messages/${message.id}/tags`);
+                                          if (response.ok) {
+                                            const serverTags = await response.json();
+                                            setSelectedTags(serverTags.map((t: any) => t.id));
+                                          }
+                                        } catch (fetchError) {
+                                          // If fetch fails, use tags from message object
+                                          console.warn('Could not fetch tags from server, using cached tags');
+                                        }
+                                      } catch (error) {
+                                        console.error('Error loading tags:', error);
+                                        setSelectedTags([]);
+                                      }
+                                      
+                                      setShowTagDialog(true);
                                     }}>
                                       <Tag className="mr-2 h-4 w-4" />
                                       Tag
@@ -4115,10 +4416,7 @@ export default function MessagingPage() {
                                           
                                           console.log('🗑️ REFETCH COMPLETED - deleted message should disappear immediately');
                                           
-                                          toast({ 
-                                            title: "Message Deleted", 
-                                            description: "Message has been deleted successfully" 
-                                          });
+                                          showSuccess("Message Deleted", "Message has been deleted successfully");
                                         } catch (error) {
                                           console.error('Delete error:', error);
                                           toast({ 
@@ -4135,11 +4433,14 @@ export default function MessagingPage() {
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
+                                </div>
                               </div>
                             </div>
                           )
                         })
                       )}
+                      {/* Invisible element at bottom for auto-scroll */}
+                      <div ref={messagesEndRef} />
                     </div>
                   </ScrollArea>
 
@@ -4188,6 +4489,244 @@ export default function MessagingPage() {
               )}
             </div>
           </div>
+
+          {/* Tag Message Dialog */}
+          <Dialog open={showTagDialog} onOpenChange={(open) => {
+            setShowTagDialog(open);
+            if (!open) {
+              setTaggedMessageContent("");
+              setTaggedMessageId("");
+              setSelectedTags([]);
+              setNewTagName("");
+              setNewTagColor("blue");
+            }
+          }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Tag Message</DialogTitle>
+                <DialogDescription>
+                  Tagging message: {taggedMessageContent}
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-4 py-4">
+                {/* Existing Tags Selection */}
+                <div>
+                  <Label className="text-sm font-medium mb-2 block">Select Tags</Label>
+                  {tagsLoading ? (
+                    <div className="text-sm text-gray-500">Loading tags...</div>
+                  ) : messageTags.length === 0 ? (
+                    <div className="text-sm text-gray-500">No tags available. Create a new tag below.</div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {messageTags.map((tag: any) => {
+                        const isSelected = selectedTags.includes(tag.id);
+                        const colorMap: Record<string, { bg: string; hover: string; text: string }> = {
+                          blue: { bg: '#3b82f6', hover: '#2563eb', text: '#ffffff' },
+                          red: { bg: '#ef4444', hover: '#dc2626', text: '#ffffff' },
+                          green: { bg: '#22c55e', hover: '#16a34a', text: '#ffffff' },
+                          yellow: { bg: '#eab308', hover: '#ca8a04', text: '#000000' },
+                          purple: { bg: '#a855f7', hover: '#9333ea', text: '#ffffff' },
+                          orange: { bg: '#f97316', hover: '#ea580c', text: '#ffffff' },
+                          pink: { bg: '#ec4899', hover: '#db2777', text: '#ffffff' },
+                          gray: { bg: '#6b7280', hover: '#4b5563', text: '#ffffff' },
+                        };
+                        const colors = colorMap[tag.color] || colorMap.blue;
+                        return (
+                          <Button
+                            key={tag.id}
+                            variant={isSelected ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => {
+                              if (isSelected) {
+                                setSelectedTags(selectedTags.filter(id => id !== tag.id));
+                              } else {
+                                setSelectedTags([...selectedTags, tag.id]);
+                              }
+                            }}
+                            style={isSelected ? {
+                              backgroundColor: colors.bg,
+                              color: colors.text,
+                            } : {}}
+                            className={isSelected ? 'hover:opacity-90' : ''}
+                          >
+                            <Tag className="h-3 w-3 mr-1" />
+                            {tag.name}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Create New Tag */}
+                <div className="border-t pt-4">
+                  <Label className="text-sm font-medium mb-2 block">Create New Tag</Label>
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Tag name"
+                        value={newTagName}
+                        onChange={(e) => setNewTagName(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Select value={newTagColor} onValueChange={setNewTagColor}>
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="blue">Blue</SelectItem>
+                          <SelectItem value="red">Red</SelectItem>
+                          <SelectItem value="green">Green</SelectItem>
+                          <SelectItem value="yellow">Yellow</SelectItem>
+                          <SelectItem value="purple">Purple</SelectItem>
+                          <SelectItem value="orange">Orange</SelectItem>
+                          <SelectItem value="pink">Pink</SelectItem>
+                          <SelectItem value="gray">Gray</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        if (!newTagName.trim()) {
+                          toast({
+                            title: "Validation Error",
+                            description: "Please enter a tag name",
+                            variant: "destructive"
+                          });
+                          return;
+                        }
+                        try {
+                          const response = await apiRequest('POST', '/api/messaging/tags', {
+                            name: newTagName.trim(),
+                            color: newTagColor
+                          });
+                          const newTag = await response.json();
+                          setSelectedTags([...selectedTags, newTag.id]);
+                          setNewTagName("");
+                          refetchTags();
+                          showSuccess("Tag Created", `Tag "${newTagName.trim()}" has been created and added to this message.`);
+                        } catch (error: any) {
+                          toast({
+                            title: "Error",
+                            description: error.message || "Failed to create tag",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                      disabled={!newTagName.trim()}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Create & Add Tag
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setShowTagDialog(false);
+                    setTaggedMessageContent("");
+                    setTaggedMessageId("");
+                    setSelectedTags([]);
+                    setNewTagName("");
+                    setNewTagColor("blue");
+                  }}
+                  data-testid="button-cancel-tag-dialog"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  variant="default" 
+                  onClick={async () => {
+                    if (!taggedMessageId) {
+                      toast({
+                        title: "Error",
+                        description: "Message ID is missing",
+                        variant: "destructive"
+                      });
+                      return;
+                    }
+                    
+                    try {
+                      console.log('🏷️ Saving tags for message:', taggedMessageId);
+                      console.log('🏷️ Selected tags:', selectedTags);
+                      
+                      // Get current message tags
+                      let currentTagIds: number[] = [];
+                      try {
+                        const currentTagsResponse = await apiRequest('GET', `/api/messaging/messages/${taggedMessageId}/tags`);
+                        if (currentTagsResponse.ok) {
+                          const currentTags = await currentTagsResponse.json();
+                          currentTagIds = currentTags.map((t: any) => t.id);
+                          console.log('🏷️ Current tags:', currentTagIds);
+                        }
+                      } catch (getTagsError: any) {
+                        // If tag tables don't exist, currentTagIds will be empty array
+                        console.warn('⚠️ Could not fetch current tags (tag tables may not exist):', getTagsError.message);
+                        currentTagIds = [];
+                      }
+                      
+                      // Remove tags that are no longer selected
+                      for (const tagId of currentTagIds) {
+                        if (!selectedTags.includes(tagId)) {
+                          try {
+                            await apiRequest('DELETE', `/api/messaging/messages/${taggedMessageId}/tags/${tagId}`);
+                            console.log('🏷️ Removed tag:', tagId);
+                          } catch (removeError: any) {
+                            console.error('❌ Error removing tag:', removeError);
+                            // Continue with other operations even if one fails
+                          }
+                        }
+                      }
+                      
+                      // Add newly selected tags
+                      for (const tagId of selectedTags) {
+                        if (!currentTagIds.includes(tagId)) {
+                          try {
+                            await apiRequest('POST', `/api/messaging/messages/${taggedMessageId}/tags`, { tagId });
+                            console.log('🏷️ Added tag:', tagId);
+                          } catch (addError: any) {
+                            console.error('❌ Error adding tag:', addError);
+                            // Continue with other operations even if one fails
+                          }
+                        }
+                      }
+                      
+                      // Refresh messages to show updated tags
+                      if (selectedConversation) {
+                        fetchMessages(selectedConversation);
+                      }
+                      
+                      showSuccess("Message Tagged", `Tags have been ${selectedTags.length > 0 ? 'updated' : 'removed'} successfully.`);
+                      
+                      setShowTagDialog(false);
+                      setTaggedMessageContent("");
+                      setTaggedMessageId("");
+                      setSelectedTags([]);
+                      setNewTagName("");
+                      setNewTagColor("blue");
+                    } catch (error: any) {
+                      console.error('❌ Error updating tags:', error);
+                      toast({
+                        title: "Error",
+                        description: error.message || "Failed to update tags. Make sure the tag migration has been run.",
+                        variant: "destructive"
+                      });
+                    }
+                  }}
+                  data-testid="button-confirm-tag-dialog"
+                >
+                  Save Tags
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
         </TabsContent>
 
         <TabsContent value="sms" className="space-y-6">
@@ -4205,10 +4744,33 @@ export default function MessagingPage() {
                     variant="outline" 
                     size="sm" 
                     onClick={async () => {
+                      setSmsRefreshLoading(true);
                       try {
-                        // Invalidate and refetch to ensure fresh data
-                        queryClient.invalidateQueries({ queryKey: ['/api/messaging/sms-messages'] });
-                        await refetchSmsMessages();
+                        // Make a fresh API call to get latest SMS messages
+                        const token = localStorage.getItem('auth_token');
+                        const response = await fetch('/api/messaging/sms-messages', {
+                          method: 'GET',
+                          headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'X-Tenant-Subdomain': localStorage.getItem('user_subdomain') || 'demo',
+                            'Content-Type': 'application/json'
+                          },
+                          credentials: 'include'
+                        });
+                        
+                        if (!response.ok) {
+                          throw new Error(`${response.status}: ${response.statusText}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        // Update the query cache with fresh data
+                        queryClient.setQueryData(['/api/messaging/sms-messages'], data);
+                        
+                        toast({
+                          title: "Success",
+                          description: "SMS messages refreshed successfully",
+                        });
                       } catch (error) {
                         console.error('Error refreshing SMS messages:', error);
                         toast({
@@ -4216,11 +4778,13 @@ export default function MessagingPage() {
                           description: "Failed to refresh SMS messages",
                           variant: "destructive"
                         });
+                      } finally {
+                        setSmsRefreshLoading(false);
                       }
                     }}
-                    disabled={smsLoading}
+                    disabled={smsLoading || smsRefreshLoading}
                   >
-                    <RefreshCw className={`h-4 w-4 mr-2 ${smsLoading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`h-4 w-4 mr-2 ${(smsLoading || smsRefreshLoading) ? 'animate-spin' : ''}`} />
                     Refresh
                   </Button>
                   <Badge variant="outline" className="text-sm">
@@ -4229,7 +4793,7 @@ export default function MessagingPage() {
                 </div>
               </div>
             </div>
-            <ScrollArea className="h-[600px]">
+            <ScrollArea className="h-[500px] overflow-y-auto">
               <div className="p-4 space-y-4">
                 {smsLoading ? (
                   <div className="flex items-center justify-center py-12">
@@ -4960,18 +5524,19 @@ export default function MessagingPage() {
 
           {/* All Campaigns Tab */}
           {campaignSubTab === "all" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {!campaigns || campaigns.length === 0 ? (
-              <Card className="col-span-2">
-                <CardContent className="p-8 text-center">
-                  <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <h3 className="text-lg font-medium mb-2">No campaigns yet</h3>
-                  <p className="text-sm text-gray-600">Create your first messaging campaign to engage patients and staff.</p>
-                </CardContent>
-              </Card>
-            ) : (
-              campaigns.map((campaign: Campaign) => (
-                <Card key={campaign.id}>
+          <div className="bg-white dark:bg-slate-900 rounded-lg h-[550px] overflow-y-auto p-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {!campaigns || campaigns.length === 0 ? (
+                <Card className="col-span-2 bg-white dark:bg-slate-900">
+                  <CardContent className="p-8 text-center">
+                    <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <h3 className="text-lg font-medium mb-2">No campaigns yet</h3>
+                    <p className="text-sm text-gray-600">Create your first messaging campaign to engage patients and staff.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                campaigns.map((campaign: Campaign) => (
+                  <Card key={campaign.id} className="bg-white dark:bg-slate-900">
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg">{campaign.name}</CardTitle>
@@ -5029,7 +5594,7 @@ export default function MessagingPage() {
                           <Button 
                             size="sm"
                             onClick={(e) => handleSendExistingCampaign(campaign, e)}
-                            disabled={sendingCampaignId === campaign.id || sendCampaignMutation.isPending}
+                            disabled={sendingCampaignId === campaign.id}
                             data-testid={`button-send-campaign-${campaign.id}`}
                           >
                             {sendingCampaignId === campaign.id ? "Sending..." : "Send Campaign"}
@@ -5038,8 +5603,12 @@ export default function MessagingPage() {
                         {campaign.status === 'sent' && (
                           <Button 
                             size="sm"
-                            onClick={(e) => handleSendExistingCampaign(campaign, e)}
-                            disabled={sendingCampaignId === campaign.id || sendCampaignMutation.isPending}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleSendExistingCampaign(campaign, e);
+                            }}
+                            disabled={sendingCampaignId === campaign.id}
                             data-testid={`button-resend-campaign-${campaign.id}`}
                           >
                             {sendingCampaignId === campaign.id ? "Sending..." : "Resend Campaign"}
@@ -5071,220 +5640,344 @@ export default function MessagingPage() {
                 </Card>
               ))
             )}
+            </div>
           </div>
           )}
 
           {/* SMS Campaign History Tab */}
           {campaignSubTab === "history" && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 mb-4">
-                <Smartphone className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-semibold">SMS Campaign History</h3>
-              </div>
-              
-              {!campaigns || campaigns.filter((c: Campaign) => c.status === 'sent' && (c.type === 'sms' || c.type === 'both')).length === 0 ? (
-                <Card>
-                  <CardContent className="p-8 text-center">
-                    <Smartphone className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <h3 className="text-lg font-medium mb-2">No SMS campaigns sent yet</h3>
-                    <p className="text-sm text-gray-600">SMS campaigns you send will appear here with their complete history.</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="space-y-4">
-                  {campaigns
-                    .filter((c: Campaign) => c.status === 'sent' && (c.type === 'sms' || c.type === 'both'))
-                    .sort((a: Campaign, b: Campaign) => {
-                      const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
-                      const dateB = b.sentAt ? new Date(b.sentAt).getTime() : 0;
-                      return dateB - dateA;
-                    })
-                    .map((campaign: Campaign) => (
-                      <Card key={campaign.id} className="border-l-4 border-l-green-500">
-                        <CardContent className="p-4">
-                          <div className="flex items-start justify-between">
-                            <div className="space-y-2 flex-1">
-                              <div className="flex items-center gap-3">
-                                <h4 className="font-semibold text-lg">{campaign.name}</h4>
-                                <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                                  <CheckCircle className="h-3 w-3 mr-1" />
-                                  Sent
-                                </Badge>
-                                <Badge variant="outline">
-                                  {campaign.type === 'email' ? <Mail className="h-3 w-3 mr-1" /> : <Smartphone className="h-3 w-3 mr-1" />}
-                                  {campaign.type.toUpperCase()}
-                                </Badge>
-                              </div>
-                              
-                              <p className="text-sm text-muted-foreground">{campaign.subject}</p>
-                              
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Sent At</div>
-                                  <div className="font-medium">
-                                    {campaign.sentAt ? format(new Date(campaign.sentAt), 'MMM dd, yyyy HH:mm') : 'N/A'}
+            <div className="bg-white dark:bg-slate-900 rounded-lg h-[550px] overflow-y-auto p-4">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <Smartphone className="h-5 w-5 text-primary" />
+                  <h3 className="text-lg font-semibold">SMS Campaign History</h3>
+                </div>
+
+                {!campaigns ||
+                campaigns.filter(
+                  (c: Campaign) =>
+                    c.status === "sent" && (c.type === "sms" || c.type === "both"),
+                ).length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <Smartphone className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <h3 className="text-lg font-medium mb-2">
+                        No SMS campaigns sent yet
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        SMS campaigns you send will appear here with their complete
+                        history.
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-4">
+                    {campaigns
+                      .filter(
+                        (c: Campaign) =>
+                          c.status === "sent" &&
+                          (c.type === "sms" || c.type === "both"),
+                      )
+                      .sort((a: Campaign, b: Campaign) => {
+                        const dateA = a.sentAt
+                          ? new Date(a.sentAt).getTime()
+                          : 0;
+                        const dateB = b.sentAt
+                          ? new Date(b.sentAt).getTime()
+                          : 0;
+                        return dateB - dateA;
+                      })
+                      .map((campaign: Campaign) => (
+                        <Card
+                          key={campaign.id}
+                          className="border-l-4 border-l-green-500"
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-2 flex-1">
+                                <div className="flex items-center gap-3">
+                                  <h4 className="font-semibold text-lg">
+                                    {campaign.name}
+                                  </h4>
+                                  <Badge
+                                    variant="secondary"
+                                    className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                                  >
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    Sent
+                                  </Badge>
+                                  <Badge variant="outline">
+                                    {campaign.type === "email" ? (
+                                      <Mail className="h-3 w-3 mr-1" />
+                                    ) : (
+                                      <Smartphone className="h-3 w-3 mr-1" />
+                                    )}
+                                    {campaign.type.toUpperCase()}
+                                  </Badge>
+                                </div>
+
+                                <p className="text-sm text-muted-foreground">
+                                  {campaign.subject}
+                                </p>
+
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Sent At
+                                    </div>
+                                    <div className="font-medium">
+                                      {campaign.sentAt
+                                        ? format(
+                                            new Date(campaign.sentAt),
+                                            "MMM dd, yyyy HH:mm",
+                                          )
+                                        : "N/A"}
+                                    </div>
+                                  </div>
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Recipients
+                                    </div>
+                                    <div className="font-medium">
+                                      {campaign.recipientCount}
+                                    </div>
+                                  </div>
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Delivered
+                                    </div>
+                                    <div className="font-medium text-green-600">
+                                      {campaign.sentCount}
+                                    </div>
+                                  </div>
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Open Rate
+                                    </div>
+                                    <div className="font-medium">
+                                      {campaign.openRate}%
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Recipients</div>
-                                  <div className="font-medium">{campaign.recipientCount}</div>
-                                </div>
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Delivered</div>
-                                  <div className="font-medium text-green-600">{campaign.sentCount}</div>
-                                </div>
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Open Rate</div>
-                                  <div className="font-medium">{campaign.openRate}%</div>
+
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
+                                  <Calendar className="h-3 w-3" />
+                                  Created:{" "}
+                                  {format(
+                                    new Date(campaign.createdAt),
+                                    "MMM dd, yyyy HH:mm",
+                                  )}
                                 </div>
                               </div>
-                              
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
-                                <Calendar className="h-3 w-3" />
-                                Created: {format(new Date(campaign.createdAt), 'MMM dd, yyyy HH:mm')}
+
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleViewCampaign(campaign)}
+                                  data-testid={`button-view-history-campaign-${campaign.id}`}
+                                >
+                                  View Details
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    handleSendExistingCampaign(campaign, e);
+                                  }}
+                                  disabled={sendingCampaignId === campaign.id}
+                                  data-testid={`button-resend-history-campaign-${campaign.id}`}
+                                >
+                                  {sendingCampaignId === campaign.id
+                                    ? "Sending..."
+                                    : "Resend Campaign"}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleDuplicateCampaign(campaign)
+                                  }
+                                  data-testid={`button-duplicate-history-campaign-${campaign.id}`}
+                                >
+                                  Duplicate
+                                </Button>
                               </div>
                             </div>
-                            
-                            <div className="flex gap-2">
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => handleViewCampaign(campaign)}
-                                data-testid={`button-view-history-campaign-${campaign.id}`}
-                              >
-                                View Details
-                              </Button>
-                              <Button 
-                                size="sm"
-                                onClick={(e) => handleSendExistingCampaign(campaign, e)}
-                                disabled={sendingCampaignId === campaign.id || sendCampaignMutation.isPending}
-                                data-testid={`button-resend-history-campaign-${campaign.id}`}
-                              >
-                                {sendingCampaignId === campaign.id ? "Sending..." : "Resend Campaign"}
-                              </Button>
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => handleDuplicateCampaign(campaign)}
-                                data-testid={`button-duplicate-history-campaign-${campaign.id}`}
-                              >
-                                Duplicate
-                              </Button>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))
-                  }
-                </div>
-              )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
           {/* Email Campaign History Tab */}
           {campaignSubTab === "email_history" && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 mb-4">
-                <Mail className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-semibold">Email Campaign History</h3>
-              </div>
-              
-              {!campaigns || campaigns.filter((c: Campaign) => c.status === 'sent' && (c.type === 'email' || c.type === 'both')).length === 0 ? (
-                <Card>
-                  <CardContent className="p-8 text-center">
-                    <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <h3 className="text-lg font-medium mb-2">No email campaigns sent yet</h3>
-                    <p className="text-sm text-gray-600">Email campaigns you send will appear here with their complete history.</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="space-y-4">
-                  {campaigns
-                    .filter((c: Campaign) => c.status === 'sent' && (c.type === 'email' || c.type === 'both'))
-                    .sort((a: Campaign, b: Campaign) => {
-                      const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
-                      const dateB = b.sentAt ? new Date(b.sentAt).getTime() : 0;
-                      return dateB - dateA;
-                    })
-                    .map((campaign: Campaign) => (
-                      <Card key={campaign.id} className="border-l-4 border-l-blue-500">
-                        <CardContent className="p-4">
-                          <div className="flex items-start justify-between">
-                            <div className="space-y-2 flex-1">
-                              <div className="flex items-center gap-3">
-                                <h4 className="font-semibold text-lg">{campaign.name}</h4>
-                                <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                                  <CheckCircle className="h-3 w-3 mr-1" />
-                                  Sent
-                                </Badge>
-                                <Badge variant="outline">
-                                  <Mail className="h-3 w-3 mr-1" />
-                                  {campaign.type.toUpperCase()}
-                                </Badge>
-                              </div>
-                              
-                              <p className="text-sm text-muted-foreground">{campaign.subject}</p>
-                              
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Sent At</div>
-                                  <div className="font-medium">
-                                    {campaign.sentAt ? format(new Date(campaign.sentAt), 'MMM dd, yyyy HH:mm') : 'N/A'}
+            <div className="bg-white dark:bg-slate-900 rounded-lg h-[550px] overflow-y-auto p-4">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <Mail className="h-5 w-5 text-primary" />
+                  <h3 className="text-lg font-semibold">Email Campaign History</h3>
+                </div>
+
+                {!campaigns ||
+                campaigns.filter(
+                  (c: Campaign) =>
+                    c.status === "sent" &&
+                    (c.type === "email" || c.type === "both"),
+                ).length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <h3 className="text-lg font-medium mb-2">
+                        No email campaigns sent yet
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Email campaigns you send will appear here with their
+                        complete history.
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-4">
+                    {campaigns
+                      .filter(
+                        (c: Campaign) =>
+                          c.status === "sent" &&
+                          (c.type === "email" || c.type === "both"),
+                      )
+                      .sort((a: Campaign, b: Campaign) => {
+                        const dateA = a.sentAt
+                          ? new Date(a.sentAt).getTime()
+                          : 0;
+                        const dateB = b.sentAt
+                          ? new Date(b.sentAt).getTime()
+                          : 0;
+                        return dateB - dateA;
+                      })
+                      .map((campaign: Campaign) => (
+                        <Card
+                          key={campaign.id}
+                          className="border-l-4 border-l-blue-500"
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-2 flex-1">
+                                <div className="flex items-center gap-3">
+                                  <h4 className="font-semibold text-lg">
+                                    {campaign.name}
+                                  </h4>
+                                  <Badge
+                                    variant="secondary"
+                                    className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                                  >
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    Sent
+                                  </Badge>
+                                  <Badge variant="outline">
+                                    <Mail className="h-3 w-3 mr-1" />
+                                    {campaign.type.toUpperCase()}
+                                  </Badge>
+                                </div>
+
+                                <p className="text-sm text-muted-foreground">
+                                  {campaign.subject}
+                                </p>
+
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Sent At
+                                    </div>
+                                    <div className="font-medium">
+                                      {campaign.sentAt
+                                        ? format(
+                                            new Date(campaign.sentAt),
+                                            "MMM dd, yyyy HH:mm",
+                                          )
+                                        : "N/A"}
+                                    </div>
+                                  </div>
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Recipients
+                                    </div>
+                                    <div className="font-medium">
+                                      {campaign.recipientCount}
+                                    </div>
+                                  </div>
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Delivered
+                                    </div>
+                                    <div className="font-medium text-green-600">
+                                      {campaign.sentCount}
+                                    </div>
+                                  </div>
+                                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                                    <div className="text-muted-foreground text-xs">
+                                      Open Rate
+                                    </div>
+                                    <div className="font-medium">
+                                      {campaign.openRate}%
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Recipients</div>
-                                  <div className="font-medium">{campaign.recipientCount}</div>
-                                </div>
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Delivered</div>
-                                  <div className="font-medium text-green-600">{campaign.sentCount}</div>
-                                </div>
-                                <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                                  <div className="text-muted-foreground text-xs">Open Rate</div>
-                                  <div className="font-medium">{campaign.openRate}%</div>
+
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
+                                  <Calendar className="h-3 w-3" />
+                                  Created:{" "}
+                                  {format(
+                                    new Date(campaign.createdAt),
+                                    "MMM dd, yyyy HH:mm",
+                                  )}
                                 </div>
                               </div>
-                              
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
-                                <Calendar className="h-3 w-3" />
-                                Created: {format(new Date(campaign.createdAt), 'MMM dd, yyyy HH:mm')}
+
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleViewCampaign(campaign)}
+                                  data-testid={`button-view-email-history-campaign-${campaign.id}`}
+                                >
+                                  View Details
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    handleSendExistingCampaign(campaign, e);
+                                  }}
+                                  disabled={sendingCampaignId === campaign.id}
+                                  data-testid={`button-resend-email-history-campaign-${campaign.id}`}
+                                >
+                                  {sendingCampaignId === campaign.id
+                                    ? "Sending..."
+                                    : "Resend Campaign"}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleDuplicateCampaign(campaign)
+                                  }
+                                  data-testid={`button-duplicate-email-history-campaign-${campaign.id}`}
+                                >
+                                  Duplicate
+                                </Button>
                               </div>
                             </div>
-                            
-                            <div className="flex gap-2">
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => handleViewCampaign(campaign)}
-                                data-testid={`button-view-email-history-campaign-${campaign.id}`}
-                              >
-                                View Details
-                              </Button>
-                              <Button 
-                                size="sm"
-                                onClick={(e) => handleSendExistingCampaign(campaign, e)}
-                                disabled={sendingCampaignId === campaign.id || sendCampaignMutation.isPending}
-                                data-testid={`button-resend-email-history-campaign-${campaign.id}`}
-                              >
-                                {sendingCampaignId === campaign.id ? "Sending..." : "Resend Campaign"}
-                              </Button>
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => handleDuplicateCampaign(campaign)}
-                                data-testid={`button-duplicate-email-history-campaign-${campaign.id}`}
-                              >
-                                Duplicate
-                              </Button>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))
-                  }
-                </div>
-              )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -5661,53 +6354,70 @@ export default function MessagingPage() {
             </DialogContent>
           </Dialog>
 
-          {/* Duplicate Announcement Dialog */}
-          <Dialog open={showDuplicateAnnouncementDialog} onOpenChange={(open) => {
-            setShowDuplicateAnnouncementDialog(open);
-            if (!open) {
-              setAnnouncementToDuplicate(null);
-              setDuplicateAnnouncementName("");
-            }
-          }}>
-            <DialogContent className="max-w-md">
+          {/* No Recipients Error Dialog */}
+          <Dialog open={showNoRecipientsDialog} onOpenChange={setShowNoRecipientsDialog}>
+            <DialogContent>
               <DialogHeader>
-                <DialogTitle>Duplicate Announcement</DialogTitle>
+                <DialogTitle>Failed to Send Campaign</DialogTitle>
                 <DialogDescription>
-                  This Announcement will be created as a follow-up to {announcementToDuplicate?.name || "the selected announcement"}.
+                  No recipients in this campaign. Please add recipients before sending.
                 </DialogDescription>
               </DialogHeader>
-              
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="duplicateAnnouncementName">Announcement Name</Label>
-                  <Input
-                    id="duplicateAnnouncementName"
-                    value={duplicateAnnouncementName}
-                    onChange={(e) => setDuplicateAnnouncementName(e.target.value)}
-                    placeholder="Enter announcement name"
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    This follow-up email is part of the same payment reminder sequence.
-                  </p>
-                </div>
-              </div>
-
               <DialogFooter>
                 <Button 
-                  variant="outline" 
-                  onClick={() => {
-                    setShowDuplicateAnnouncementDialog(false);
-                    setAnnouncementToDuplicate(null);
-                    setDuplicateAnnouncementName("");
-                  }}
+                  variant="default" 
+                  onClick={() => setShowNoRecipientsDialog(false)}
+                  data-testid="button-close-no-recipients-dialog"
                 >
-                  Cancel
+                  OK
                 </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Conversation Favorited Dialog */}
+          <Dialog open={showFavoriteDialog} onOpenChange={setShowFavoriteDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Conversation Favorited</DialogTitle>
+                <DialogDescription>
+                  Your conversation "{favoritedConversationName}" is favorited now
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
                 <Button 
-                  onClick={handleConfirmDuplicateAnnouncement}
-                  disabled={duplicateAnnouncementMutation.isPending || !duplicateAnnouncementName.trim()}
+                  variant="default" 
+                  onClick={() => {
+                    setShowFavoriteDialog(false);
+                    setFavoritedConversationName("");
+                  }}
+                  data-testid="button-close-favorite-dialog"
                 >
-                  {duplicateAnnouncementMutation.isPending ? "Creating..." : "Create Announcement"}
+                  OK
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Conversation Unfavorited Dialog */}
+          <Dialog open={showUnfavoriteDialog} onOpenChange={setShowUnfavoriteDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Conversation Unfavorited</DialogTitle>
+                <DialogDescription>
+                  Your conversation "{unfavoritedConversationName}" has been removed from favorites
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button 
+                  variant="default" 
+                  onClick={() => {
+                    setShowUnfavoriteDialog(false);
+                    setUnfavoritedConversationName("");
+                  }}
+                  data-testid="button-close-unfavorite-dialog"
+                >
+                  OK
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -5824,7 +6534,9 @@ export default function MessagingPage() {
                             <div key={recipient.id || index} className="p-4">
                               <div className="flex flex-col gap-2">
                                 <div className="flex items-center gap-2">
-                                  <Badge variant="secondary" className="capitalize text-xs">{recipient.role}</Badge>
+                                  <Badge variant="secondary" className="capitalize text-xs">
+                                    {recipient.role}
+                                  </Badge>
                                 </div>
                                 <span className="font-semibold text-base">{recipient.name}</span>
                                 <div className="flex flex-col gap-1">
@@ -5999,33 +6711,34 @@ export default function MessagingPage() {
             </Dialog>
           </div>
 
-          {templatesLoading ? (
-            <Card>
-              <CardContent className="p-6">
-                <div className="text-center py-8 text-gray-500">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                  <p>Loading templates...</p>
-                </div>
-              </CardContent>
-            </Card>
-          ) : !templates || templates.length === 0 ? (
-            <Card>
-              <CardContent className="p-6">
-                <div className="text-center py-8 text-gray-500">
-                  <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <h3 className="text-lg font-medium mb-2">No Announcements Yet</h3>
-                  <p className="mb-4">Create your first message announcement to get started.</p>
-                  <Button onClick={() => setShowCreateTemplate(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Create Announcement
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {templates.map((template: any) => (
-                <Card key={template.id} className="hover:shadow-md transition-shadow">
+          <div className="bg-white dark:bg-slate-900 rounded-lg h-[550px] overflow-y-auto p-4">
+            {templatesLoading ? (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="text-center py-8 text-gray-500">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p>Loading templates...</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : !templates || templates.length === 0 ? (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="text-center py-8 text-gray-500">
+                    <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <h3 className="text-lg font-medium mb-2">No Announcements Yet</h3>
+                    <p className="mb-4">Create your first message announcement to get started.</p>
+                    <Button onClick={() => setShowCreateTemplate(true)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create Announcement
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {templates.map((template: any) => (
+                  <Card key={template.id} className="bg-white dark:bg-slate-900 hover:shadow-md transition-shadow">
                   <CardHeader>
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -6096,7 +6809,8 @@ export default function MessagingPage() {
                 </Card>
               ))}
             </div>
-          )}
+            )}
+          </div>
 
           {/* Use Template Dialog */}
           <Dialog open={showUseTemplate} onOpenChange={setShowUseTemplate}>
@@ -6367,6 +7081,58 @@ export default function MessagingPage() {
                   data-testid="button-confirm-delete-template"
                 >
                   {deleteTemplateMutation.isPending ? "Deleting..." : "Delete"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Duplicate Announcement Dialog */}
+          <Dialog open={showDuplicateAnnouncementDialog} onOpenChange={(open) => {
+            setShowDuplicateAnnouncementDialog(open);
+            if (!open) {
+              setAnnouncementToDuplicate(null);
+              setDuplicateAnnouncementName("");
+            }
+          }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Duplicate Announcement</DialogTitle>
+                <DialogDescription>
+                  This Announcement will be created as a follow-up to {announcementToDuplicate?.name || "the selected announcement"}.
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="duplicateAnnouncementName">Announcement Name</Label>
+                  <Input
+                    id="duplicateAnnouncementName"
+                    value={duplicateAnnouncementName}
+                    onChange={(e) => setDuplicateAnnouncementName(e.target.value)}
+                    placeholder="Enter announcement name"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    This follow-up email is part of the same payment reminder sequence.
+                  </p>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setShowDuplicateAnnouncementDialog(false);
+                    setAnnouncementToDuplicate(null);
+                    setDuplicateAnnouncementName("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleConfirmDuplicateAnnouncement}
+                  disabled={duplicateAnnouncementMutation.isPending || !duplicateAnnouncementName.trim()}
+                >
+                  {duplicateAnnouncementMutation.isPending ? "Creating..." : "Create Announcement"}
                 </Button>
               </DialogFooter>
             </DialogContent>

@@ -202,7 +202,7 @@ export function NotificationBell() {
       try {
         const response = await apiRequest("GET", "/api/notifications/unread-count");
         if (!response.ok) {
-          // If authentication error, return 0 count instead of throwing
+          // If authentication error or connection error, return 0 count instead of throwing
           if (response.status === 401 || response.status === 500) {
             console.warn("Failed to fetch unread count - authentication issue, returning 0");
             return { count: 0 };
@@ -210,8 +210,13 @@ export function NotificationBell() {
           throw new Error("Failed to fetch unread count");
         }
         return response.json();
-      } catch (error) {
+      } catch (error: any) {
         // Handle errors gracefully - return 0 count instead of breaking the UI
+        // Check for connection refused or network errors
+        if (error?.message?.includes("Failed to fetch") || error?.message?.includes("ERR_CONNECTION_REFUSED")) {
+          console.warn("Connection error fetching unread count (server may be starting), returning 0");
+          return { count: 0 };
+        }
         console.error("Error fetching unread count:", error);
         return { count: 0 };
       }
