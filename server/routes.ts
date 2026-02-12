@@ -6583,7 +6583,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   });
 
   // Get lab tests pricing
-  app.get("/api/pricing/lab-tests", authMiddleware, async (req: TenantRequest, res) => {
+  app.get("/api/pricing/lab-tests", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
     try {
       if (!req.tenant) {
         return res.status(401).json({ error: "Organization not found" });
@@ -6607,6 +6607,199 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("Error fetching lab tests pricing:", error);
       res.status(500).json({ error: "Failed to fetch lab tests pricing", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Delete lab test pricing
+  app.delete("/api/pricing/lab-tests/:id", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const testId = parseInt(req.params.id);
+
+      if (isNaN(testId)) {
+        return res.status(400).json({ error: "Invalid lab test ID" });
+      }
+
+      // Check if lab test exists and belongs to organization
+      const existingTest = await db
+        .select()
+        .from(schema.labTestPricing)
+        .where(
+          and(
+            eq(schema.labTestPricing.id, testId),
+            eq(schema.labTestPricing.organizationId, organizationId)
+          )
+        )
+        .limit(1);
+
+      if (existingTest.length === 0) {
+        return res.status(404).json({ error: "Lab test not found" });
+      }
+
+      // Delete the lab test
+      await db
+        .delete(schema.labTestPricing)
+        .where(
+          and(
+            eq(schema.labTestPricing.id, testId),
+            eq(schema.labTestPricing.organizationId, organizationId)
+          )
+        );
+
+      console.log(`[LAB TESTS PRICING] Deleted lab test ${testId} for organization ${organizationId}`);
+      res.json({ success: true, message: "Lab test deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting lab test pricing:", error);
+      res.status(500).json({ error: "Failed to delete lab test pricing", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Create lab test pricing
+  app.post("/api/pricing/lab-tests", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant || !req.user) {
+        return res.status(401).json({ error: "Organization or user not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const userId = req.user.id;
+
+      if (!req.body.testName || (req.body.testName && String(req.body.testName).trim() === "")) {
+        return res.status(400).json({ error: "Test name is required" });
+      }
+
+      if (req.body.basePrice === undefined || req.body.basePrice === null) {
+        return res.status(400).json({ error: "Base price is required" });
+      }
+
+      const basePrice = typeof req.body.basePrice === "number"
+        ? req.body.basePrice.toFixed(2)
+        : String(req.body.basePrice);
+
+      const labTestData: any = {
+        organizationId,
+        createdBy: userId,
+        testName: String(req.body.testName).trim(),
+        basePrice,
+        isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+        currency: req.body.currency || "GBP",
+        version: req.body.version ?? 1,
+      };
+
+      if (req.body.testCode !== undefined && req.body.testCode !== null && String(req.body.testCode).trim() !== "") {
+        labTestData.testCode = String(req.body.testCode).trim();
+      }
+      if (req.body.category !== undefined && req.body.category !== null && String(req.body.category).trim() !== "") {
+        labTestData.category = String(req.body.category).trim();
+      }
+      if (req.body.doctorId !== undefined && req.body.doctorId !== null) {
+        labTestData.doctorId = req.body.doctorId;
+      }
+      if (req.body.doctorName !== undefined && req.body.doctorName !== null && String(req.body.doctorName).trim() !== "") {
+        labTestData.doctorName = String(req.body.doctorName).trim();
+      }
+      if (req.body.doctorRole !== undefined && req.body.doctorRole !== null && String(req.body.doctorRole).trim() !== "") {
+        labTestData.doctorRole = String(req.body.doctorRole).trim();
+      }
+      if (req.body.notes !== undefined && req.body.notes !== null && String(req.body.notes).trim() !== "") {
+        labTestData.notes = String(req.body.notes).trim();
+      }
+
+      const validatedData = schema.insertLabTestPricingSchema.parse(labTestData);
+
+      const [newTest] = await db
+        .insert(schema.labTestPricing)
+        .values(validatedData)
+        .returning();
+
+      console.log(`[LAB TESTS PRICING] Created lab test ${newTest.id} for organization ${organizationId}`);
+      res.status(201).json(newTest);
+    } catch (error) {
+      console.error("Error creating lab test pricing:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Invalid request data",
+          details: error.errors.map((err: any) => ({
+            path: err.path.join("."),
+            message: err.message,
+          })),
+        });
+      }
+      res.status(500).json({
+        error: "Failed to create lab test pricing",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Update lab test pricing
+  app.patch("/api/pricing/lab-tests/:id", tenantMiddleware, authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      if (!req.tenant) {
+        return res.status(401).json({ error: "Organization not found" });
+      }
+
+      const organizationId = req.tenant.id;
+      const testId = parseInt(req.params.id);
+
+      if (isNaN(testId)) {
+        return res.status(400).json({ error: "Invalid lab test ID" });
+      }
+
+      const existingTest = await db
+        .select()
+        .from(schema.labTestPricing)
+        .where(
+          and(
+            eq(schema.labTestPricing.id, testId),
+            eq(schema.labTestPricing.organizationId, organizationId)
+          )
+        )
+        .limit(1);
+
+      if (existingTest.length === 0) {
+        return res.status(404).json({ error: "Lab test not found" });
+      }
+
+      const updateData: any = { ...req.body };
+      delete updateData.id;
+      delete updateData.organizationId;
+      delete updateData.createdAt;
+      delete updateData.updatedAt;
+      delete updateData.createdBy;
+
+      if (updateData.basePrice !== undefined) {
+        updateData.basePrice = typeof updateData.basePrice === "number"
+          ? updateData.basePrice.toFixed(2)
+          : String(updateData.basePrice);
+      }
+
+      const [updatedTest] = await db
+        .update(schema.labTestPricing)
+        .set({
+          ...updateData,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.labTestPricing.id, testId),
+            eq(schema.labTestPricing.organizationId, organizationId)
+          )
+        )
+        .returning();
+
+      console.log(`[LAB TESTS PRICING] Updated lab test ${testId} for organization ${organizationId}`);
+      res.json(updatedTest);
+    } catch (error) {
+      console.error("Error updating lab test pricing:", error);
+      res.status(500).json({
+        error: "Failed to update lab test pricing",
+        details: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 

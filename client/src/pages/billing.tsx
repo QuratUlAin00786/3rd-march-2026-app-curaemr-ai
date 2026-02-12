@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, buildUrl } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -245,6 +245,10 @@ function PricingManagementDashboard() {
   const [isDeletingAllImaging, setIsDeletingAllImaging] = useState(false);
   const [currentlyDeletingImaging, setCurrentlyDeletingImaging] = useState<string>("");
   const [deleteProgress, setDeleteProgress] = useState({ current: 0, total: 0 });
+  const [showDeleteAllLabTestsDialog, setShowDeleteAllLabTestsDialog] = useState(false);
+  const [isDeletingAllLabTests, setIsDeletingAllLabTests] = useState(false);
+  const [currentlyDeletingLabTest, setCurrentlyDeletingLabTest] = useState<string>("");
+  const [deleteLabTestProgress, setDeleteLabTestProgress] = useState({ current: 0, total: 0 });
   const [duplicateServiceNames, setDuplicateServiceNames] = useState<string[]>([]);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   
@@ -605,22 +609,19 @@ function PricingManagementDashboard() {
     queryKey: ["/api/pricing/lab-tests"],
     queryFn: async () => {
       const data = await fetchResource("/api/pricing/lab-tests");
-      console.log('[LAB TESTS] Fetched data:', data, 'Type:', typeof data, 'IsArray:', Array.isArray(data));
       // Handle different response formats
       if (Array.isArray(data)) {
         return data;
-      } else if (data && typeof data === 'object' && 'data' in data && Array.isArray(data.data)) {
-        // Handle wrapped response { data: [...] }
-        return data.data;
-      } else if (data && typeof data === 'object' && Array.isArray(data.items)) {
-        // Handle wrapped response { items: [...] }
-        return data.items;
       }
-      // Return empty array if data is not in expected format
-      console.warn('[LAB TESTS] Unexpected data format:', data);
+      if (data && typeof data === "object" && "data" in data && Array.isArray((data as any).data)) {
+        return (data as any).data;
+      }
+      if (data && typeof data === "object" && Array.isArray((data as any).items)) {
+        return (data as any).items;
+      }
       return [];
     },
-    enabled: pricingTab === "lab-tests"
+    enabled: true
   });
   const labTests: any[] = Array.isArray(labTestsData) ? labTestsData : [];
 
@@ -719,6 +720,18 @@ function PricingManagementDashboard() {
       return;
     }
     setShowDeleteAllImagingDialog(true);
+  };
+
+  const handleDeleteAllLabTests = () => {
+    if (labTests.length === 0) {
+      toast({
+        title: "No items to delete",
+        description: "There are no lab tests to delete.",
+        variant: "destructive"
+      });
+      return;
+    }
+    setShowDeleteAllLabTestsDialog(true);
   };
 
   const confirmDeleteAllImaging = async () => {
@@ -830,6 +843,118 @@ function PricingManagementDashboard() {
       setIsDeletingAllImaging(false);
       setCurrentlyDeletingImaging("");
       setDeleteProgress({ current: 0, total: 0 });
+    }
+  };
+
+  const confirmDeleteAllLabTests = async () => {
+    setShowDeleteAllLabTestsDialog(false);
+    setIsDeletingAllLabTests(true);
+    setCurrentlyDeletingLabTest("");
+    setDeleteLabTestProgress({ current: 0, total: labTests.length });
+
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      const errors: string[] = [];
+      const deletedIds = new Set<number>();
+
+      // Delete all lab test items one by one with proper error handling
+      for (let i = 0; i < labTests.length; i++) {
+        const test = labTests[i];
+        try {
+          setCurrentlyDeletingLabTest(test.testName || test.testCode || `Test ${test.id}`);
+          setDeleteLabTestProgress({ current: i + 1, total: labTests.length });
+          const response = await apiRequest('DELETE', `/api/pricing/lab-tests/${test.id}`, {});
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            errors.push(`${test.testName || test.testCode}: ${errorText}`);
+            failCount++;
+          } else {
+            successCount++;
+            deletedIds.add(test.id);
+          }
+        } catch (error: any) {
+          errors.push(`${test.testName || test.testCode}: ${error.message || 'Failed to delete'}`);
+          failCount++;
+        }
+      }
+
+      // Update cache immediately - remove all successfully deleted items
+      // Use exact query key format that matches the useQuery hook
+      const queryKey = ["/api/pricing/lab-tests"];
+      
+      // Store the snapshot of current data before deletion
+      const currentData = queryClient.getQueryData<any[]>(queryKey) || [];
+      
+      // Remove the deleted items from cache immediately for instant UI update
+      // This prevents items from reappearing after deletion
+      const updatedData = currentData.filter((item: any) => !deletedIds.has(item.id));
+      
+      // Update cache with filtered data - this is the source of truth
+      queryClient.setQueryData(queryKey, updatedData);
+      
+      // Mark queries as stale but don't immediately refetch
+      // This ensures deleted items don't reappear from a server refetch
+      queryClient.invalidateQueries({ queryKey });
+      
+      // Only refetch in background after successful deletion to sync with server
+      // The cache update above ensures UI shows correct state even if refetch brings stale data
+      if (successCount > 0) {
+        // Use a longer delay to ensure server has processed all deletions
+        setTimeout(async () => {
+          try {
+            const refetchedData = await queryClient.refetchQueries({ queryKey });
+            // After refetch, ensure our cache update is still applied
+            // This handles edge cases where server might return stale data
+            const currentCache = queryClient.getQueryData<any[]>(queryKey) || [];
+            const finalData = currentCache.filter((item: any) => !deletedIds.has(item.id));
+            queryClient.setQueryData(queryKey, finalData);
+          } catch (error) {
+            // Silently handle refetch errors - cache update is already correct
+          }
+        }, 1000);
+      }
+
+      if (successCount > 0 && failCount === 0) {
+        toast({ 
+          title: "Success", 
+          description: `All ${successCount} lab test pricing entries deleted successfully` 
+        });
+      } else if (successCount > 0 && failCount > 0) {
+        toast({ 
+          title: "Partial Success", 
+          description: `Deleted ${successCount} entries, but ${failCount} failed. Check console for details.`,
+          variant: "destructive"
+        });
+        console.error("Delete errors:", errors);
+      } else {
+        toast({ 
+          title: "Delete Failed", 
+          description: `Failed to delete all entries. Check console for details.`,
+          variant: "destructive"
+        });
+        console.error("Delete errors:", errors);
+      }
+    } catch (error: any) {
+      let errorMessage = "Failed to delete all lab test entries";
+      
+      if (error.message && typeof error.message === 'string') {
+        if (!error.message.includes("{") && !error.message.includes(":")) {
+          errorMessage = error.message;
+        }
+      }
+      
+      toast({ 
+        title: "Delete Failed", 
+        description: errorMessage, 
+        variant: "destructive" 
+      });
+      console.error("Delete all error:", error);
+    } finally {
+      setIsDeletingAllLabTests(false);
+      setCurrentlyDeletingLabTest("");
+      setDeleteLabTestProgress({ current: 0, total: 0 });
     }
   };
 
@@ -1029,13 +1154,14 @@ function PricingManagementDashboard() {
       ];
 
       // Fetch existing lab tests to check for duplicates
-      const response = await fetch('/api/pricing/lab-tests', {
+      const response = await fetch("/api/pricing/lab-tests", {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-          'X-Tenant-Subdomain': localStorage.getItem('user_subdomain') || 'demo'
-        }
+          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+          "X-Tenant-Subdomain": localStorage.getItem("user_subdomain") || "demo",
+        },
       });
-      const existingTests = await response.json();
+      const raw = await response.json();
+      const existingTests = Array.isArray(raw) ? raw : [];
 
       let successCount = 0;
       let alreadyExistsCount = 0;
@@ -1050,76 +1176,62 @@ function PricingManagementDashboard() {
         }
 
         try {
-          await apiRequest('POST', '/api/pricing/lab-tests', {
-            testName: test.testName,
-            testCode: test.code,
-            category: test.category,
-            basePrice: test.basePrice,
-            isActive: true,
-            version: 1
+          const token = localStorage.getItem("auth_token");
+          const subdomain = localStorage.getItem("user_subdomain") || "demo";
+          const response = await fetch(buildUrl("/api/pricing/lab-tests"), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Tenant-Subdomain": subdomain,
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              testName: test.testName,
+              testCode: test.code,
+              category: test.category,
+              basePrice: Number(test.basePrice),
+              isActive: true,
+              currency: "GBP",
+              version: 1,
+            }),
           });
-          successCount++;
+          if (response.ok) {
+            successCount++;
+          } else {
+            const errText = await response.text();
+            console.error(`[Default Lab Tests] ${test.testName}: ${response.status}`, errText);
+          }
         } catch (error) {
           console.error(`Failed to add test ${test.testName}:`, error);
         }
       }
 
-      // Invalidate and refetch the lab tests query
-      // Add a small delay to ensure database transaction is committed
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      console.log('[LAB TESTS] Invalidating and refetching lab tests query, pricingTab:', pricingTab);
-      
-      // Invalidate the query cache
-      queryClient.invalidateQueries({ 
-        queryKey: ['/api/pricing/lab-tests'],
-        exact: false 
-      });
-      
-      // Explicitly refetch if we're on the lab-tests tab
-      if (pricingTab === "lab-tests") {
-        // Use the refetch function directly from the useQuery hook
-        try {
-          await refetchLabTests();
-          console.log('[LAB TESTS] Direct refetch completed');
-        } catch (refetchError) {
-          console.error('[LAB TESTS] Error during direct refetch:', refetchError);
-        }
-        
-        // Also try refetching via queryClient as a fallback
-        try {
-          const result = await queryClient.refetchQueries({ 
-            queryKey: ['/api/pricing/lab-tests'],
-            exact: false
-          });
-          console.log('[LAB TESTS] QueryClient refetch result:', result);
-        } catch (refetchError) {
-          console.error('[LAB TESTS] Error during queryClient refetch:', refetchError);
-        }
-        
-        // Also manually trigger a refetch after a short delay to ensure data is loaded
-        setTimeout(async () => {
-          try {
-            queryClient.invalidateQueries({ 
-              queryKey: ['/api/pricing/lab-tests'],
-              exact: false 
-            });
-            await refetchLabTests();
-            console.log('[LAB TESTS] Delayed refetch completed');
-          } catch (error) {
-            console.error('[LAB TESTS] Error during delayed refetch:', error);
-          }
-        }, 500);
-      } else {
-        console.log('[LAB TESTS] Not on lab-tests tab, skipping refetch');
-      }
+      await new Promise((r) => setTimeout(r, 400));
+      const fresh = await fetchResource("/api/pricing/lab-tests");
+      const normalized = Array.isArray(fresh)
+        ? fresh
+        : fresh && typeof fresh === "object" && "data" in fresh && Array.isArray((fresh as any).data)
+          ? (fresh as any).data
+          : fresh && typeof fresh === "object" && Array.isArray((fresh as any).items)
+            ? (fresh as any).items
+            : [];
+      queryClient.setQueryData(["/api/pricing/lab-tests"], normalized);
+      await queryClient.invalidateQueries({ queryKey: ["/api/pricing/lab-tests"], exact: true });
+      await refetchLabTests();
 
       if (alreadyExistsCount > 0 && successCount === 0) {
         setShowTestsExistsModal(true);
       } else if (successCount > 0) {
         toast({ 
           title: "Success", 
-          description: `Added ${successCount} default lab tests${alreadyExistsCount > 0 ? ` (${alreadyExistsCount} already existed)` : ''}` 
+          description: `Added ${successCount} default lab tests${alreadyExistsCount > 0 ? ` (${alreadyExistsCount} already existed)` : ""}` 
+        });
+      } else if (successCount === 0 && defaultTests.length > alreadyExistsCount) {
+        toast({ 
+          title: "Could not add default tests", 
+          description: "No tests were added. Check the browser console for errors.", 
+          variant: "destructive" 
         });
       }
     } catch (error: any) {
@@ -1628,7 +1740,7 @@ function PricingManagementDashboard() {
             testCode: formData.testCode,
             category: formData.category,
             basePrice: parseFloat(formData.basePrice) || 0,
-            currency: formData.currency || "USD",
+            currency: formData.currency || "GBP",
             isActive: formData.isActive !== undefined ? formData.isActive : true
           };
         } else if (pricingTab === "imaging") {
@@ -1914,16 +2026,27 @@ function PricingManagementDashboard() {
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-semibold">Lab Test Pricing</h3>
           <div className="flex gap-2">
+            {labTests.length > 0 && (
+              <Button 
+                size="sm" 
+                variant="destructive"
+                onClick={handleDeleteAllLabTests} 
+                data-testid="button-delete-all-lab-tests"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete All
+              </Button>
+            )}
             <Button 
               size="sm" 
               variant="outline"
               onClick={addDefaultLabTests} 
-              disabled={defaultTestsAdded || isAddingDefaultTests}
+              disabled={isAddingDefaultTests}
               data-testid="button-default-tests"
             >
               {isAddingDefaultTests ? "Adding..." : "Default Tests"}
             </Button>
-            {canCreate('billing') && (
+            {canCreate("billing") && (
               <Button size="sm" onClick={openAddDialog} data-testid="button-add-lab-test">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Lab Test
@@ -1974,7 +2097,7 @@ function PricingManagementDashboard() {
           <div className="text-center py-8">Loading...</div>
         ) : labTests.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <p>No lab test pricing configured yet. Click "Add Lab Test" to get started.</p>
+            <p>No lab test pricing configured yet. Click &quot;Default Tests&quot; to add sample tests or &quot;Add Lab Test&quot; to add one manually.</p>
           </div>
         ) : (() => {
           const filteredTests = labTests.filter((test: any) => {
@@ -2085,8 +2208,6 @@ function PricingManagementDashboard() {
                 <tr className="border-b bg-gray-50 dark:bg-gray-800">
                   <th className="text-left p-3">Imaging Type</th>
                   <th className="text-left p-3">Code</th>
-                  <th className="text-left p-3">Modality</th>
-                  <th className="text-left p-3">Body Part</th>
                   <th className="text-left p-3">Price</th>
                   <th className="text-left p-3">Status</th>
                   <th className="text-left p-3">Version</th>
@@ -2098,8 +2219,6 @@ function PricingManagementDashboard() {
                   <tr key={img.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800" data-testid={`row-imaging-${img.id}`}>
                     <td className="p-3 font-medium">{img.imagingType}</td>
                     <td className="p-3">{img.imagingCode || '-'}</td>
-                    <td className="p-3">{img.modality || '-'}</td>
-                    <td className="p-3">{img.bodyPart || '-'}</td>
                     <td className="p-3 font-semibold">{img.currency} {img.basePrice}</td>
                     <td className="p-3">
                       <Badge variant={img.isActive ? "default" : "secondary"}>
@@ -3801,6 +3920,75 @@ function PricingManagementDashboard() {
                 </div>
                 <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
                   {deleteProgress.current} of {deleteProgress.total} deleted
+                </p>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete All Lab Tests Confirmation Dialog */}
+      <Dialog open={showDeleteAllLabTestsDialog} onOpenChange={setShowDeleteAllLabTestsDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete All Lab Test Pricing</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete all {labTests.length} lab test pricing entries? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="space-x-2">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDeleteAllLabTestsDialog(false)}
+              disabled={isDeletingAllLabTests}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDeleteAllLabTests}
+              disabled={isDeletingAllLabTests}
+              data-testid="button-confirm-delete-all-lab-tests"
+            >
+              {isDeletingAllLabTests ? "Deleting..." : "Delete All"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete All Lab Tests Progress Dialog */}
+      <Dialog open={isDeletingAllLabTests} onOpenChange={() => {}}>
+        <DialogContent className="max-w-md" onInteractOutside={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>Deleting Lab Test Pricing...</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900 dark:border-gray-100"></div>
+              <div className="flex-1">
+                {currentlyDeletingLabTest ? (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Deleting: <span className="font-medium text-gray-900 dark:text-gray-100">{currentlyDeletingLabTest}</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Preparing to delete lab test entries...
+                  </p>
+                )}
+              </div>
+            </div>
+            {deleteLabTestProgress.total > 0 && (
+              <>
+                <div className="w-full bg-gray-200 rounded-full h-2 dark:bg-gray-700">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ 
+                      width: `${(deleteLabTestProgress.current / deleteLabTestProgress.total) * 100}%` 
+                    }}
+                  ></div>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                  {deleteLabTestProgress.current} of {deleteLabTestProgress.total} deleted
                 </p>
               </>
             )}
@@ -7444,14 +7632,14 @@ export default function BillingPage() {
             {!isAdmin ? (
               <div className="space-y-4">
                 {/* Filters and Actions */}
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
+                <Card className="overflow-hidden">
+                  <CardContent className="p-2 sm:p-3">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
                           {user?.role !== 'patient' && (
                             <Select value={statusFilter} onValueChange={setStatusFilter}>
-                              <SelectTrigger className="w-40" data-testid="select-status-filter">
+                              <SelectTrigger className="h-8 text-sm w-[7.5rem] min-w-0 shrink-0" data-testid="select-status-filter">
                                 <SelectValue placeholder="Filter by status" />
                               </SelectTrigger>
                               <SelectContent>
@@ -7471,18 +7659,19 @@ export default function BillingPage() {
                               <PopoverTrigger asChild>
                                 <Button
                                   variant="outline"
+                                  size="sm"
                                   role="combobox"
                                   aria-expanded={invoiceSearchOpen}
-                                  className="w-64 justify-between"
+                                  className="h-8 text-sm min-w-0 max-w-[11rem] justify-between shrink-0 truncate"
                                   data-testid="select-invoice-filter"
                                 >
-                                  {invoiceIdFilter === "all" 
+                                  <span className="truncate">{invoiceIdFilter === "all" 
                                     ? "Filter by Invoice Number..." 
                                     : displayInvoices?.find((inv: any) => 
                                         String(inv.invoiceNumber || inv.id) === invoiceIdFilter
                                       )?.invoiceNumber || invoiceIdFilter
-                                  }
-                                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                  }</span>
+                                  <ChevronsUpDown className="ml-1.5 h-3.5 w-3.5 shrink-0 opacity-50" />
                                 </Button>
                               </PopoverTrigger>
                             <PopoverContent className="w-64 p-0">
@@ -7544,8 +7733,8 @@ export default function BillingPage() {
                           )}
 
                           {canShowNewInvoiceButton && (
-                            <Button onClick={() => setShowNewInvoice(true)} className="ml-auto flex items-center gap-2">
-                              <Plus className="h-4 w-4" />
+                            <Button size="sm" onClick={() => setShowNewInvoice(true)} className="h-8 shrink-0 flex items-center gap-1.5">
+                              <Plus className="h-3.5 w-3.5" />
                               New Invoice
                             </Button>
                           )}
@@ -7553,7 +7742,7 @@ export default function BillingPage() {
                           {user?.role === 'doctor' && (
                             <>
                               <Select value={insuranceProviderFilter} onValueChange={setInsuranceProviderFilter}>
-                                <SelectTrigger className="w-52" data-testid="select-insurance-provider-filter">
+                                <SelectTrigger className="h-8 text-sm w-[8.5rem] min-w-0 shrink-0" data-testid="select-insurance-provider-filter">
                                   <SelectValue placeholder="Insurance Provider" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -7575,7 +7764,7 @@ export default function BillingPage() {
                               </Select>
 
                               <Select value={paymentMethodFilter} onValueChange={setPaymentMethodFilter}>
-                                <SelectTrigger className="w-48" data-testid="select-payment-method-filter">
+                                <SelectTrigger className="h-8 text-sm w-[7.5rem] min-w-0 shrink-0" data-testid="select-payment-method-filter">
                                   <SelectValue placeholder="Select payment method" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -7593,14 +7782,14 @@ export default function BillingPage() {
                           )}
 
                           {user?.role !== 'patient' && (
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-0.5 shrink-0">
                               <Label htmlFor="service-date-from" className="text-xs text-gray-600 dark:text-gray-400">Service Date From</Label>
                               <Input
                                 id="service-date-from"
                                 type="date"
                                 value={serviceDateFrom}
                                 onChange={(e) => setServiceDateFrom(e.target.value)}
-                                className="h-9 text-sm w-44"
+                                className="h-8 text-sm w-32 min-w-0"
                                 data-testid="input-service-date-from"
                               />
                             </div>
@@ -7610,6 +7799,7 @@ export default function BillingPage() {
                             <Button
                               variant="outline"
                               size="sm"
+                              className="h-8 shrink-0"
                               onClick={() => {
                                 setServiceDateFrom("");
                                 setInvoiceIdFilter("all");
@@ -7620,16 +7810,15 @@ export default function BillingPage() {
                                 }
                               }}
                               data-testid="button-clear-filters"
-                              className="mt-5"
                             >
-                              <Filter className="h-4 w-4 mr-2" />
+                              <Filter className="h-3.5 w-3.5 mr-1.5" />
                               Clear
                             </Button>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="list-view-toggle" className="text-sm font-medium text-gray-700 dark:text-gray-300">List View</Label>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Label htmlFor="list-view-toggle" className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">List View</Label>
                           <Switch 
                             id="list-view-toggle"
                             checked={isListView} 
@@ -8231,12 +8420,12 @@ export default function BillingPage() {
                 <TabsContent value="invoices" className="space-y-4 mt-6 w-full max-w-full overflow-hidden">
                   {/* Filters and Actions */}
                   <Card className="w-full max-w-full overflow-hidden">
-                    <CardContent className="p-4">
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
+                    <CardContent className="p-2 sm:p-3">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
                             <Select value={statusFilter} onValueChange={setStatusFilter}>
-                              <SelectTrigger className="w-40">
+                              <SelectTrigger className="h-8 text-sm w-[7.5rem] min-w-0 shrink-0">
                                 <SelectValue placeholder="Filter by status" />
                               </SelectTrigger>
                               <SelectContent>
@@ -8250,33 +8439,33 @@ export default function BillingPage() {
                               </SelectContent>
                             </Select>
 
-                            <div className="relative">
-                              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <div className="relative shrink-0">
+                              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                               <Input
                                 type="text"
                                 placeholder="Search by patient name"
                                 value={patientNameFilter}
                                 onChange={(e) => setPatientNameFilter(e.target.value)}
-                                className="pl-9 w-56 h-9 text-sm"
+                                className="pl-8 w-36 min-w-0 h-8 text-sm"
                                 data-testid="input-patient-name-filter"
                               />
                             </div>
 
-                            <div className="relative">
-                              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <div className="relative shrink-0">
+                              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                               <Input
                                 type="text"
                                 placeholder="Search by invoice ID"
                                 value={invoiceIdSearchFilter}
                                 onChange={(e) => setInvoiceIdSearchFilter(e.target.value)}
-                                className="pl-9 w-56 h-9 text-sm"
+                                className="pl-8 w-36 min-w-0 h-8 text-sm"
                                 data-testid="input-invoice-id-filter"
                               />
                             </div>
 
                             {user?.role === 'doctor' && (
                               <Select value={paymentMethodFilter} onValueChange={setPaymentMethodFilter}>
-                                <SelectTrigger className="w-52">
+                                <SelectTrigger className="h-8 text-sm w-[7.5rem] min-w-0 shrink-0">
                                   <SelectValue placeholder="Filter by payment method" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -8299,14 +8488,14 @@ export default function BillingPage() {
                               </Select>
                             )}
 
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-0.5 shrink-0">
                               <Label htmlFor="admin-service-date-from" className="text-xs text-gray-600 dark:text-gray-400">Service Date From</Label>
                               <Input
                                 id="admin-service-date-from"
                                 type="date"
                                 value={serviceDateFrom}
                                 onChange={(e) => setServiceDateFrom(e.target.value)}
-                                className="h-9 text-sm w-44"
+                                className="h-8 text-sm w-32 min-w-0"
                                 data-testid="input-admin-service-date-from"
                               />
                             </div>
@@ -8315,23 +8504,23 @@ export default function BillingPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className="h-8 shrink-0"
                                 onClick={() => {
                                   setServiceDateFrom("");
                                   setPatientNameFilter("");
                                   setInvoiceIdSearchFilter("");
                                 }}
                                 data-testid="button-admin-clear-filters"
-                                className="mt-5"
                               >
-                                <Filter className="h-4 w-4 mr-2" />
+                                <Filter className="h-3.5 w-3.5 mr-1.5" />
                                 Clear
                               </Button>
                             )}
                           </div>
                           
-                          <div className="flex items-center gap-4">
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
                             <div className="flex items-center gap-2">
-                              <Label htmlFor="admin-list-view-toggle" className="text-sm font-medium text-gray-700 dark:text-gray-300">List View</Label>
+                              <Label htmlFor="admin-list-view-toggle" className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">List View</Label>
                               <Switch 
                                 id="admin-list-view-toggle"
                                 checked={isListView} 
@@ -8339,14 +8528,12 @@ export default function BillingPage() {
                                 data-testid="switch-admin-list-view"
                               />
                             </div>
-                            <div className="ml-auto">
-                              {canShowNewInvoiceButton && (
-                                <Button onClick={() => setShowNewInvoice(true)}>
-                                  <Plus className="h-4 w-4 mr-2" />
-                                  New Invoice
-                                </Button>
-                              )}
-                            </div>
+                            {canShowNewInvoiceButton && (
+                              <Button size="sm" onClick={() => setShowNewInvoice(true)} className="h-8">
+                                <Plus className="h-3.5 w-3.5 mr-1.5" />
+                                New Invoice
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </div>

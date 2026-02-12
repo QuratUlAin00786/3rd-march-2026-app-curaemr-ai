@@ -8,7 +8,7 @@ import { LoadingSpinner } from "@/components/common/loading-spinner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Crown, Users, Calendar, Zap, Check, X, Package, Heart, Brain, Shield, Stethoscope, Phone, FileText, Activity, Pill, UserCheck, TrendingUp, Download, CreditCard, Printer, XCircle } from "lucide-react";
+import { Crown, Users, Calendar, Zap, Check, X, Package, Heart, Brain, Shield, Stethoscope, Phone, FileText, Activity, Pill, UserCheck, TrendingUp, Download, CreditCard, Printer } from "lucide-react";
 import { PaymentMethodDialog } from "@/components/payment-method-dialog";
 import { getTenantSubdomain, queryClient } from "@/lib/queryClient";
 import InvoiceTemplate from "@/pages/saas/components/InvoiceTemplate";
@@ -126,6 +126,7 @@ export default function Subscription() {
   const [showInvoiceDialog, setShowInvoiceDialog] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [isStripeLoading, setIsStripeLoading] = useState(false);
+  const [loadingPlanId, setLoadingPlanId] = useState<string | null>(null);
   const [stripeAlertOpen, setStripeAlertOpen] = useState(false);
   const [stripeAlertMessage, setStripeAlertMessage] = useState("");
   const invoiceRef = useRef<HTMLDivElement>(null);
@@ -139,7 +140,7 @@ export default function Subscription() {
       setStripeAlertOpen(true);
       return;
     }
-    setIsStripeLoading(true);
+    setLoadingPlanId(plan.id);
     try {
       const token = localStorage.getItem('auth_token');
       const subdomain = localStorage.getItem('user_subdomain') || 'demo';
@@ -174,7 +175,7 @@ export default function Subscription() {
       console.error('Error creating Stripe checkout:', error);
       alert('Failed to connect to payment service. Please try again.');
     } finally {
-      setIsStripeLoading(false);
+      setLoadingPlanId(null);
     }
   };
 
@@ -408,10 +409,10 @@ export default function Subscription() {
             </Alert>
           )}
           {subscription?.status === "active" && (
-            <Alert variant="destructive" className="flex items-start gap-3 pb-2">
-              <XCircle className="h-5 w-5 text-destructive" />
+            <Alert className="flex items-start gap-3 pb-2 border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30">
+              <Check className="h-5 w-5 text-emerald-600 dark:text-emerald-500 shrink-0 mt-0.5" />
               <div>
-                <AlertTitle className="text-sm">Subscription active</AlertTitle>
+                <AlertTitle className="text-sm text-emerald-800 dark:text-emerald-200">Subscription active</AlertTitle>
                 <AlertDescription className="text-sm text-muted-foreground">
                   Activated: {formatDateTime(subscription.currentPeriodStart ?? subscription.createdAt)} ·
                   Expires: {formatDateTime(subscription.expiresAt ?? subscription.nextBillingAt)}
@@ -622,9 +623,9 @@ export default function Subscription() {
                   </CardContent>
                   <div className="px-6 pb-6">
                     <Button 
-                      className="w-full"
+                      className="w-full text-sm"
                       variant={plan.popular ? "default" : "outline"}
-                      disabled={isStripeLoading}
+                      disabled={loadingPlanId === plan.id}
                       onClick={() => {
                         if (subscription?.plan === plan.id) {
                           setCurrentPlanData(plan);
@@ -635,10 +636,10 @@ export default function Subscription() {
                       }}
                       data-testid={`button-plan-${plan.id}`}
                     >
-                      {isStripeLoading ? "Loading..." : (
+                      {loadingPlanId === plan.id ? "Loading..." : (
                         subscription?.plan === plan.id 
                           ? "✓ Current Plan" 
-                          : "Upgrade Package"
+                          : `Upgrade (${plan.name}) Package`
                       )}
                     </Button>
                   </div>
