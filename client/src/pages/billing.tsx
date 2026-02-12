@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import jsPDF from "jspdf";
 import autoTable from 'jspdf-autotable';
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
@@ -348,6 +349,8 @@ function PricingManagementDashboard() {
   const [treatmentError, setTreatmentError] = useState("");
   const [isSavingTreatment, setIsSavingTreatment] = useState(false);
   const [editingTreatment, setEditingTreatment] = useState<any>(null);
+  const [bulkTreatmentSelections, setBulkTreatmentSelections] = useState<Record<string, { selected: boolean; price: string }>>({});
+  const [bulkDefaultPrice, setBulkDefaultPrice] = useState("");
 
   const closeTreatmentsInfoModal = () => {
     setShowTreatmentsInfoModal(false);
@@ -1045,6 +1048,16 @@ function PricingManagementDashboard() {
     });
     setTreatmentError("");
     setEditingTreatment(null);
+    setBulkDefaultPrice("");
+    setBulkTreatmentSelections(
+      (treatmentsInfoList || []).reduce(
+        (acc: Record<string, { selected: boolean; price: string }>, info: any) => ({
+          ...acc,
+          [String(info.id)]: { selected: false, price: "" }
+        }),
+        {}
+      )
+    );
     setShowAddTreatmentDialog(true);
   };
 
@@ -1138,6 +1151,53 @@ function PricingManagementDashboard() {
         description: msg,
         variant: "destructive",
       });
+    } finally {
+      setIsSavingTreatment(false);
+    }
+  };
+
+  const handleBulkTreatmentSave = async () => {
+    if (!treatmentForm.doctorId) {
+      setTreatmentError("Please select a role and doctor.");
+      return;
+    }
+    const selected = Object.entries(bulkTreatmentSelections).filter(([, v]) => v.selected && v.price.trim() !== "");
+    if (selected.length === 0) {
+      setTreatmentError("Select at least one treatment and enter a price for each.");
+      return;
+    }
+    const invalid = selected.filter(([, v]) => Number.isNaN(parseFloat(v.price)) || parseFloat(v.price) < 0);
+    if (invalid.length > 0) {
+      setTreatmentError("All selected treatments must have a valid price (number ≥ 0).");
+      return;
+    }
+    setTreatmentError("");
+    setIsSavingTreatment(true);
+    try {
+      let done = 0;
+      for (const [infoId, { price }] of selected) {
+        const info = treatmentsInfoList.find((i: any) => String(i.id) === infoId);
+        if (!info) continue;
+        const payload: any = {
+          name: info.name?.trim() || "",
+          basePrice: price.trim(),
+          colorCode: info.colorCode || "#000000",
+          doctorRole: treatmentForm.doctorRole || null,
+          doctorName: treatmentForm.doctorName || null,
+          doctorId: treatmentForm.doctorId,
+          currency: "GBP",
+        };
+        await apiRequest("POST", "/api/pricing/treatments", payload);
+        done += 1;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["/api/pricing/treatments"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/pricing/treatments"] });
+      setShowAddTreatmentDialog(false);
+      setBulkTreatmentSelections({});
+      toast({ title: "Success", description: `Added ${done} treatment(s).` });
+    } catch (error: any) {
+      setTreatmentError(error?.message || "Failed to add some treatments.");
+      toast({ title: "Error", description: error?.message || "Failed to add treatments.", variant: "destructive" });
     } finally {
       setIsSavingTreatment(false);
     }
@@ -3768,175 +3828,234 @@ function PricingManagementDashboard() {
       </Dialog>
 
       <Dialog open={showAddTreatmentDialog} onOpenChange={setShowAddTreatmentDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={editingTreatment ? "max-w-md" : "max-w-lg max-h-[90vh] flex flex-col"}>
           <DialogHeader>
             <DialogTitle>{editingTreatment ? "Edit Treatment" : "Add Treatment"}</DialogTitle>
             <DialogDescription>
               {editingTreatment
                 ? "Update the treatment details and save the changes."
-                : "Save a new treatment so it appears in the Pricing Management grid."}
+                : "Select all or multiple treatments, set each price (or use default price for all), then add them all at once for the chosen doctor."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 pt-2">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1 relative">
-                <Label htmlFor="treatmentRole">Role <span className="text-red-500">*</span></Label>
-                <Input
-                  id="treatmentRole"
-                  value={treatmentForm.doctorRole}
-                  onChange={(e) => {
-                    setTreatmentForm({ ...treatmentForm, doctorRole: e.target.value, doctorName: "", doctorId: null });
-                    setShowTreatmentRoleSuggestions(true);
-                  }}
-                  onClick={() => setShowTreatmentRoleSuggestions(true)}
-                  onMouseDown={() => setShowTreatmentRoleSuggestions(true)}
-                  placeholder="Select role"
-                  autoComplete="off"
-                />
-                {showTreatmentRoleSuggestions && (
-                  <div className="treatment-role-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
-                    {roles
-                      .filter((role: any) => 
-                        role.name !== 'patient' && 
-                        role.name !== 'admin' &&
-                        (!treatmentForm.doctorRole || 
-                        role.displayName.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()) ||
-                        role.name.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()))
-                      )
-                      .map((role: any, index: number) => (
-                        <div
-                          key={index}
-                          className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-                          onClick={() => {
-                            setTreatmentForm({ ...treatmentForm, doctorRole: role.name, doctorName: "", doctorId: null });
-                            setShowTreatmentRoleSuggestions(false);
-                          }}
-                        >
-                          <div className="font-medium text-sm">{role.displayName}</div>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-1 relative">
-                <Label htmlFor="treatmentDoctorName">Select Name <span className="text-red-500">*</span></Label>
-                <Input
-                  id="treatmentDoctorName"
-                  value={treatmentForm.doctorName}
-                  onChange={(e) => {
-                    setTreatmentForm({ ...treatmentForm, doctorName: e.target.value, doctorId: null });
-                    setShowTreatmentDoctorSuggestions(true);
-                  }}
-                  onFocus={() => {
-                    if (!treatmentForm.doctorRole) {
-                      return;
-                    }
-                    setShowTreatmentDoctorSuggestions(true);
-                  }}
-                  placeholder={treatmentForm.doctorRole ? "Type to search..." : "Select role first"}
-                  autoComplete="off"
-                  disabled={!treatmentForm.doctorRole}
-                />
-                {showTreatmentDoctorSuggestions && (
-                  <div className="treatment-doctor-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
-                    {users
-                      .filter((u: any) => {
-                        const matchesRole = !treatmentForm.doctorRole || u.role === treatmentForm.doctorRole;
-                        const matchesSearch = !treatmentForm.doctorName || 
-                          `${u.firstName} ${u.lastName}`.toLowerCase().includes(treatmentForm.doctorName.toLowerCase());
-                        return matchesRole && matchesSearch && u.role !== 'patient';
-                      })
-                      .map((u: any) => (
-                        <div
-                          key={u.id}
-                          className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-                          onClick={() => {
-                            setTreatmentForm({ 
-                              ...treatmentForm, 
-                              doctorName: `${u.firstName} ${u.lastName}`, 
-                              doctorId: u.id,
-                              doctorRole: u.role // Auto-update role if not set
-                            });
-                            setShowTreatmentDoctorSuggestions(false);
-                          }}
-                        >
+          {editingTreatment ? (
+            <div className="space-y-4 pt-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1 relative">
+                  <Label htmlFor="treatmentRole">Role <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="treatmentRole"
+                    value={treatmentForm.doctorRole}
+                    onChange={(e) => {
+                      setTreatmentForm({ ...treatmentForm, doctorRole: e.target.value, doctorName: "", doctorId: null });
+                      setShowTreatmentRoleSuggestions(true);
+                    }}
+                    onClick={() => setShowTreatmentRoleSuggestions(true)}
+                    onMouseDown={() => setShowTreatmentRoleSuggestions(true)}
+                    placeholder="Select role"
+                    autoComplete="off"
+                  />
+                  {showTreatmentRoleSuggestions && (
+                    <div className="treatment-role-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
+                      {roles
+                        .filter((role: any) =>
+                          role.name !== 'patient' && role.name !== 'admin' &&
+                          (!treatmentForm.doctorRole || role.displayName.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()) || role.name.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()))
+                        )
+                        .map((role: any, index: number) => (
+                          <div key={index} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { setTreatmentForm({ ...treatmentForm, doctorRole: role.name, doctorName: "", doctorId: null }); setShowTreatmentRoleSuggestions(false); }}>
+                            <div className="font-medium text-sm">{role.displayName}</div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1 relative">
+                  <Label htmlFor="treatmentDoctorName">Select Name <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="treatmentDoctorName"
+                    value={treatmentForm.doctorName}
+                    onChange={(e) => { setTreatmentForm({ ...treatmentForm, doctorName: e.target.value, doctorId: null }); setShowTreatmentDoctorSuggestions(true); }}
+                    onFocus={() => { if (treatmentForm.doctorRole) setShowTreatmentDoctorSuggestions(true); }}
+                    placeholder={treatmentForm.doctorRole ? "Type to search..." : "Select role first"}
+                    autoComplete="off"
+                    disabled={!treatmentForm.doctorRole}
+                  />
+                  {showTreatmentDoctorSuggestions && (
+                    <div className="treatment-doctor-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
+                      {users.filter((u: any) => (!treatmentForm.doctorRole || u.role === treatmentForm.doctorRole) && (!treatmentForm.doctorName || `${u.firstName} ${u.lastName}`.toLowerCase().includes(treatmentForm.doctorName.toLowerCase())) && u.role !== 'patient').map((u: any) => (
+                        <div key={u.id} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { setTreatmentForm({ ...treatmentForm, doctorName: `${u.firstName} ${u.lastName}`, doctorId: u.id, doctorRole: u.role }); setShowTreatmentDoctorSuggestions(false); }}>
                           <div className="font-medium text-sm">{u.firstName} {u.lastName}</div>
                           <div className="text-xs text-gray-500">{u.role}</div>
                         </div>
                       ))}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-
-            <div className="space-y-1">
-              <Label htmlFor="treatment-name">Treatment Name</Label>
-              <Select
-                value={treatmentForm.treatmentInfoId || ""}
-                onValueChange={(value) => {
-                  const selected = treatmentsInfoList.find((info: any) => info.id.toString() === value);
-                  setTreatmentForm({
-                    ...treatmentForm,
-                    treatmentInfoId: value,
-                    name: selected ? selected.name : "",
-                    colorCode: selected ? selected.colorCode : "#000000"
-                  });
-                }}
-                disabled={loadingTreatmentsInfo}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={loadingTreatmentsInfo ? "Loading treatments..." : "Select treatment"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {treatmentsInfoList.length === 0 ? (
-                    <SelectItem value="no-treatments-configured" disabled>
-                      No treatments configured
-                    </SelectItem>
-                  ) : (
-                    treatmentsInfoList.map((info: any) => (
+              <div className="space-y-1">
+                <Label htmlFor="treatment-name">Treatment Name</Label>
+                <Select value={treatmentForm.treatmentInfoId || ""} onValueChange={(value) => { const selected = treatmentsInfoList.find((i: any) => i.id.toString() === value); setTreatmentForm({ ...treatmentForm, treatmentInfoId: value, name: selected ? selected.name : "", colorCode: selected ? selected.colorCode : "#000000" }); }} disabled={loadingTreatmentsInfo}>
+                  <SelectTrigger><SelectValue placeholder={loadingTreatmentsInfo ? "Loading treatments..." : "Select treatment"} /></SelectTrigger>
+                  <SelectContent>
+                    {treatmentsInfoList.length === 0 ? <SelectItem value="no-treatments-configured" disabled>No treatments configured</SelectItem> : treatmentsInfoList.map((info: any) => (
                       <SelectItem key={`treatment-info-${info.id}`} value={info.id.toString()}>
                         <div className="flex items-center justify-between">
                           <span>{info.name}</span>
                           <span className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                            <span
-                              className="w-3 h-3 rounded-full border"
-                              style={{ backgroundColor: info.colorCode || "#000" }}
-                            />
+                            <span className="w-3 h-3 rounded-full border" style={{ backgroundColor: info.colorCode || "#000" }} />
                             {info.colorCode?.toUpperCase()}
                           </span>
                         </div>
                       </SelectItem>
-                    ))
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="treatment-price">Price (GBP)</Label>
+                <Input id="treatment-price" type="number" step="0.01" min="0" value={treatmentForm.basePrice} onChange={(e) => setTreatmentForm({ ...treatmentForm, basePrice: e.target.value })} placeholder="e.g. 5.00" />
+              </div>
+              {treatmentError && <p className="text-sm text-red-500">{treatmentError}</p>}
+            </div>
+          ) : (
+            <div className="space-y-4 pt-2 flex flex-col min-h-0">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1 relative">
+                  <Label htmlFor="bulk-treatmentRole">Role <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="bulk-treatmentRole"
+                    value={treatmentForm.doctorRole}
+                    onChange={(e) => { setTreatmentForm({ ...treatmentForm, doctorRole: e.target.value, doctorName: "", doctorId: null }); setShowTreatmentRoleSuggestions(true); }}
+                    onClick={() => setShowTreatmentRoleSuggestions(true)}
+                    onMouseDown={() => setShowTreatmentRoleSuggestions(true)}
+                    placeholder="Select role"
+                    autoComplete="off"
+                  />
+                  {showTreatmentRoleSuggestions && (
+                    <div className="treatment-role-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
+                      {roles.filter((role: any) => role.name !== 'patient' && role.name !== 'admin' && (!treatmentForm.doctorRole || role.displayName.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()) || role.name.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()))).map((role: any, index: number) => (
+                        <div key={index} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { setTreatmentForm({ ...treatmentForm, doctorRole: role.name, doctorName: "", doctorId: null }); setShowTreatmentRoleSuggestions(false); }}><div className="font-medium text-sm">{role.displayName}</div></div>
+                      ))}
+                    </div>
                   )}
-                </SelectContent>
-              </Select>
+                </div>
+                <div className="space-y-1 relative">
+                  <Label htmlFor="bulk-treatmentDoctorName">Select Name <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="bulk-treatmentDoctorName"
+                    value={treatmentForm.doctorName}
+                    onChange={(e) => { setTreatmentForm({ ...treatmentForm, doctorName: e.target.value, doctorId: null }); setShowTreatmentDoctorSuggestions(true); }}
+                    onFocus={() => { if (treatmentForm.doctorRole) setShowTreatmentDoctorSuggestions(true); }}
+                    placeholder={treatmentForm.doctorRole ? "Type to search..." : "Select role first"}
+                    autoComplete="off"
+                    disabled={!treatmentForm.doctorRole}
+                  />
+                  {showTreatmentDoctorSuggestions && (
+                    <div className="treatment-doctor-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
+                      {users.filter((u: any) => (!treatmentForm.doctorRole || u.role === treatmentForm.doctorRole) && (!treatmentForm.doctorName || `${u.firstName} ${u.lastName}`.toLowerCase().includes(treatmentForm.doctorName.toLowerCase())) && u.role !== 'patient').map((u: any) => (
+                        <div key={u.id} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { setTreatmentForm({ ...treatmentForm, doctorName: `${u.firstName} ${u.lastName}`, doctorId: u.id, doctorRole: u.role }); setShowTreatmentDoctorSuggestions(false); }}>
+                          <div className="font-medium text-sm">{u.firstName} {u.lastName}</div>
+                          <div className="text-xs text-gray-500">{u.role}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="select-all-treatments"
+                    checked={treatmentsInfoList.length > 0 && treatmentsInfoList.every((info: any) => bulkTreatmentSelections[String(info.id)]?.selected)}
+                    onCheckedChange={(checked) => {
+                      setBulkTreatmentSelections((prev) =>
+                        (treatmentsInfoList || []).reduce((acc: Record<string, { selected: boolean; price: string }>, info: any) => ({
+                          ...acc,
+                          [String(info.id)]: { ...prev[String(info.id)], selected: !!checked }
+                        }), {})
+                      );
+                    }}
+                  />
+                  <label htmlFor="select-all-treatments" className="text-sm font-medium cursor-pointer">Select all treatments</label>
+                </div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <Label htmlFor="bulk-default-price" className="text-sm text-gray-500 whitespace-nowrap">Default price (GBP):</Label>
+                  <Input
+                    id="bulk-default-price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="e.g. 50"
+                    className="w-24 h-8 text-sm"
+                    value={bulkDefaultPrice}
+                    onChange={(e) => setBulkDefaultPrice(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => {
+                      const val = bulkDefaultPrice.trim();
+                      if (val === "") return;
+                      setBulkTreatmentSelections((prev) =>
+                        (treatmentsInfoList || []).reduce((acc: Record<string, { selected: boolean; price: string }>, info: any) => ({
+                          ...acc,
+                          [String(info.id)]: { ...prev[String(info.id)], price: val }
+                        }), {})
+                      );
+                    }}
+                  >
+                    Apply to all
+                  </Button>
+                </div>
+              </div>
+              <div className="border rounded-md max-h-[280px] overflow-y-auto space-y-1 p-2">
+                {(treatmentsInfoList || []).length === 0 ? (
+                  <p className="text-sm text-gray-500 py-2">No treatments configured. Add entries under &quot;Add Treatments&quot; metadata first.</p>
+                ) : (
+                  (treatmentsInfoList || []).map((info: any) => {
+                    const id = String(info.id);
+                    const sel = bulkTreatmentSelections[id] ?? { selected: false, price: "" };
+                    return (
+                      <div key={info.id} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+                        <Checkbox
+                          checked={sel.selected}
+                          onCheckedChange={(checked) => setBulkTreatmentSelections((prev) => ({ ...prev, [id]: { ...prev[id], selected: !!checked } }))}
+                        />
+                        <span className="flex-1 text-sm truncate" title={info.name}>{info.name}</span>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Price"
+                          className="w-24 h-8 text-sm"
+                          value={sel.price}
+                          onChange={(e) => setBulkTreatmentSelections((prev) => ({ ...prev, [id]: { ...prev[id], price: e.target.value } }))}
+                        />
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              {treatmentError && <p className="text-sm text-red-500">{treatmentError}</p>}
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="treatment-price">Price (GBP)</Label>
-              <Input
-                id="treatment-price"
-                type="number"
-                step="0.01"
-                min="0"
-                value={treatmentForm.basePrice}
-                onChange={(e) => setTreatmentForm({ ...treatmentForm, basePrice: e.target.value })}
-                placeholder="e.g. 5.00"
-              />
-            </div>
-            {treatmentError && (
-              <p className="text-sm text-red-500">{treatmentError}</p>
-            )}
-          </div>
+          )}
 
           <DialogFooter className="space-x-2">
             <Button variant="outline" onClick={() => setShowAddTreatmentDialog(false)} disabled={isSavingTreatment}>
               Cancel
             </Button>
-            <Button onClick={handleTreatmentSave} disabled={isSavingTreatment}>
-              {isSavingTreatment ? "Saving..." : editingTreatment ? "Save Changes" : "Add New Treatments"}
-            </Button>
+            {editingTreatment ? (
+              <Button onClick={handleTreatmentSave} disabled={isSavingTreatment}>
+                {isSavingTreatment ? "Saving..." : "Save Changes"}
+              </Button>
+            ) : (
+              <Button onClick={handleBulkTreatmentSave} disabled={isSavingTreatment || (treatmentsInfoList || []).length === 0}>
+                {isSavingTreatment ? "Adding..." : "Add Selected Treatments"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -3365,47 +3365,27 @@ Report generated from Cura EMR System`;
                 <Card className="w-full max-w-full overflow-hidden">
                   <CardContent className="p-0 w-full max-w-full">
                     <div className="w-full max-w-full overflow-hidden">
-                      <table className="w-full" style={{ tableLayout: 'fixed', width: '100%' }}>
+                      <table className="w-full text-[11px]" style={{ tableLayout: 'fixed', width: '100%' }}>
                         <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
                           <tr>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                              Test ID
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '10%' }}>
-                              Patient Name
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '12%' }}>
-                              Test Type
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                              Ordered
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                              Priority
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                              Sample
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                              Report
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                              Test Status
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                              Status
-                            </th>
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                              Actions
-                            </th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '8%' }}>Test ID</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '10%' }}>Patient</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '12%' }}>Test Type</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '7%' }}>Ordered</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '6%' }}>Priority</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '7%' }}>Sample</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '7%' }}>Report</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '6%' }}>T.Status</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '7%' }}>Status</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '8%' }}>Actions</th>
                           </tr>
                         </thead>
                         <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-gray-700">
                           {[1, 2, 3, 4, 5].map((i) => (
                             <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                               {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((j) => (
-                                <td key={j} className="px-2 py-2">
-                                  <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded animate-pulse"></div>
+                                <td key={j} className="px-1 py-1.5">
+                                  <div className="h-3 bg-gray-200 dark:bg-slate-600 rounded animate-pulse"></div>
                                 </td>
                               ))}
                             </tr>
@@ -3449,55 +3429,27 @@ Report generated from Cura EMR System`;
               <Card className="w-full max-w-full overflow-hidden">
                 <CardContent className="p-0 w-full max-w-full">
                   <div className="w-full max-w-full overflow-hidden">
-                    <table className="w-full" style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <table className="w-full min-w-0 text-[11px]" style={{ tableLayout: 'fixed', width: '100%' }}>
                       <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
                         <tr>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Test ID
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '10%' }}>
-                            Patient Name
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '12%' }}>
-                            Test Type
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Ordered
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            Priority
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Test ID</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '9%' }}>Patient</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '10%' }}>Test Type</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Ordered</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Priority</th>
                           {activeTab !== "request" && (
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                              Prescription
-                            </th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Rx</th>
                           )}
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Sample
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Report
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            Test Status
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Status
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Payment
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            signed?
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Sample</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Report</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>T.Status</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Status</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Pay</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '4%' }}>Signed</th>
                           {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                              Create/Invoice/Sign
-                          </th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Inv/Sign</th>
                           )}
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Actions
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-gray-700">
@@ -3507,7 +3459,7 @@ Report generated from Cura EMR System`;
                             className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                             data-testid={`row-lab-result-${result.id}`}
                           >
-                            <td className="px-2 py-2 text-xs font-medium text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] font-medium text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={result.testId}>
                                 {result.testId}
                               </div>
@@ -3526,12 +3478,12 @@ Report generated from Cura EMR System`;
                                 </Button>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={getPatientName(result.patientId)}>
                                 {getPatientName(result.patientId)}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={result.testType}>
                                 {(() => {
                                   const tests = result.testType.split(' | ');
@@ -3556,22 +3508,22 @@ Report generated from Cura EMR System`;
                                 })()}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-500 dark:text-gray-400 min-w-0">
                               <div className="truncate" title={format(new Date(result.orderedAt), "MMM dd, yyyy")}>
                                 {format(new Date(result.orderedAt), "MMM dd, yyyy")}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                               <Badge
                                 variant={result.priority === "urgent" ? "destructive" : "secondary"}
-                                className="text-xs px-1.5 py-0"
+                                className="text-[10px] px-1 py-0"
                               >
                                 {result.priority || "routine"}
                               </Badge>
                             </td>
                             {activeTab !== "request" && (
-                              <td className="px-2 py-2 text-xs">
-                                <div className="flex items-center justify-center gap-1">
+                              <td className="px-1 py-1.5 text-[11px] min-w-0">
+                                <div className="flex items-center justify-center gap-0.5 flex-shrink-0">
                                   {/* Save/View Prescription PDF Button */}
                                   {activeTab === "generated" && (
                                     <Button
@@ -3613,11 +3565,11 @@ Report generated from Cura EMR System`;
                                           });
                                         }
                                       }}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                       data-testid={`button-prescription-pdf-${result.id}`}
                                       title="View Prescription PDF"
                                     >
-                                      <Save className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
+                                      <Save className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
                                     </Button>
                                   )}
                                   
@@ -3665,11 +3617,11 @@ Report generated from Cura EMR System`;
                                           });
                                         }
                                       }}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                       data-testid={`button-prescription-print-${result.id}`}
                                       title="Print Prescription PDF"
                                     >
-                                      <Printer className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                      <Printer className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                     </Button>
                                   )}
                                   
@@ -3731,47 +3683,47 @@ Report generated from Cura EMR System`;
                                           });
                                         }
                                       }}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                       data-testid={`button-prescription-download-${result.id}`}
                                       title="Download Prescription PDF"
                                     >
-                                      <Download className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                      <Download className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                                     </Button>
                                   )}
                                 </div>
                               </td>
                             )}
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                               {result.sampleCollected ? (
                                 <div className="flex items-center justify-center" title="Sample Collected">
-                                  <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                                  <CheckCircle className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                                 </div>
                               ) : (
                                 <div className="flex items-center justify-center" title="not collected">
-                                  <X className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                  <X className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
                                 </div>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                                 {result.labReportGenerated ? (
                                 <div className="flex items-center justify-center" title="Report Generated">
-                                  <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                                  <CheckCircle className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                                 </div>
                                 ) : (
                                 <div className="flex items-center justify-center" title="Report Not Generated">
-                                  <Clock className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                                  <Clock className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
                                 </div>
                                 )}
                             </td>
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                               <Badge
                                 variant={result.criticalValues ? "destructive" : "secondary"}
-                                className="text-xs px-1.5 py-0"
+                                className="text-[10px] px-1 py-0"
                               >
                                 {result.criticalValues ? "Critical" : "Normal"}
                               </Badge>
                             </td>
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                               {editingStatusId === result.id ? (
                                 <Select
                                   value={result.status}
@@ -3783,7 +3735,7 @@ Report generated from Cura EMR System`;
                                     setEditingStatusId(null);
                                   }}
                                 >
-                                  <SelectTrigger className="w-24 h-7 text-xs">
+                                  <SelectTrigger className="w-20 h-6 text-[11px]">
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -3795,8 +3747,8 @@ Report generated from Cura EMR System`;
                                   </SelectContent>
                                 </Select>
                               ) : (
-                                <div className="flex items-center gap-1">
-                                  <Badge className={`${getStatusColor(result.status)} text-xs px-1.5 py-0`}>
+                                <div className="flex items-center gap-0.5">
+                                  <Badge className={`${getStatusColor(result.status)} text-[10px] px-1 py-0`}>
                                     {result.status}
                                   </Badge>
                                   {user?.role !== 'patient' && (
@@ -3807,25 +3759,25 @@ Report generated from Cura EMR System`;
                                       className="h-5 w-5 p-0"
                                       data-testid={`button-edit-status-${result.id}`}
                                     >
-                                      <Edit className="h-3 w-3" />
+                                      <Edit className="h-2.5 w-2.5" />
                                     </Button>
                                   )}
                                 </div>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs">
-                              <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700 text-xs px-1.5 py-0 truncate max-w-full">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
+                              <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700 text-[10px] px-1 py-0 truncate max-w-full">
                                 <span className="truncate block">{(result as any).paymentMethod || 'N/A'}</span>
                               </Badge>
                             </td>
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                               <div className="flex items-center justify-center">
                                 {result.signature?.doctorSignature && 
                                  String(result.signature.doctorSignature).trim() !== "" ? (
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                    className="h-6 px-1.5 flex items-center gap-0.5 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                    className="h-5 px-1 flex items-center gap-0.5 text-green-600 hover:text-green-700 hover:bg-green-50"
                                     onClick={() => {
                                       setSelectedSignatureData({
                                         signedAt: result.signature?.signedAt,
@@ -3837,20 +3789,20 @@ Report generated from Cura EMR System`;
                                     }}
                                     title="View signature details"
                                       >
-                                    <CheckCircle className="h-3 w-3" />
-                                    <span className="text-xs">✓</span>
+                                    <CheckCircle className="h-2.5 w-2.5" />
+                                    <span className="text-[10px]">✓</span>
                                       </Button>
                                 ) : (
                                   <div className="flex items-center gap-0.5 text-red-600">
-                                    <X className="h-3 w-3" />
-                                    <span className="text-xs">✗</span>
+                                    <X className="h-2.5 w-2.5" />
+                                    <span className="text-[10px]">✗</span>
                                   </div>
                                 )}
                               </div>
                             </td>
                             {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
-                            <td className="px-2 py-2 text-xs">
-                              <div className="flex items-center gap-1 justify-center">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
+                              <div className="flex items-center gap-0.5 justify-center flex-shrink-0 flex-wrap">
                                 {(activeTab === "request" || activeTab === "generated") && user?.role !== 'patient' && (
                                   <>
                                       {activeTab === "request" && (
@@ -3872,22 +3824,22 @@ Report generated from Cura EMR System`;
                                             // Signature exists - proceed with PDF save
                                             await handleSavePrescriptionPdf(result.id);
                                           }}
-                                          className="h-6 w-6 p-0"
+                                          className="h-5 w-5 p-0"
                                           data-testid={`button-save-pdf-${result.id}`}
                                           title="Save Prescription PDF"
                                         >
-                                          <Save className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                          <Save className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                                         </Button>
                                       )}
                                       <Button
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => handleManageInvoice(result)}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         data-testid={`button-manage-invoice-${result.id}`}
                                         title="Manage Invoice"
                                       >
-                                        <PoundSterling className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                        <PoundSterling className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                       </Button>
                                     {(activeTab === "request" || activeTab === "generated") && (
                                       <Button
@@ -3898,11 +3850,11 @@ Report generated from Cura EMR System`;
                                           setHideTabs(true);
                                           setShowESignDialog(true);
                                         }}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         data-testid={`button-esign-${result.id}`}
                                         title="E-Sign"
                                       >
-                                        <PenTool className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                        <PenTool className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                       </Button>
                                     )}
                                   </>
@@ -3910,8 +3862,8 @@ Report generated from Cura EMR System`;
                               </div>
                             </td>
                             )}
-                            <td className="px-2 py-2 text-xs">
-                              <div className="flex items-center gap-0.5 justify-center flex-wrap">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
+                              <div className="flex items-center gap-0.5 justify-center flex-shrink-0 flex-wrap">
                                 {activeTab === "request" ? (
                                   <>
                                     {user?.role !== 'patient' && canEdit('lab_results') && (
@@ -3919,33 +3871,33 @@ Report generated from Cura EMR System`;
                                       variant="ghost"
                                       size="sm"
                                         onClick={() => handleViewResult(result)}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                         data-testid={`button-edit-${result.id}`}
                                         title="Edit"
                                     >
-                                        <Edit className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                        <Edit className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                     </Button>
                                     )}
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => handleGeneratePrescription(result)}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                       data-testid={`button-prescription-${result.id}`}
                                       title={user?.role === 'patient' ? 'View Prescription' : 'Generate Prescription'}
                                     >
-                                      <Eye className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                      <Eye className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                     </Button>
                                     {user?.role !== 'patient' && canDelete('lab_results') && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => handleDeleteResult(result.id)}
-                                        className="h-6 w-6 p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                                        className="h-5 w-5 p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
                                         data-testid={`button-delete-${result.id}`}
                                         title="Delete"
                                       >
-                                        <Trash2 className="h-3 w-3" />
+                                        <Trash2 className="h-2.5 w-2.5" />
                                       </Button>
                                     )}
                                   </>
@@ -3959,10 +3911,10 @@ Report generated from Cura EMR System`;
                                           setSelectedLabOrder(result);
                                           setShowFillResultDialog(true);
                                         }}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         data-testid={`button-generate-${result.id}`}
                                       >
-                                        <FileText className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                        <FileText className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                                       </Button>
                                     )}
                                   </>
@@ -4008,11 +3960,11 @@ Report generated from Cura EMR System`;
                                           });
                                         }
                                       }}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                       data-testid={`button-save-pdf-viewer-${result.id}`}
                                       title="View PDF"
                                     >
-                                      <Save className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
+                                      <Save className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
                                     </Button>
                                     <Button
                                       variant="ghost"
@@ -4056,11 +4008,11 @@ Report generated from Cura EMR System`;
                                           });
                                         }
                                       }}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                       data-testid={`button-print-${result.id}`}
                                       title="Print PDF"
                                     >
-                                      <Printer className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                      <Printer className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                     </Button>
                                     <Button
                                       variant="ghost"
@@ -4109,22 +4061,22 @@ Report generated from Cura EMR System`;
                                           });
                                         }
                                       }}
-                                      className="h-6 w-6 p-0"
+                                      className="h-5 w-5 p-0"
                                       data-testid={`button-download-${result.id}`}
                                       title="Download PDF"
                                     >
-                                      <Download className="h-3 w-3 text-purple-600 dark:text-purple-400" />
+                                      <Download className="h-2.5 w-2.5 text-purple-600 dark:text-purple-400" />
                                     </Button>
                                     {user?.role !== 'patient' && canDelete('lab_results') && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                         onClick={() => handleDeleteResult(result.id)}
-                                        className="h-6 w-6 p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                                        className="h-5 w-5 p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
                                         data-testid={`button-delete-${result.id}`}
                                         title="Delete Lab Result"
                                     >
-                                        <Trash2 className="h-3 w-3" />
+                                        <Trash2 className="h-2.5 w-2.5" />
                                     </Button>
                                     )}
                                   </>
@@ -4230,10 +4182,10 @@ Report generated from Cura EMR System`;
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setEditingStatusId(result.id)}
-                                className="h-6 w-6 p-0"
+                                className="h-5 w-5 p-0"
                                 data-testid="button-edit-status-list"
                               >
-                                <Edit className="h-3 w-3" />
+                                <Edit className="h-2.5 w-2.5" />
                               </Button>
                             )}
                           </>
@@ -4244,7 +4196,7 @@ Report generated from Cura EMR System`;
                           variant="destructive"
                           className="flex items-center gap-1"
                         >
-                          <AlertTriangle className="h-3 w-3" />
+                          <AlertTriangle className="h-2.5 w-2.5" />
                           Critical
                         </Badge>
                       )}
@@ -4431,7 +4383,7 @@ Report generated from Cura EMR System`;
                               className="text-xs sm:text-sm px-2 sm:px-3"
                               data-testid={`button-manage-invoice-card-${result.id}`}
                             >
-                              <PoundSterling className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                              <PoundSterling className="h-2.5 w-2.5 sm:h-4 sm:w-4 mr-1" />
                               <span className="hidden lg:inline">Invoice</span>
                               <span className="lg:hidden">£</span>
                             </Button>
@@ -4448,7 +4400,7 @@ Report generated from Cura EMR System`;
                               className="text-xs sm:text-sm px-2 sm:px-3"
                               data-testid="button-esign-card"
                             >
-                              <PenTool className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                              <PenTool className="h-2.5 w-2.5 sm:h-4 sm:w-4 mr-1" />
                               <span className="hidden lg:inline">E-Sign</span>
                               <span className="lg:hidden">Sign</span>
                             </Button>
@@ -4962,7 +4914,7 @@ Report generated from Cura EMR System`;
                               }}
                               className="ml-1 hover:text-red-500"
                             >
-                              <X className="h-3 w-3" />
+                              <X className="h-2.5 w-2.5" />
                             </button>
                           </Badge>
                         ))}
@@ -6913,7 +6865,7 @@ Report generated from Cura EMR System`;
                       }}
                     >
                       {test}
-                      <X className="ml-2 h-3 w-3" />
+                      <X className="ml-2 h-2.5 w-2.5" />
                     </Badge>
                   ))}
                 </div>
@@ -7490,7 +7442,7 @@ Report generated from Cura EMR System`;
                                           variant="ghost"
                                           size="sm"
                                           onClick={() => removeCustomField(testType, fieldIndex - (TEST_FIELD_DEFINITIONS[testType]?.length || 0))}
-                                          className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
+                                          className="h-5 w-5 p-0 text-red-600 hover:text-red-700"
                                         >
                                           <X className="h-4 w-4" />
                                         </Button>
@@ -7551,7 +7503,7 @@ Report generated from Cura EMR System`;
                                   )}
                                   {hasError && (
                                     <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                                      <AlertTriangle className="h-3 w-3" />
+                                      <AlertTriangle className="h-2.5 w-2.5" />
                                       {hasError}
                                     </p>
                                   )}
@@ -7612,7 +7564,7 @@ Report generated from Cura EMR System`;
                                             variant="ghost"
                                             size="sm"
                                             onClick={() => removeCustomField(testType, fieldIndex)}
-                                            className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
+                                            className="h-5 w-5 p-0 text-red-600 hover:text-red-700"
                                           >
                                             <X className="h-4 w-4" />
                                           </Button>
@@ -7653,7 +7605,7 @@ Report generated from Cura EMR System`;
                                         </div>
                                         {hasError && (
                                           <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                                            <AlertTriangle className="h-3 w-3" />
+                                            <AlertTriangle className="h-2.5 w-2.5" />
                                             {hasError}
                                           </p>
                                         )}
