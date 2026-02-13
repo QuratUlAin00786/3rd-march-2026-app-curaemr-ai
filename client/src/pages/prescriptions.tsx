@@ -5915,13 +5915,14 @@ export default function PrescriptionsPage() {
             <div className="space-y-2">
               {displayPrescriptions.length > 0 && (
                 <div className="border-b-2 border-gray-300 dark:border-gray-600 flex items-center gap-2 py-2 font-semibold text-sm text-gray-700 dark:text-gray-300">
-                  <div className={`flex-1 grid ${user?.role === "nurse" || user?.role === "doctor" ? "grid-cols-7" : "grid-cols-8"} gap-4 items-center`}>
+                  <div className={`flex-1 grid ${user?.role === "nurse" || user?.role === "doctor" ? "grid-cols-8" : "grid-cols-9"} gap-4 items-center`}>
                     <div>Prescription ID</div>
                     <div>Patient Name</div>
                     <div>Provider Name</div>
                     <div>Created At</div>
                     <div>Updated At</div>
                     <div>Status</div>
+                    <div className="text-center">.</div>
                     <div>signed?</div>
                     {user?.role !== "nurse" && user?.role !== "doctor" && (
                       <div>Created By</div>
@@ -5943,7 +5944,7 @@ export default function PrescriptionsPage() {
                   key={prescription.id || prescription.prescriptionNumber}
                   className="border-b border-gray-200 dark:border-gray-700 flex items-center gap-4 py-2 bg-white dark:bg-slate-900 hover:bg-gray-50 dark:hover:bg-slate-800"
                 >
-                  <div className={`flex-1 grid ${user?.role === "nurse" || user?.role === "doctor" ? "grid-cols-7" : "grid-cols-8"} gap-4 items-center text-sm`}>
+                  <div className={`flex-1 grid ${user?.role === "nurse" || user?.role === "doctor" ? "grid-cols-8" : "grid-cols-9"} gap-4 items-center text-sm`}>
                     <div className="text-gray-600 dark:text-gray-400 min-w-0">
                       <div className="truncate" title={prescription.prescriptionNumber || prescription.id || "N/A"}>
                       {prescription.prescriptionNumber || prescription.id || "N/A"}
@@ -6003,7 +6004,7 @@ export default function PrescriptionsPage() {
                         : "N/A"}
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1 min-w-0 max-w-full">
+                    <div className="min-w-0 max-w-full">
                       {editingStatusId === prescription.id ? (
                         <div className="flex flex-col gap-1 w-full">
                           <Select
@@ -6045,25 +6046,25 @@ export default function PrescriptionsPage() {
                           </div>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5">
-                          <Badge className={getStatusColor(prescription.status)}>
-                            {prescription.status || "active"}
-                          </Badge>
-                          {user?.role !== "patient" && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setEditingStatusId(prescription.id);
-                                setTempStatus(prescription.status || "active");
-                              }}
-                              className="h-5 w-5 p-0 hover:bg-gray-100 flex-shrink-0"
-                              title="Edit Status"
-                            >
-                              <Edit className="h-3 w-3" />
-                            </Button>
-                          )}
-                        </div>
+                        <Badge className={getStatusColor(prescription.status)}>
+                          {prescription.status || "active"}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-center min-w-0 flex-shrink-0">
+                      {editingStatusId !== prescription.id && user?.role !== "patient" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setEditingStatusId(prescription.id);
+                            setTempStatus(prescription.status || "active");
+                          }}
+                          className="h-5 w-5 p-0 hover:bg-gray-100 flex-shrink-0"
+                          title="Edit Status"
+                        >
+                          <Edit className="h-3 w-3" style={{ width: 12, height: 12 }} />
+                        </Button>
                       )}
                     </div>
                     <div className="flex items-center gap-2 min-w-0 flex-shrink-0">

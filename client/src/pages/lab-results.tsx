@@ -3443,7 +3443,8 @@ Report generated from Cura EMR System`;
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Sample</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Report</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>T.Status</th>
-                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Status</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '6%', minWidth: '5.5rem' }}>Status</th>
+                          <th className="px-1 py-1.5 text-center text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '2%', minWidth: '1.5rem' }}>.</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Pay</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '4%' }}>Signed</th>
                           {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
@@ -3747,22 +3748,22 @@ Report generated from Cura EMR System`;
                                   </SelectContent>
                                 </Select>
                               ) : (
-                                <div className="flex items-center gap-0.5">
-                                  <Badge className={`${getStatusColor(result.status)} text-[10px] px-1 py-0`}>
-                                    {result.status}
-                                  </Badge>
-                                  {user?.role !== 'patient' && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => setEditingStatusId(result.id)}
-                                      className="h-5 w-5 p-0"
-                                      data-testid={`button-edit-status-${result.id}`}
-                                    >
-                                      <Edit className="h-2.5 w-2.5" />
-                                    </Button>
-                                  )}
-                                </div>
+                                <Badge className={`${getStatusColor(result.status)} text-[10px] px-1 py-0 shrink-0`}>
+                                  {result.status}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-1 py-1.5 text-[11px] min-w-0 w-[1.5rem] shrink-0 text-center">
+                              {editingStatusId !== result.id && user?.role !== 'patient' && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setEditingStatusId(result.id)}
+                                  className="h-[18px] w-[18px] min-w-[18px] p-0 shrink-0 inline-flex items-center justify-center"
+                                  data-testid={`button-edit-status-${result.id}`}
+                                >
+                                  <Edit className="w-[9px] h-[9px] shrink-0" style={{ width: 9, height: 9 }} />
+                                </Button>
                               )}
                             </td>
                             <td className="px-1 py-1.5 text-[11px] min-w-0">
@@ -4182,10 +4183,10 @@ Report generated from Cura EMR System`;
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setEditingStatusId(result.id)}
-                                className="h-5 w-5 p-0"
+                                className="h-[18px] w-[18px] min-w-[18px] p-0 shrink-0 inline-flex items-center justify-center"
                                 data-testid="button-edit-status-list"
                               >
-                                <Edit className="h-2.5 w-2.5" />
+                                <Edit className="w-[9px] h-[9px] shrink-0" style={{ width: 9, height: 9 }} />
                               </Button>
                             )}
                           </>

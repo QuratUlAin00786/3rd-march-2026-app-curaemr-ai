@@ -3766,6 +3766,7 @@ export default function ImagingPage() {
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Radiologist</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Priority</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Status</th>
+                          <th className="px-1 py-1.5 text-center text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '2%', minWidth: '1.5rem' }}>.</th>
                           {activeTab === "order-study" && (
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Order Ready</th>
                           )}
@@ -4419,26 +4420,26 @@ export default function ImagingPage() {
                                   </div>
                                 </div>
                               ) : (
-                                <div className="flex items-center gap-0.5 min-w-0">
-                                  <Badge className={`${getStatusColor(study.status)} text-[10px] px-1 py-0.5 flex-shrink`}>
-                                    {study.status}
-                                  </Badge>
-                                  {user?.role !== 'patient' && activeTab !== "order-study" && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => {
-                                        setSelectedStudyId(study.id);
-                                        handleFieldEdit("status");
-                                      }}
-                                      className="h-4 w-4 p-0 flex-shrink-0 hover:bg-gray-100 dark:hover:bg-gray-800"
-                                      title="Edit Status"
-                                      data-testid={`button-edit-status-${study.id}`}
-                                    >
-                                      <Edit className="h-2.5 w-2.5" />
-                                    </Button>
-                                  )}
-                                </div>
+                                <Badge className={`${getStatusColor(study.status)} text-[10px] px-1 py-0.5 flex-shrink`}>
+                                  {study.status}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-1 py-1.5 text-[11px] min-w-0 w-[1.5rem] shrink-0 text-center">
+                              {selectedStudyId !== study.id && user?.role !== 'patient' && activeTab !== "order-study" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedStudyId(study.id);
+                                    handleFieldEdit("status");
+                                  }}
+                                  className="h-4 w-4 p-0 flex-shrink-0 hover:bg-gray-100 dark:hover:bg-gray-800 inline-flex items-center justify-center"
+                                  title="Edit Status"
+                                  data-testid={`button-edit-status-${study.id}`}
+                                >
+                                  <Edit className="h-2.5 w-2.5" style={{ width: 10, height: 10 }} />
+                                </Button>
                               )}
                             </td>
                             {activeTab === "order-study" && (
