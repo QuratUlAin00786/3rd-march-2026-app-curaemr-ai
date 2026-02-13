@@ -115,6 +115,19 @@ export function LiveKitVideoCall({
     };
   }, [room, localParticipant]);
 
+  // When the other participant leaves the room (they ended the call), close the call UI
+  useEffect(() => {
+    if (!room || !onDisconnect) return;
+    const handleParticipantDisconnected = () => {
+      console.log("[LiveKitVideoCall] Remote participant left – ending call");
+      onDisconnect();
+    };
+    room.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+    return () => {
+      room.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+    };
+  }, [room, onDisconnect]);
+
   // Attach remote video and audio tracks
   useEffect(() => {
     if (!room || !isConnected) return;

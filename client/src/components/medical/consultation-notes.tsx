@@ -28,7 +28,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { FileText, Plus, Calendar, User, Stethoscope, Pill, AlertTriangle, Mic, Square, Heart, Thermometer, Activity, Weight, Ruler, Calculator, History, Eye, ClipboardCheck, FileSpreadsheet, BookOpen, X, Printer, Save, CheckCircle, Clock, Trash2, Edit } from "lucide-react";
+import { FileText, Plus, Calendar, User, Stethoscope, Pill, AlertTriangle, Mic, Square, Heart, Thermometer, Activity, Weight, Ruler, Calculator, History, Eye, ClipboardCheck, FileSpreadsheet, BookOpen, X, Printer, Save, CheckCircle, Clock, Trash2, Edit, Download } from "lucide-react";
 import { format } from "date-fns";
 import type { MedicalRecord } from "@/types";
 
@@ -117,6 +117,9 @@ export default function ConsultationNotes({ patientId, patientName, patientNumbe
   const [activeTab, setActiveTab] = useState("vitals");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState<any>(null);
+  const [consultationFileToDelete, setConsultationFileToDelete] = useState<{ id: number; fileName: string } | null>(null);
+  const [deleteConsultationDialogOpen, setDeleteConsultationDialogOpen] = useState(false);
+  const [deletingConsultationFile, setDeletingConsultationFile] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -238,6 +241,8 @@ export default function ConsultationNotes({ patientId, patientName, patientNumbe
 
   const [patient, setPatient] = useState<any>(null);
 
+  const [recordsSectionTab, setRecordsSectionTab] = useState<"records" | "consultations">("records");
+
   // Use React Query for medical records to fix production caching issues
   const { data: medicalRecords = [], isLoading, refetch: refetchMedicalRecords } = useQuery<any[]>({
     queryKey: ['/api/patients', patientId, 'records'],
@@ -271,6 +276,72 @@ export default function ConsultationNotes({ patientId, patientName, patientNumbe
     gcTime: 0,
     enabled: !!patientId
   });
+
+  // Consultation PDFs (saved from View Full Consultation)
+  const { data: consultationFiles = [], isLoading: consultationFilesLoading, refetch: refetchConsultationFiles } = useQuery<{ id: number; fileName: string; filePath: string; createdAt: string }[]>({
+    queryKey: ["/api/patients", patientId, "consultation-files"],
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token");
+      const headers: Record<string, string> = {
+        "X-Tenant-Subdomain": getTenantSubdomain(),
+      };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch(`/api/patients/${patientId}/consultation-files`, {
+        headers,
+        credentials: "include",
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: !!patientId && recordsSectionTab === "consultations",
+  });
+
+  const handleViewConsultationFile = async (fileId: number) => {
+    const token = localStorage.getItem("auth_token");
+    const res = await fetch(`/api/consultation-files/${fileId}/download`, {
+      headers: {
+        Authorization: token ? `Bearer ${token}` : "",
+        "X-Tenant-Subdomain": getTenantSubdomain(),
+      },
+      credentials: "include",
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+
+  const handleDeleteConsultationFile = async () => {
+    if (!consultationFileToDelete) return;
+    setDeletingConsultationFile(true);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`/api/consultation-files/${consultationFileToDelete.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: token ? `Bearer ${token}` : "",
+          "X-Tenant-Subdomain": getTenantSubdomain(),
+        },
+        credentials: "include",
+      });
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: ["/api/patients", patientId, "consultation-files"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/patients", patientId, "records"] });
+        toast({ title: "Consultation PDF deleted", description: `"${consultationFileToDelete.fileName}" has been removed.` });
+        setDeleteConsultationDialogOpen(false);
+        setConsultationFileToDelete(null);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast({ title: "Delete failed", description: err?.error || "Could not delete file.", variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Delete failed", description: "Could not delete consultation file.", variant: "destructive" });
+    } finally {
+      setDeletingConsultationFile(false);
+    }
+  };
 
   // Define muscle coordinates for each anatomical image separately
   const muscleCoordinatesForImages = {
@@ -1001,8 +1072,8 @@ Analysis completed on: ${format(new Date(), 'PPpp')}`,
               onOpenChange={(open) => {
                 setIsAddingNote(open);
                 if (!open) {
-                  // Refresh medical records when dialog closes using React Query
                   queryClient.invalidateQueries({ queryKey: ['/api/patients', patientId, 'records'] });
+                  queryClient.invalidateQueries({ queryKey: ['/api/patients', patientId, 'consultation-files'] });
                 }
               }} 
               patient={patient}
@@ -1018,15 +1089,23 @@ Analysis completed on: ${format(new Date(), 'PPpp')}`,
       </CardHeader>
 
       <CardContent>
+        <Tabs value={recordsSectionTab} onValueChange={(v) => setRecordsSectionTab(v as "records" | "consultations")} className="w-full">
+          <TabsList className="grid w-full grid-cols-2 mb-3">
+            <TabsTrigger value="records">Medical Records</TabsTrigger>
+            <TabsTrigger value="consultations">Consultations</TabsTrigger>
+          </TabsList>
+          <TabsContent value="records" className="mt-0">
         <div className="space-y-4" style={{ height: '350px', overflowY: 'auto' }}>
-          {medicalRecords.length === 0 ? (
+          {(() => {
+            const recordsToShow = medicalRecords.filter((r: any) => r.title !== "Full Consultation Report");
+            return recordsToShow.length === 0 ? (
             <div className="text-center py-8 text-gray-500 dark:text-neutral-400">
               <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>No medical records found</p>
               <p className="text-sm">Click "Add Record" to create the first medical record.</p>
             </div>
           ) : (
-            medicalRecords.map((record: any) => (
+            recordsToShow.map((record: any) => (
               <Card key={record.id} className="hover:shadow-md transition-shadow">
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between mb-3">
@@ -1095,9 +1174,53 @@ Analysis completed on: ${format(new Date(), 'PPpp')}`,
                   )}
                 </CardContent>
               </Card>
-            ))
-          )}
+            )));
+          })()}
         </div>
+          </TabsContent>
+          <TabsContent value="consultations" className="mt-0">
+            <div className="space-y-4" style={{ height: "350px", overflowY: "auto" }}>
+              {consultationFilesLoading ? (
+                <p className="text-sm text-gray-500">Loading consultation PDFs...</p>
+              ) : consultationFiles.length === 0 ? (
+                <div className="text-center py-8 text-gray-500 dark:text-neutral-400">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No consultation PDFs yet</p>
+                  <p className="text-sm">Use &quot;View Full Consultation&quot; in Add Record to generate and save a PDF.</p>
+                </div>
+              ) : (
+                <ul className="space-y-2 border rounded-lg p-4 bg-gray-50 dark:bg-gray-900/50">
+                  {consultationFiles.map((f) => (
+                    <li key={f.id} className="flex items-center justify-between gap-4 py-2 border-b border-gray-200 dark:border-gray-700 last:border-0">
+                      <div>
+                        <span className="font-medium text-sm">{f.fileName}</span>
+                        <span className="text-gray-500 text-sm ml-2">{format(new Date(f.createdAt), "MMM d, yyyy HH:mm")}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => handleViewConsultationFile(f.id)}>
+                          <Download className="w-4 h-4 mr-1" />
+                          View / Download
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => {
+                            setConsultationFileToDelete({ id: f.id, fileName: f.fileName });
+                            setDeleteConsultationDialogOpen(true);
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          Delete
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </TabsContent>
+        </Tabs>
       </CardContent>
 
       {/* Full Record Edit Dialog */}
@@ -1423,6 +1546,28 @@ Analysis completed on: ${format(new Date(), 'PPpp')}`,
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteConsultationDialogOpen} onOpenChange={(open) => { setDeleteConsultationDialogOpen(open); if (!open) setConsultationFileToDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete consultation PDF?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the consultation PDF
+              {consultationFileToDelete?.fileName ? ` "${consultationFileToDelete.fileName}"` : ""}. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingConsultationFile}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingConsultationFile}
+              onClick={(e) => { e.preventDefault(); handleDeleteConsultationFile(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingConsultationFile ? "Deleting..." : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

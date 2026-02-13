@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getTenantSubdomain } from "@/lib/queryClient";
 import { getActiveSubdomain } from "@/lib/subdomain-utils";
 import { Header } from "@/components/layout/header";
 import { useToast } from "@/hooks/use-toast";
@@ -298,6 +298,8 @@ export default function ImagingPage() {
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showReportDialog, setShowReportDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
+  const [viewDialogOpenedFromEditReport, setViewDialogOpenedFromEditReport] = useState(false);
+  const [reportDialogIsEditMode, setReportDialogIsEditMode] = useState(false);
   const [showFinalReportDialog, setShowFinalReportDialog] = useState(false);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showFileNotAvailableDialog, setShowFileNotAvailableDialog] =
@@ -331,6 +333,11 @@ export default function ImagingPage() {
   const [reportFindings, setReportFindings] = useState("");
   const [reportImpression, setReportImpression] = useState("");
   const [reportRadiologist, setReportRadiologist] = useState("");
+  // Editable Findings/Impression in View Imaging Study when opened from Imaging Results edit
+  const [viewDialogFindings, setViewDialogFindings] = useState("");
+  const [viewDialogImpression, setViewDialogImpression] = useState("");
+  const [isUpdatingViewReport, setIsUpdatingViewReport] = useState(false);
+  const [regenerateSuccessInView, setRegenerateSuccessInView] = useState(false);
 
   // Edit mode states for individual fields
   const [editModes, setEditModes] = useState({
@@ -426,9 +433,14 @@ export default function ImagingPage() {
   const [selectedImageSeries, setSelectedImageSeries] = useState<any>(null);
   const [showBodyPartImagesDialog, setShowBodyPartImagesDialog] = useState(false);
   const [selectedBodyPart, setSelectedBodyPart] = useState<string | null>(null);
+  const [bodyPartDialogMedicalImageId, setBodyPartDialogMedicalImageId] = useState<number | null>(null);
+  const [bodyPartDialogImageId, setBodyPartDialogImageId] = useState<string | null>(null);
   const [bodyPartImages, setBodyPartImages] = useState<any[]>([]);
   const [loadingBodyPartImages, setLoadingBodyPartImages] = useState(false);
   const [bodyPartImagePreviews, setBodyPartImagePreviews] = useState<Record<number, string>>({});
+  const [showViewStudyImagesDialog, setShowViewStudyImagesDialog] = useState(false);
+  const [viewStudyImagesList, setViewStudyImagesList] = useState<Array<{ url: string; fileName: string; mimeType?: string }>>([]);
+  const [loadingViewStudyImages, setLoadingViewStudyImages] = useState(false);
   const [showPDFListViewDialog, setShowPDFListViewDialog] = useState(false);
   const [selectedPDFUrl, setSelectedPDFUrl] = useState<string | null>(null);
   const [selectedPDFFileName, setSelectedPDFFileName] = useState<string | null>(null);
@@ -440,6 +452,10 @@ export default function ImagingPage() {
   );
   const [showEditImageDialog, setShowEditImageDialog] = useState(false);
   const [editingStudyId, setEditingStudyId] = useState<string | null>(null);
+  const [replaceDialogPreviews, setReplaceDialogPreviews] = useState<string[]>([]);
+  const [replaceDialogExistingPreviews, setReplaceDialogExistingPreviews] = useState<Array<{ id: number; url: string; fileName: string }>>([]);
+  const [loadingReplaceExistingPreviews, setLoadingReplaceExistingPreviews] = useState(false);
+  const [replaceSuccessMessage, setReplaceSuccessMessage] = useState<string | null>(null);
   const [radiologyImages, setRadiologyImages] = useState<any[]>([]);
   const [loadingRadiologyImages, setLoadingRadiologyImages] = useState(false);
   const [showInvoiceDialog, setShowInvoiceDialog] = useState(false);
@@ -792,6 +808,14 @@ export default function ImagingPage() {
     checkReportFileExists();
   }, [selectedStudy?.id, selectedStudy?.reportFilePath, toast]);
 
+  // Sync editable Findings/Impression in View dialog when opened from Imaging Results edit
+  useEffect(() => {
+    if (showViewDialog && viewDialogOpenedFromEditReport && selectedStudy) {
+      setViewDialogFindings(selectedStudy.findings ?? "");
+      setViewDialogImpression(selectedStudy.impression ?? "");
+    }
+  }, [showViewDialog, viewDialogOpenedFromEditReport, selectedStudy?.id]);
+
   // Individual field update mutations
   const updateFieldMutation = useMutation({
     mutationFn: async ({
@@ -1052,6 +1076,121 @@ export default function ImagingPage() {
       });
     },
   });
+
+  // Load existing image previews when Replace Medical Image dialog opens (same loading strategy as View Images)
+  useEffect(() => {
+    if (!showEditImageDialog || !editingStudyId) {
+      return;
+    }
+    const mid = Number(editingStudyId);
+    if (Number.isNaN(mid)) {
+      return;
+    }
+    let revoked = false;
+    setLoadingReplaceExistingPreviews(true);
+    const headers: Record<string, string> = { "X-Tenant-Subdomain": getActiveSubdomain() };
+    const token = localStorage.getItem("auth_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const tryAddFromPath = async (filePath: string | null, fileName: string): Promise<string | null> => {
+      if (!filePath || typeof filePath !== "string" || !fileName || fileName.endsWith(".pending") || fileName.startsWith("ORDER-")) return null;
+      const relativePath = filePath.includes("uploads")
+        ? filePath.substring(filePath.indexOf("uploads")).replace(/\\/g, "/")
+        : filePath.startsWith("/uploads") ? filePath.slice(1) : filePath.replace(/\\/g, "/");
+      const fileUrl = `/${relativePath}`;
+      try {
+        const res = await fetch(fileUrl, { method: "GET", credentials: "include", headers });
+        if (res.ok) {
+          const blob = await res.blob();
+          if (blob.size > 0) return URL.createObjectURL(blob);
+        }
+      } catch { /* ignore */ }
+      return null;
+    };
+
+    (async () => {
+      try {
+        const listRes = await fetch(`/api/radiology-images/${mid}`, { method: "GET", credentials: "include", headers });
+        const listData = listRes.ok ? await listRes.json() : null;
+        const images = listData?.images ?? [];
+        const previews: Array<{ id: number; url: string; fileName: string }> = [];
+
+        for (const img of images) {
+          if (revoked) break;
+          const rid = img.id != null ? Number(img.id) : NaN;
+          const fileName = img.fileName ?? img.file_name ?? "";
+          if (Number.isNaN(rid)) continue;
+          let url: string | null = null;
+          try {
+            const r = await fetch(`/api/radiology-images/image/${rid}`, { method: "GET", credentials: "include", headers });
+            if (r.ok) {
+              const blob = await r.blob();
+              if (blob.size > 0) url = URL.createObjectURL(blob);
+            }
+          } catch { /* skip */ }
+          if (!url) {
+            const fp = img.filePath ?? img.file_path;
+            url = await tryAddFromPath(fp ?? null, fileName || `image-${rid}`);
+          }
+          if (url) previews.push({ id: rid, url, fileName: fileName || `image-${rid}` });
+        }
+
+        if (!revoked && previews.length === 0) {
+          try {
+            const mainRes = await fetch(`/api/medical-images/${mid}/image`, { method: "GET", credentials: "include", headers });
+            if (mainRes.ok) {
+              const blob = await mainRes.blob();
+              if (blob.size > 0) {
+                previews.push({
+                  id: mid,
+                  url: URL.createObjectURL(blob),
+                  fileName: (selectedStudy as any)?.fileName ?? (selectedStudy as any)?.file_name ?? "image.jpg",
+                });
+              }
+            }
+          } catch { /* skip */ }
+        }
+        if (!revoked && previews.length === 0) {
+          try {
+            const folderRes = await fetch(`/api/medical-images/${mid}/list-folder-images`, { method: "GET", credentials: "include", headers });
+            if (folderRes.ok) {
+              const folderData = await folderRes.json();
+              const files = folderData?.images ?? [];
+              for (let i = 0; i < files.length && !revoked; i++) {
+                const f = files[i];
+                const fp = f.filePath ?? f.file_path ?? "";
+                const fname = f.fileName ?? f.file_name ?? "";
+                const url = await tryAddFromPath(fp, fname);
+                if (url) previews.push({ id: mid * 1000 + i, url, fileName: fname || `image-${i}` });
+              }
+            }
+          } catch { /* skip */ }
+        }
+
+        if (!revoked) {
+          setReplaceDialogExistingPreviews(previews);
+        } else {
+          previews.forEach((p) => {
+            if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url);
+          });
+        }
+      } catch (e) {
+        console.error("Error loading existing image previews:", e);
+      } finally {
+        if (!revoked) setLoadingReplaceExistingPreviews(false);
+      }
+    })();
+
+    return () => {
+      revoked = true;
+      setReplaceDialogExistingPreviews((prev) => {
+        prev.forEach((p) => {
+          if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url);
+        });
+        return [];
+      });
+    };
+  }, [showEditImageDialog, editingStudyId, selectedStudy?.fileName, selectedStudy?.file_name]);
 
   // Helper functions for individual field editing
   const handleFieldEdit = (
@@ -1581,8 +1720,13 @@ export default function ImagingPage() {
     setShowUploadDialog(true);
   };
 
-  const handleViewStudy = (study: ImagingStudy) => {
+  const handleViewStudy = (study: ImagingStudy, fromEditReport?: boolean) => {
     setSelectedStudyId(study.id);
+    setViewDialogOpenedFromEditReport(fromEditReport === true);
+    if (fromEditReport === true) {
+      setViewDialogFindings(study.findings ?? "");
+      setViewDialogImpression(study.impression ?? "");
+    }
     setShowViewDialog(true);
   };
 
@@ -1612,6 +1756,138 @@ export default function ImagingPage() {
     }
   };
 
+  /** Preview images from radiology_images table when clicking a row. Uses file_path (e.g. uploads/Imaging_Images/20/patients/54/IMG....jpg) from DB. */
+  const openPreviewFromRadiologyImages = useCallback(async (medicalImageId: number) => {
+    const id = Number(medicalImageId);
+    if (Number.isNaN(id)) {
+      toast({ title: "Error", description: "Invalid study ID.", variant: "destructive" });
+      return;
+    }
+    const headers: Record<string, string> = { "X-Tenant-Subdomain": getActiveSubdomain() };
+    const token = localStorage.getItem("auth_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    setLoadingViewStudyImages(true);
+    const loaded: Array<{ url: string; fileName: string; mimeType?: string }> = [];
+
+    const tryAddFromPath = async (filePath: string | null, fileName: string): Promise<boolean> => {
+      if (!filePath || typeof filePath !== "string" || !fileName) return false;
+      if (fileName.endsWith(".pending") || fileName.startsWith("ORDER-")) return false;
+      const relativePath = filePath.includes("uploads")
+        ? filePath.substring(filePath.indexOf("uploads")).replace(/\\/g, "/")
+        : filePath.startsWith("/uploads") ? filePath.slice(1) : filePath.replace(/\\/g, "/");
+      const fileUrl = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
+      try {
+        const res = await fetch(fileUrl, { method: "GET", credentials: "include", headers });
+        if (res.ok) {
+          const blob = await res.blob();
+          if (blob.size > 0) {
+            loaded.push({
+              url: URL.createObjectURL(blob),
+              fileName,
+              mimeType: res.headers.get("Content-Type") || "image/jpeg",
+            });
+            return true;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      return false;
+    };
+
+    const tryAddFromRadiologyApi = async (radiologyId: number, fileName?: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/radiology-images/image/${radiologyId}`, {
+          method: "GET", headers, credentials: "include",
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          if (blob.size > 0) {
+            loaded.push({
+              url: URL.createObjectURL(blob),
+              fileName: fileName || `image-${radiologyId}`,
+              mimeType: res.headers.get("Content-Type") || "image/jpeg",
+            });
+            return true;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      return false;
+    };
+
+    try {
+      // SELECT from radiology_images WHERE medical_image_id = id (same as JOIN medical_images ON a.medical_image_id = b.id WHERE b.id = id)
+      const listRes = await fetch(`/api/radiology-images/${id}`, { method: "GET", credentials: "include", headers });
+      const listData = listRes.ok ? await listRes.json() : null;
+      const radiologyList = listData?.images ?? [];
+
+      for (const img of radiologyList) {
+        const fp = img.filePath ?? img.file_path;
+        const fname = img.fileName ?? img.file_name ?? "";
+        if (await tryAddFromPath(fp, fname)) continue;
+        const rid = img.id != null ? Number(img.id) : NaN;
+        if (!Number.isNaN(rid)) await tryAddFromRadiologyApi(rid, fname || undefined);
+      }
+
+      if (loaded.length === 0) {
+        const folderRes = await fetch(`/api/medical-images/${id}/list-folder-images`, {
+          method: "GET", credentials: "include", headers,
+        });
+        if (folderRes.ok) {
+          const folderData = await folderRes.json();
+          const files = folderData?.images ?? [];
+          for (const f of files) {
+            const fp = f.filePath ?? "";
+            const fname = f.fileName ?? "";
+            await tryAddFromPath(fp, fname);
+          }
+        }
+      }
+
+      if (loaded.length === 0) {
+        try {
+          const mainRes = await fetch(`/api/medical-images/${id}/image`, {
+            method: "GET", credentials: "include", headers,
+          });
+          if (mainRes.ok) {
+            const blob = await mainRes.blob();
+            if (blob.size > 0) {
+              loaded.push({
+                url: URL.createObjectURL(blob),
+                fileName: `study-${id}.jpg`,
+                mimeType: mainRes.headers.get("Content-Type") || "image/jpeg",
+              });
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      setLoadingViewStudyImages(false);
+      if (loaded.length === 0) {
+        toast({
+          title: "No Images Found",
+          description: "No images found for this study (radiology_images by medical_image_id). Try uploading images for this study.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setViewStudyImagesList(loaded);
+      setShowViewStudyImagesDialog(true);
+    } catch (err) {
+      setLoadingViewStudyImages(false);
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to load images.",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
   const handleShareStudy = (study: ImagingStudy, shareSource: 'prescription' | 'report' = 'report') => {
     setSelectedStudyId(study.id);
     setShowShareDialog(true);
@@ -1637,6 +1913,7 @@ export default function ImagingPage() {
       setSelectedFiles([]);
       setScheduledDate(new Date()); // Set to current date by default
       setPerformedDate(new Date()); // Set to current date by default
+      setReportDialogIsEditMode(false);
       setShowReportDialog(true);
     } else {
       toast({
@@ -1647,12 +1924,13 @@ export default function ImagingPage() {
     }
   };
 
-  // Reset image previews when dialog closes
+  // Reset image previews and edit mode when report dialog closes
   useEffect(() => {
     if (!showReportDialog) {
       setUploadedImagePreviews([]);
       setSelectedFiles([]);
       setSaveImageSuccess(null);
+      setReportDialogIsEditMode(false);
     }
   }, [showReportDialog]);
 
@@ -1855,10 +2133,16 @@ export default function ImagingPage() {
   };
 
   const handleEditImage = async (studyId: string) => {
+    setSelectedStudyId(studyId);
     setEditingStudyId(studyId);
     setSelectedFiles([]);
+    setReplaceDialogPreviews([]);
+    setReplaceDialogExistingPreviews((prev) => {
+      prev.forEach((p) => { if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url); });
+      return [];
+    });
     setShowEditImageDialog(true);
-    
+
     // Fetch radiology images for this medical image
     try {
       setLoadingRadiologyImages(true);
@@ -1896,6 +2180,72 @@ export default function ImagingPage() {
     }
   };
 
+  /** Regenerate existing report PDF with current study data and images (no dialog). Used when "Edit Generated Report" is clicked in View Imaging Study.
+   * Server uses study.id (medical_image_id / image_id) to query radiology_images, get file_path for each row, load all image files from server path, and embed them in the regenerated PDF. */
+  const regenerateExistingReport = async (study: any) => {
+    try {
+      setIsGeneratingPDF(true);
+      const medicalImageId = study.id != null ? Number(study.id) : NaN;
+      if (Number.isNaN(medicalImageId)) {
+        toast({ title: "Cannot regenerate report", description: "Study ID (image_id) is missing.", variant: "destructive" });
+        return;
+      }
+      let radiologyImagePaths: string[] = [];
+      try {
+        const radiologyResponse = await apiRequest("GET", `/api/radiology-images/${medicalImageId}`, undefined);
+        if (radiologyResponse.ok) {
+          const radiologyData = await radiologyResponse.json();
+          if (radiologyData.success && radiologyData.images && Array.isArray(radiologyData.images)) {
+            const sortedImages = (radiologyData.images as any[])
+              .filter((img: any) => (img.filePath ?? img.file_path) != null)
+              .sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+            radiologyImagePaths = sortedImages
+              .map((img: any) => img.filePath ?? img.file_path)
+              .filter(Boolean)
+              .map((p: string) => String(p).replace(/\\/g, "/"));
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching radiology images for regenerate:", e);
+      }
+      const response = await apiRequest("POST", "/api/imaging/generate-report", {
+        study: { ...study, id: medicalImageId },
+        reportFormData: {
+          findings: study.findings ?? "",
+          impression: study.impression ?? "",
+          radiologist: study.radiologist ?? "Dr. Michael Chen",
+          scheduledAt: study.scheduledAt ? new Date(study.scheduledAt).toISOString() : null,
+          performedAt: study.performedAt ? new Date(study.performedAt).toISOString() : null,
+        },
+        uploadedImageFileNames: [],
+        radiologyImagePaths,
+        signatureData: study.signatureData || null,
+        signatureDate: study.signatureDate || null,
+        replaceExistingReport: true,
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to regenerate PDF report");
+      }
+      const data = await response.json();
+      if (data.success && data.reportId) {
+        refetchImages();
+        setRegenerateSuccessInView(true);
+      } else {
+        throw new Error("Failed to regenerate PDF report");
+      }
+    } catch (error) {
+      console.error("Regenerate report error:", error);
+      toast({
+        title: "Report Update Failed",
+        description: error instanceof Error ? error.message : "Failed to regenerate PDF. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
   const generatePDFReport = async (study: any) => {
     try {
       setIsGeneratingPDF(true);
@@ -1917,13 +2267,12 @@ export default function ImagingPage() {
           formData.append('bodyPart', study.bodyPart || '');
           formData.append('indication', study.indication || '');
           
-          // For report generation with multiple images, create new rows instead of updating
-          // This ensures all images are stored in filesystem and can be loaded for PDF
-          // Don't send updateImageId when uploading multiple images for report generation
-          // if (study.imageId && selectedFiles.length === 1) {
-          //   formData.append('updateImageId', study.imageId);
-          //   console.log('📷 CLIENT: Updating existing ORDER row with imageId:', study.imageId);
-          // }
+          // When generating report for an existing ORDER study, or when "Edit Generated Report" (from Imaging Results edit icon), update that row instead of creating a new one
+          const isOrderStudy = study.fileName?.endsWith?.('.pending') || study.imageId?.includes?.('ORDER');
+          if (study.imageId && selectedFiles.length > 0 && (isOrderStudy || reportDialogIsEditMode)) {
+            formData.append('updateImageId', study.imageId);
+            console.log('📷 CLIENT: Updating existing row with imageId:', study.imageId, reportDialogIsEditMode ? '(Edit Generated Report)' : '(ORDER study)');
+          }
 
           // Add all files to FormData
           selectedFiles.forEach((file, index) => {
@@ -1963,11 +2312,12 @@ export default function ImagingPage() {
           const uploadResult = await uploadResponse.json();
           console.log('📷 CLIENT: Upload response:', uploadResult);
 
-          // Extract filenames from successfully uploaded images (filter out failed uploads)
+          // Extract filenames from successfully uploaded images (filter out failed and placeholder ORDER-*.pending)
           if (uploadResult.images && Array.isArray(uploadResult.images)) {
             uploadedImageFileNames = uploadResult.images
-              .filter((img: any) => !img.failed && img.fileName) // Only include successful uploads with fileName
-              .map((img: any) => img.fileName);
+              .filter((img: any) => !img.failed && (img.fileName ?? img.file_name ?? img.uniqueFilename))
+              .map((img: any) => img.fileName ?? img.file_name ?? img.uniqueFilename)
+              .filter((name: string) => name && !name.endsWith('.pending') && !name.startsWith('ORDER-')); // Do not save placeholder to radiology_images
             
             const failedCount = uploadResult.images.filter((img: any) => img.failed).length;
             const successCount = uploadedImageFileNames.length;
@@ -1983,45 +2333,80 @@ export default function ImagingPage() {
               });
             }
 
-            // Save all uploaded images to radiology_images table
-            // This is CRITICAL - images must be saved to database before PDF generation
-            if (uploadedImageFileNames.length > 0 && study.id) {
-              try {
-                const token = localStorage.getItem("auth_token");
-                const saveRadiologyResponse = await fetch('/api/radiology-images', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'X-Tenant-Subdomain': getActiveSubdomain(),
-                    'Authorization': token ? `Bearer ${token}` : '',
-                  },
-                  credentials: 'include',
-                  body: JSON.stringify({
-                    medicalImageId: study.id,
-                    imageFileNames: uploadedImageFileNames,
-                    organizationId: study.organizationId || user?.organizationId,
-                    patientId: study.patientId,
-                  }),
-                });
+            // Use the medical_images row id from upload response so radiology_images links to the same row
+            const firstSuccess = uploadResult.images.find((img: any) => !img.failed && (img.fileName ?? img.file_name ?? img.uniqueFilename));
+            const idFromUpload = firstSuccess?.id ?? firstSuccess?.ID ?? (firstSuccess as any)?.id;
+            const resolvedMedicalImageId = idFromUpload != null ? Number(idFromUpload) : (study?.id != null ? Number(study.id) : NaN);
+            const medicalIdToUse = !Number.isNaN(resolvedMedicalImageId) ? resolvedMedicalImageId : (study?.id != null ? Number(study.id) : null);
 
+            if (uploadedImageFileNames.length > 0 && (medicalIdToUse == null || Number.isNaN(medicalIdToUse))) {
+              console.warn('📷 CLIENT: Skipping radiology_images save - no medical_image id (firstSuccess.id:', idFromUpload, ', study.id:', study?.id, ')');
+            }
+            // Save all uploaded images to radiology_images table whenever we have at least one successful filename
+            if (uploadedImageFileNames.length > 0 && medicalIdToUse != null && !Number.isNaN(medicalIdToUse)) {
+              try {
+                // Give the server time to finish writing all uploaded files to disk before we save to DB
+                toast({ title: "Saving to database...", description: "Please wait while images are saved to the database." });
+                await new Promise((r) => setTimeout(r, 2000));
+                const token = localStorage.getItem("auth_token");
+                const headers: Record<string, string> = {
+                  'Content-Type': 'application/json',
+                  'X-Tenant-Subdomain': getTenantSubdomain(),
+                };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const body = {
+                  medicalImageId: medicalIdToUse,
+                  imageFileNames: uploadedImageFileNames,
+                  organizationId: study.organizationId ?? user?.organizationId ?? firstSuccess?.organizationId,
+                  patientId: study.patientId ?? firstSuccess?.patientId,
+                };
+                console.log('📷 CLIENT: [Step 1] Calling POST /api/radiology-images with medicalImageId=', medicalIdToUse, 'fileNames=', uploadedImageFileNames);
+                let saveRadiologyResponse = await fetch('/api/radiology-images', {
+                  method: 'POST',
+                  headers,
+                  credentials: 'include',
+                  body: JSON.stringify(body),
+                });
+                if (saveRadiologyResponse.status === 500) {
+                  console.log('📷 CLIENT: First attempt returned 500, waiting 2s and retrying once...');
+                  await new Promise((r) => setTimeout(r, 2000));
+                  saveRadiologyResponse = await fetch('/api/radiology-images', {
+                    method: 'POST',
+                    headers,
+                    credentials: 'include',
+                    body: JSON.stringify(body),
+                  });
+                }
+
+                console.log('📷 CLIENT: [Step 2] Response status=', saveRadiologyResponse.status);
                 if (saveRadiologyResponse.ok) {
                   const saveResult = await saveRadiologyResponse.json();
-                  console.log('📷 CLIENT: Saved images to radiology_images table:', saveResult);
-                  console.log(`📷 CLIENT: Successfully saved ${saveResult.savedCount || uploadedImageFileNames.length} image(s) to database before PDF generation`);
-                  
-                  // Wait a brief moment to ensure database transaction is committed
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                  
-                  toast({
-                    title: "Images Saved",
-                    description: `Successfully saved ${saveResult.savedCount || uploadedImageFileNames.length} image(s) to radiology_images table`,
-                  });
+                  const savedCount = saveResult.savedCount ?? 0;
+                  console.log('📷 CLIENT: [Step 3] radiology_images save result:', saveResult, 'savedCount=', savedCount);
+
+                  await new Promise(resolve => setTimeout(resolve, 300));
+
+                  if (savedCount > 0) {
+                    toast({
+                      title: "Radiology images saved",
+                      description: `Successfully saved ${savedCount} image(s) to the database.`,
+                    });
+                    console.log(`📷 CLIENT: Successfully saved ${savedCount} image(s) to radiology_images table`);
+                  } else {
+                    const reason = saveResult.message || (saveResult.skippedNotFound > 0 ? 'Files not found on server' : 'No images could be saved');
+                    toast({
+                      title: "No images saved to database",
+                      description: reason,
+                      variant: "destructive",
+                    });
+                    console.warn('📷 CLIENT: No rows inserted into radiology_images:', saveResult);
+                  }
                 } else {
-                  console.error('Failed to save images to radiology_images table');
+                  console.error('Failed to save images to radiology_images table', saveRadiologyResponse.status);
                   const errorData = await saveRadiologyResponse.json().catch(() => ({}));
                   toast({
                     title: "Warning",
-                    description: "Images uploaded but failed to save to radiology_images table. " + (errorData.error || ''),
+                    description: "Images uploaded but failed to save to radiology_images table. " + (errorData.error || errorData.details || ''),
                     variant: "destructive",
                   });
                 }
@@ -2124,6 +2509,7 @@ export default function ImagingPage() {
           previewImageDataUrls: uploadedImagePreviews.length > 0 ? uploadedImagePreviews : undefined, // Pass preview data URLs for direct embedding
           signatureData: study.signatureData || null,
           signatureDate: study.signatureDate || null,
+          replaceExistingReport: reportDialogIsEditMode, // When editing from Imaging Results: replace PDF and update DB rows
         },
       );
 
@@ -3321,50 +3707,28 @@ export default function ImagingPage() {
               <Card className="w-full max-w-full overflow-hidden">
                 <CardContent className="p-0 w-full max-w-full">
                   <div className="w-full max-w-full overflow-hidden">
-                    <table className="w-full" style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <table className="w-full min-w-0 text-[11px]" style={{ tableLayout: 'fixed', width: '100%' }}>
                       <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
                         <tr>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Image ID
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '9%' }}>
-                            Patient Name
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '9%' }}>
-                            Provider Name
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Study Type
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            Modality
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Body Part
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            File Name
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Radiologist
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '5%' }}>
-                            Priority
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            Status
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Actions
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Image ID</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '8%' }}>Patient</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '8%' }}>Provider</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Study Type</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Modality</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Body Part</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>File Name</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Radiologist</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Priority</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Status</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-gray-700">
                         {[1, 2, 3, 4, 5].map((i) => (
                           <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((j) => (
-                              <td key={j} className="px-2 py-2">
-                                <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded animate-pulse"></div>
+                              <td key={j} className="px-1 py-1.5">
+                                <div className="h-3 bg-gray-200 dark:bg-slate-600 rounded animate-pulse"></div>
                               </td>
                             ))}
                           </tr>
@@ -3380,85 +3744,58 @@ export default function ImagingPage() {
                 <Card className="w-full max-w-full overflow-hidden">
                 <CardContent className="p-0 w-full max-w-full">
                   <div className="w-full max-w-full overflow-hidden">
-                    <table className="w-full" style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <table className="w-full min-w-0 text-[11px]" style={{ tableLayout: 'fixed', width: '100%' }}>
                       <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
                         <tr>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Image ID
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '9%' }}>
-                            Patient Name
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '9%' }}>
-                            Provider Name
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Image ID</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '8%' }}>Patient</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '8%' }}>Provider</th>
                           {activeTab === "order-study" && (
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                              Order Date
-                            </th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Order Date</th>
                           )}
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Study Type
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            Modality
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Body Part
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            File Name
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Study Type</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Modality</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Body Part</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>File Name</th>
                           {activeTab !== "order-study" && activeTab === "generate-report" && (
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '5%' }}>
-                              Share
-                            </th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '4%' }}>Share</th>
                           )}
                           {activeTab === "imaging-results" && (
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                              prescription
-                            </th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Rx</th>
                           )}
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '7%' }}>
-                            Radiologist
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '5%' }}>
-                            Priority
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            Status
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Radiologist</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Priority</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Status</th>
                           {activeTab === "order-study" && (
-                            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                              Order Ready
-                            </th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Order Ready</th>
                           )}
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '6%' }}>
-                            signed?
-                          </th>
-                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" style={{ width: '8%' }}>
-                            Actions
-                          </th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '4%' }}>Signed</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-gray-700">
                         {filteredStudies.map((study: any) => (
                           <tr
                             key={study.id}
-                            className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                            className={`hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${activeTab === "imaging-results" ? "cursor-pointer" : ""}`}
                             data-testid={`row-imaging-${study.id}`}
+                            onClick={activeTab === "imaging-results" ? (e) => {
+                              if ((e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("a") || (e.target as HTMLElement).closest('input')) return;
+                              setSelectedStudyId(study.id);
+                              openPreviewFromRadiologyImages(Number(study.id));
+                            } : undefined}
                           >
-                            <td className="px-2 py-2 text-xs font-medium text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] font-medium text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={study.imageId || study.id}>
                               {study.imageId || study.id}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={study.patientName}>
                               {study.patientName}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={
                                 study.selectedUserId
                                   ? (() => {
@@ -3496,7 +3833,7 @@ export default function ImagingPage() {
                               </div>
                             </td>
                             {activeTab === "order-study" && (
-                              <td className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400">
+                              <td className="px-1 py-1.5 text-[11px] text-gray-500 dark:text-gray-400 min-w-0">
                                 <div className="truncate" title={study.orderedAt ? format(new Date(study.orderedAt), "MMM dd, yyyy") : "N/A"}>
                                 {study.orderedAt
                                   ? format(new Date(study.orderedAt), "MMM dd, yyyy")
@@ -3504,20 +3841,20 @@ export default function ImagingPage() {
                                 </div>
                               </td>
                             )}
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={study.studyType || "N/A"}>
                               {study.studyType || "N/A"}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
-                              <div className="flex items-center gap-1">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
+                              <div className="flex items-center gap-0.5 min-w-0">
                                 {getModalityIcon(study.modality)}
                                 <span className="truncate" title={study.modality}>
                                 {study.modality}
                                 </span>
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               {activeTab === "order-study" || activeTab === "generate-report" ? (
                                 // Order Study and Generate Report tabs: no link, just display text
                                 <div className="truncate" title={study.bodyPart || "N/A"}>
@@ -3552,36 +3889,141 @@ export default function ImagingPage() {
                                       setLoadingBodyPartImages(true);
                                       setSelectedBodyPart(bodyPart);
                                       
-                                      // Use the current study's ID to get images from radiology_images table
-                                      // JOIN with medical_images to filter by body part
-                                      const token = localStorage.getItem("auth_token");
-                                      const response = await apiRequest(
-                                        "GET",
-                                        `/api/radiology-images/by-body-part/${study.id}?bodyPart=${encodeURIComponent(bodyPart)}`,
-                                        undefined
-                                      );
-
-                                      if (!response.ok) {
-                                        const errorData = await response.json().catch(() => ({ error: "Failed to fetch images" }));
-                                        throw new Error(errorData.error || "Failed to fetch images");
+                                      const medicalImageId = Number(study.id);
+                                      if (isNaN(medicalImageId)) {
+                                        toast({
+                                          title: "Error",
+                                          description: "Invalid study ID.",
+                                          variant: "destructive",
+                                        });
+                                        setLoadingBodyPartImages(false);
+                                        return;
                                       }
 
-                                      const data = await response.json();
-                                      const allImages: any[] = [];
+                                      const token = localStorage.getItem("auth_token");
+                                      const headers: Record<string, string> = {
+                                        "X-Tenant-Subdomain": getActiveSubdomain(),
+                                      };
+                                      if (token) headers["Authorization"] = `Bearer ${token}`;
 
-                                      if (data.success && data.images && Array.isArray(data.images)) {
-                                        // Map the joined data to include study context
-                                        data.images.forEach((img: any) => {
-                                          allImages.push({
-                                            ...img,
-                                            studyId: study.id,
-                                            studyType: img.studyType || study.studyType,
-                                            patientName: study.patientName,
-                                            modality: img.modality || study.modality,
-                                            // file_path from radiology_images table
-                                            filePath: img.filePath,
+                                      // Build display URL from radiology_images record; support both camelCase and snake_case from API
+                                      const getUploadsDisplayUrl = (img: any) => {
+                                        const orgId = img?.organizationId ?? img?.organization_id;
+                                        const patId = img?.patientId ?? img?.patient_id;
+                                        const fName = img?.fileName ?? img?.file_name;
+                                        if (orgId != null && patId != null && fName) {
+                                          return `/${["uploads", "Imaging_Images", String(orgId), "patients", String(patId), fName].join("/")}`;
+                                        }
+                                        const fp = img?.filePath ?? img?.file_path;
+                                        if (fp && typeof fp === "string" && fp.includes("uploads")) {
+                                          const fromUploads = fp.substring(fp.indexOf("uploads")).replace(/\\/g, "/");
+                                          return fromUploads.startsWith("/") ? fromUploads : `/${fromUploads}`;
+                                        }
+                                        return null;
+                                      };
+
+                                      const mapRadiologyToImages = (data: any) => {
+                                        const list: any[] = [];
+                                        if (data?.success && data?.images && Array.isArray(data.images)) {
+                                          data.images.forEach((img: any) => {
+                                            const uploadsDisplayUrl = getUploadsDisplayUrl(img);
+                                            list.push({
+                                              ...img,
+                                              studyId: study.id,
+                                              organizationId: img.organizationId ?? img.organization_id,
+                                              patientId: img.patientId ?? img.patient_id,
+                                              fileName: img.fileName ?? img.file_name,
+                                              filePath: img.filePath ?? img.file_path,
+                                              studyType: img.studyType || study.studyType,
+                                              patientName: study.patientName,
+                                              modality: img.modality || study.modality,
+                                              uploadsDisplayUrl,
+                                            });
                                           });
-                                        });
+                                        }
+                                        return list;
+                                      };
+
+                                      // 1) Search radiology_images by medical_image_id (= study.id); one-to-many: get all rows, each has file_path for server preview
+                                      let response = await fetch(
+                                        `/api/radiology-images/${medicalImageId}`,
+                                        { method: "GET", credentials: "include", headers }
+                                      );
+                                      let data = response.ok ? await response.json() : null;
+                                      let allImages: any[] = mapRadiologyToImages(data || {});
+
+                                      // 2) If none, try by-body-part (same table, with body part filter)
+                                      if (allImages.length === 0) {
+                                        response = await fetch(
+                                          `/api/radiology-images/by-body-part/${medicalImageId}?bodyPart=${encodeURIComponent(bodyPart)}`,
+                                          { method: "GET", credentials: "include", headers }
+                                        );
+                                        data = response.ok ? await response.json() : null;
+                                        allImages = mapRadiologyToImages(data || {});
+                                      }
+
+                                      // 3) Fallback: list image files from study folder so all uploaded images display (e.g. two images)
+                                      if (allImages.length === 0) {
+                                        try {
+                                          const listRes = await fetch(
+                                            `/api/medical-images/${medicalImageId}/list-folder-images`,
+                                            { method: "GET", credentials: "include", headers }
+                                          );
+                                          if (listRes.ok) {
+                                            const listData = await listRes.json();
+                                            if (listData?.images?.length > 0) {
+                                              const fpNorm = (p: string) => p.startsWith("/") ? p.slice(1) : p;
+                                              const studyOrg = (study as any).organizationId ?? (study as any).organization_id;
+                                              const studyPat = (study as any).patientId ?? (study as any).patient_id;
+                                              allImages = listData.images.map((img: { fileName: string; filePath: string }, idx: number) => {
+                                                const filePath = fpNorm(img.filePath);
+                                                return {
+                                                  id: `folder-${idx}-${img.fileName}`,
+                                                  studyId: study.id,
+                                                  organizationId: studyOrg,
+                                                  patientId: studyPat,
+                                                  fileName: img.fileName,
+                                                  filePath,
+                                                  uploadsDisplayUrl: filePath ? `/${filePath.replace(/\\/g, "/")}` : null,
+                                                  studyType: study.studyType,
+                                                  patientName: study.patientName,
+                                                  modality: study.modality,
+                                                  bodyPart: study.bodyPart,
+                                                  imageId: study.imageId,
+                                                };
+                                              });
+                                            }
+                                          }
+                                        } catch (_) {
+                                          /* ignore */
+                                        }
+                                      }
+                                      // 4) Last fallback: single main image placeholder (study record)
+                                      // Do not use ORDER-*.pending as filePath - it is not a real file name
+                                      if (allImages.length === 0) {
+                                        const studyFileName = study.fileName ?? (study as any).file_name;
+                                        const isPlaceholderName = typeof studyFileName === "string" && (studyFileName.endsWith(".pending") || studyFileName.startsWith("ORDER-"));
+                                        const mainImagePath = study.filePath || (study as any).file_path;
+                                        let relativePath: string | null = null;
+                                        if (!isPlaceholderName && mainImagePath && typeof mainImagePath === "string" && mainImagePath.includes("uploads")) {
+                                          relativePath = mainImagePath.substring(mainImagePath.indexOf("uploads")).replace(/\\/g, "/");
+                                        } else if (!isPlaceholderName && (study as any).organizationId != null && (study as any).patientId != null && studyFileName) {
+                                          relativePath = `uploads/Imaging_Images/${(study as any).organizationId}/patients/${(study as any).patientId}/${studyFileName}`;
+                                        }
+                                        allImages = [{
+                                          id: null,
+                                          studyId: study.id,
+                                          organizationId: (study as any).organizationId ?? (study as any).organization_id,
+                                          patientId: (study as any).patientId ?? (study as any).patient_id,
+                                          fileName: studyFileName,
+                                          filePath: relativePath,
+                                          studyType: study.studyType,
+                                          patientName: study.patientName,
+                                          modality: study.modality,
+                                          bodyPart: study.bodyPart,
+                                          isMainImage: true,
+                                          imageId: study.imageId,
+                                        }];
                                       }
 
                                       if (allImages.length === 0) {
@@ -3594,95 +4036,73 @@ export default function ImagingPage() {
                                         return;
                                       }
 
+                                      setBodyPartDialogMedicalImageId(medicalImageId);
+                                      setBodyPartDialogImageId(study.imageId ?? (study as any).image_id ?? null);
                                       setBodyPartImages(allImages);
                                       setShowBodyPartImagesDialog(true);
                                       
                                       // Load image previews asynchronously (don't block dialog opening)
                                       const loadPreviews = async () => {
                                         const previews: Record<number, string> = {};
-                                          const token = localStorage.getItem("auth_token");
-                                        
+                                        const authToken = localStorage.getItem("auth_token");
+                                        const authHeaders: Record<string, string> = {
+                                          "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+                                        };
                                         // Load all previews in parallel
                                         const previewPromises = allImages.map(async (img, idx) => {
-                                          const imageKey = img.id || idx;
+                                          const imageKey = img.id ?? idx;
                                           try {
-                                            console.log(`🔄 Loading preview for image ${imageKey} (ID: ${img.id}, File: ${img.fileName})`);
-                                            
-                                            // Priority 1: Try to fetch preview from radiology image endpoint using image ID
-                                            if (img.id) {
+                                            // Priority 1: Direct URL from radiology_images (uploads path from org/patient/fileName or file_path)
+                                            const fp = img.filePath ?? img.file_path;
+                                            const directUrl = img.uploadsDisplayUrl || (fp && typeof fp === "string" && fp.includes("uploads")
+                                              ? `/${fp.substring(fp.indexOf("uploads")).replace(/\\/g, "/")}`
+                                              : null);
+                                            if (directUrl) {
                                               try {
-                                                console.log(`📷 Attempting to fetch preview from /api/radiology-images/image/${img.id}`);
-                                                console.log(`📷 Auth token present: ${!!token}`);
-                                                console.log(`📷 Tenant subdomain: ${getActiveSubdomain()}`);
-                                                
-                                                const headers: Record<string, string> = {
-                                                  "X-Tenant-Subdomain": getActiveSubdomain(),
-                                                };
-                                                
-                                                if (token) {
-                                                  headers["Authorization"] = `Bearer ${token}`;
-                                                }
-                                                
-                                                const previewResponse = await fetch(`/api/radiology-images/image/${img.id}`, {
-                                                  method: "GET",
-                                                  headers,
-                                                  credentials: "include",
-                                                });
-
-                                                if (previewResponse.ok) {
-                                                  const blob = await previewResponse.blob();
-                                                  const url = URL.createObjectURL(blob);
-                                                  console.log(`✅ Successfully loaded preview for image ${imageKey} from radiology-images endpoint`);
-                                                  return { key: imageKey, url };
-                                                } else {
-                                                  const errorText = await previewResponse.text().catch(() => 'Unknown error');
-                                                  console.warn(`⚠️ Failed to load preview for image ${imageKey} from radiology-images endpoint (${previewResponse.status}): ${errorText}`);
-                                                  
-                                                  // If 401, log authentication issue
-                                                  if (previewResponse.status === 401) {
-                                                    console.error(`❌ Authentication failed for image ${img.id}. Token present: ${!!token}`);
+                                                const pathResponse = await fetch(directUrl, { method: "GET", credentials: "include" });
+                                                if (pathResponse.ok) {
+                                                  const blob = await pathResponse.blob();
+                                                  if (blob.size > 0) {
+                                                    const url = URL.createObjectURL(blob);
+                                                    return { key: imageKey, url };
                                                   }
                                                 }
-                                              } catch (fetchError) {
-                                                console.error(`❌ Error fetching preview for image ${imageKey} from radiology-images endpoint:`, fetchError);
-                                              }
+                                              } catch (_) { /* try next */ }
                                             }
-                                            
-                                            // Priority 2: Use base64 data directly if available
+                                            // Priority 2: Base64 from DB
                                             if (img.imageData) {
-                                              console.log(`✅ Using base64 image data for preview ${imageKey}`);
                                               return { key: imageKey, url: img.imageData };
                                             }
-                                            
-                                            // Priority 3: Fallback to medical image endpoint if studyId is available
-                                            if (img.studyId) {
+                                            // Priority 3: Radiology image API (server reads file_path and streams)
+                                            const numericId = typeof img.id === 'number' ? img.id : (typeof img.id === 'string' && /^\d+$/.test(String(img.id)) ? parseInt(String(img.id), 10) : null);
+                                            if (numericId != null && !Number.isNaN(numericId)) {
                                               try {
-                                                console.log(`📷 Attempting fallback to /api/medical-images/${img.studyId}/image`);
-                                                const previewResponse = await fetch(`/api/medical-images/${img.studyId}/image`, {
-                                                  headers: {
-                                                    "X-Tenant-Subdomain": getActiveSubdomain(),
-                                                    ...(token && {
-                                                      Authorization: `Bearer ${token}`,
-                                                    }),
-                                                  },
-                                                  credentials: "include",
+                                                const previewResponse = await fetch(`/api/radiology-images/image/${numericId}`, {
+                                                  method: "GET", headers: authHeaders, credentials: "include",
                                                 });
-                                                
                                                 if (previewResponse.ok) {
                                                   const blob = await previewResponse.blob();
                                                   const url = URL.createObjectURL(blob);
-                                                  console.log(`✅ Successfully loaded preview for image ${imageKey} from medical-images endpoint`);
                                                   return { key: imageKey, url };
-                                                } else {
-                                                  const errorText = await previewResponse.text().catch(() => 'Unknown error');
-                                                  console.warn(`⚠️ Failed to load preview for image ${imageKey} from medical-images endpoint (${previewResponse.status}): ${errorText}`);
                                                 }
-                                              } catch (fallbackError) {
-                                                console.error(`❌ Error fetching preview for image ${imageKey} from medical-images endpoint:`, fallbackError);
-                                              }
+                                              } catch (_) { /* try next */ }
                                             }
-                                            
-                                            console.warn(`⚠️ No preview available for image ${imageKey} - will show placeholder`);
+                                            // Priority 4: Medical image endpoint (first image in folder)
+                                            if (img.studyId) {
+                                              try {
+                                                const previewResponse = await fetch(`/api/medical-images/${img.studyId}/image`, {
+                                                  headers: authHeaders, credentials: "include",
+                                                });
+                                                if (previewResponse.ok) {
+                                                  const blob = await previewResponse.blob();
+                                                  if (blob.size > 0) {
+                                                    const url = URL.createObjectURL(blob);
+                                                    return { key: imageKey, url };
+                                                  }
+                                                }
+                                              } catch (_) { /* try next */ }
+                                            }
                                             return null;
                                           } catch (previewError) {
                                             console.error(`❌ Error loading preview for image ${imageKey}:`, previewError);
@@ -3798,30 +4218,30 @@ export default function ImagingPage() {
                                 </div>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={study.fileName || "N/A"}>
                               {study.fileName || "N/A"}
                               </div>
                             </td>
                             {activeTab !== "order-study" && activeTab === "generate-report" && (
-                              <td className="px-2 py-2 text-xs">
-                                <div className="flex items-center justify-center gap-1">
+                              <td className="px-1 py-1.5 text-[11px] min-w-0">
+                                <div className="flex items-center justify-center gap-0.5 flex-shrink-0">
                                   <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => handleShareStudy(study, 'prescription')}
-                                    className="h-6 w-6 p-0"
+                                    className="h-5 w-5 p-0"
                                     title="Share Image Prescription"
                                     data-testid={`button-share-prescription-${study.id}`}
                                   >
-                                    <Send className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                    <Send className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                   </Button>
                                 </div>
                               </td>
                             )}
                             {activeTab === "imaging-results" && (
-                              <td className="px-2 py-2 text-xs">
-                                <div className="flex items-center justify-center gap-1">
+                              <td className="px-1 py-1.5 text-[11px] min-w-0">
+                                <div className="flex items-center justify-center gap-0.5 flex-shrink-0">
                                   {study.prescriptionFilePath ? (
                                     <>
                                       <Button
@@ -3908,53 +4328,53 @@ export default function ImagingPage() {
                                             });
                                           }
                                         }}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         title="View Image Prescription"
                                         data-testid={`button-prescription-${study.id}`}
                                       >
-                                        <Save className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
+                                        <Save className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
                                       </Button>
                                       <Button
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => downloadPrescription(study)}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         title="Download Image Prescription"
                                         data-testid={`button-download-prescription-${study.id}`}
                                       >
-                                        <Download className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                        <Download className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                       </Button>
                                       <Button
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => handleShareStudy(study, 'prescription')}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         title="Share Image Prescription"
                                         data-testid={`button-share-prescription-${study.id}`}
                                       >
-                                        <Share2 className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                        <Share2 className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                       </Button>
                                     </>
                                   ) : (
-                                    <span className="text-xs text-gray-400">N/A</span>
+                                    <span className="text-[10px] text-gray-400">N/A</span>
                                   )}
                                 </div>
                               </td>
                             )}
-                            <td className="px-2 py-2 text-xs text-gray-900 dark:text-gray-100">
+                            <td className="px-1 py-1.5 text-[11px] text-gray-900 dark:text-gray-100 min-w-0">
                               <div className="truncate" title={study.radiologist || "N/A"}>
                               {study.radiologist || "N/A"}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                               <Badge
                                 variant={study.priority === "stat" || study.priority === "urgent" ? "destructive" : "secondary"}
-                                className="text-xs px-1.5 py-0"
+                                className="text-[10px] px-1 py-0"
                               >
                                 {study.priority || "routine"}
                               </Badge>
                             </td>
-                            <td className="px-2 py-2 text-xs min-w-0">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
                               {selectedStudyId === study.id && editModes.status ? (
                                 <div className="flex flex-col gap-1 w-full min-w-0">
                                   <Select
@@ -3999,7 +4419,7 @@ export default function ImagingPage() {
                                   </div>
                                 </div>
                               ) : (
-                                <div className="flex items-center gap-1 min-w-0">
+                                <div className="flex items-center gap-0.5 min-w-0">
                                   <Badge className={`${getStatusColor(study.status)} text-[10px] px-1 py-0.5 flex-shrink`}>
                                     {study.status}
                                   </Badge>
@@ -4022,23 +4442,23 @@ export default function ImagingPage() {
                               )}
                             </td>
                             {activeTab === "order-study" && (
-                              <td className="px-2 py-2 text-xs">
+                              <td className="px-1 py-1.5 text-[11px] min-w-0">
                                 <div className="flex items-center justify-center">
                                   {study.orderStudyReadyToGenerate ? (
-                                    <CheckCircle className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                    <CheckCircle className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                                   ) : (
-                                    <X className="h-3 w-3 text-red-600 dark:text-red-400" />
+                                    <X className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
                                   )}
                                 </div>
                               </td>
                             )}
-                            <td className="px-2 py-2 text-xs min-w-0 flex-shrink-0">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0 flex-shrink-0">
                               <div className="flex items-center justify-center min-w-0">
                                 {study.signatureData && String(study.signatureData).trim() !== "" ? (
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    className="h-6 px-1.5 flex items-center gap-0.5 text-green-600 hover:text-green-700 hover:bg-green-50 flex-shrink-0"
+                                    className="h-5 px-1 flex items-center gap-0.5 text-green-600 hover:text-green-700 hover:bg-green-50 flex-shrink-0"
                                     onClick={() => {
                                       setSelectedSignatureData({
                                         signatureData: study.signatureData,
@@ -4051,19 +4471,19 @@ export default function ImagingPage() {
                                     }}
                                     title="View signature details"
                                   >
-                                    <CheckCircle className="h-3 w-3 flex-shrink-0" />
-                                    <span className="text-xs whitespace-nowrap">✓</span>
+                                    <CheckCircle className="h-2.5 w-2.5 flex-shrink-0" />
+                                    <span className="text-[10px] whitespace-nowrap">✓</span>
                                   </Button>
                                 ) : (
                                   <div className="flex items-center gap-0.5 text-red-600 flex-shrink-0">
-                                    <X className="h-3 w-3 flex-shrink-0" />
-                                    <span className="text-xs whitespace-nowrap">✗</span>
+                                    <X className="h-2.5 w-2.5 flex-shrink-0" />
+                                    <span className="text-[10px] whitespace-nowrap">✗</span>
                                   </div>
                                 )}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs">
-                              <div className={`flex items-center ${activeTab === 'imaging-results' ? 'gap-0.5' : 'gap-0.5'} justify-center ${activeTab === 'imaging-results' ? 'flex-nowrap' : 'flex-wrap'}`}>
+                            <td className="px-1 py-1.5 text-[11px] min-w-0">
+                              <div className="flex items-center gap-0.5 justify-center flex-shrink-0 flex-wrap">
                                 {user?.role !== 'patient' && (
                                   <>
                                     {activeTab === "order-study" ? (
@@ -4073,22 +4493,22 @@ export default function ImagingPage() {
                                             variant="ghost"
                                             size="sm"
                                             onClick={() => handleGenerateImagePrescription(study.id)}
-                                            className="h-6 w-6 p-0"
+                                            className="h-5 w-5 p-0"
                                             data-testid={`button-save-prescription-${study.id}`}
                                             title="Save/Generate Prescription"
                                           >
-                                            <Save className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                            <Save className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                                           </Button>
                                         {/* E-Sign icon for Order Study tab */}
                                         <Button
                                           variant="ghost"
                                           size="sm"
                                           onClick={() => handleESignClick(study.id)}
-                                          className="h-6 w-6 p-0"
+                                          className="h-5 w-5 p-0"
                                           data-testid={`button-esign-${study.id}`}
                                           title="Electronic Signature"
                                         >
-                                          <PenTool className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                          <PenTool className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                         </Button>
                                       </>
                                     ) : (
@@ -4107,21 +4527,22 @@ export default function ImagingPage() {
                                               handleViewStudy(study);
                                             }
                                           }}
-                                            className={activeTab === 'imaging-results' ? "h-5 w-5 p-0" : "h-6 w-6 p-0"}
+                                            className="h-5 w-5 p-0"
                                           data-testid={`button-view-${study.id}`}
                                           title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}
                                         >
-                                            <Eye className={activeTab === 'imaging-results' ? "h-2.5 w-2.5 text-gray-600 dark:text-gray-400" : "h-3 w-3 text-gray-600 dark:text-gray-400"} />
+                                            <Eye className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                         </Button>
                                         )}
                                         <Button
                                           variant="ghost"
                                           size="sm"
-                                          onClick={() => handleViewStudy(study)}
-                                          className={activeTab === 'imaging-results' ? "h-5 w-5 p-0" : "h-6 w-6 p-0"}
+                                          onClick={() => handleViewStudy(study, activeTab === "imaging-results")}
+                                          className="h-5 w-5 p-0"
                                           data-testid={`button-edit-${study.id}`}
+                                          title={activeTab === "imaging-results" ? "Edit Study / Edit Generated Report" : "Edit Study"}
                                         >
-                                          <Edit className={activeTab === 'imaging-results' ? "h-2.5 w-2.5 text-gray-600 dark:text-gray-400" : "h-3 w-3 text-gray-600 dark:text-gray-400"} />
+                                          <Edit className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                         </Button>
                                       </>
                                     )}
@@ -4131,11 +4552,11 @@ export default function ImagingPage() {
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => handleGenerateReport(study.id)}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         data-testid={`button-save-report-${study.id}`}
                                         title="Save/Generate Report"
                                       >
-                                        <Save className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
+                                        <Save className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
                                       </Button>
                                     )}
                                     {/* E-Sign icon - hide from Generate Report, Imaging Results, and Order Study tabs (Order Study has its own e-sign icon) */}
@@ -4144,11 +4565,11 @@ export default function ImagingPage() {
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => handleESignClick(study.id)}
-                                        className="h-6 w-6 p-0"
+                                        className="h-5 w-5 p-0"
                                         data-testid={`button-esign-${study.id}`}
                                         title="Electronic Signature"
                                       >
-                                        <PenTool className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                        <PenTool className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                       </Button>
                                     )}
                                     {canDelete('medical_imaging') && (
@@ -4159,10 +4580,10 @@ export default function ImagingPage() {
                                           setStudyToDelete(study);
                                           setShowDeleteDialog(true);
                                         }}
-                                        className={activeTab === 'imaging-results' ? "h-5 w-5 p-0" : "h-6 w-6 p-0"}
+                                        className="h-5 w-5 p-0"
                                         data-testid={`button-delete-${study.id}`}
                                       >
-                                        <Trash2 className={activeTab === 'imaging-results' ? "h-2.5 w-2.5 text-red-600 dark:text-red-400" : "h-3 w-3 text-red-600 dark:text-red-400"} />
+                                        <Trash2 className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
                                       </Button>
                                     )}
                                     {activeTab === "imaging-results" && (
@@ -4188,10 +4609,10 @@ export default function ImagingPage() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => handleDownloadStudy(study.id)}
-                                    className="h-6 w-6 p-0"
+                                    className="h-5 w-5 p-0"
                                     data-testid={`button-download-${study.id}`}
                                   >
-                                    <Download className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                                    <Download className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                   </Button>
                                 ) : null}
                                 {/* Blue save icon - hidden as requested */}
@@ -4200,11 +4621,11 @@ export default function ImagingPage() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => handleGenerateImagePrescription(study.id)}
-                                    className="h-6 w-6 p-0"
+                                    className="h-5 w-5 p-0"
                                     data-testid={`button-image-prescription-${study.id}`}
                                     title="Generate Image Prescription"
                                   >
-                                    <Save className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                    <Save className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                   </Button>
                                 )}
                               </div>
@@ -4729,7 +5150,7 @@ export default function ImagingPage() {
                                             setSelectedStudyId(study.id);
                                             handleFieldEdit("scheduledAt");
                                           }}
-                                          className="h-6 w-6 p-0"
+                                          className="h-5 w-5 p-0"
                                           data-testid="button-edit-scheduled-date"
                                         >
                                           <Edit className="h-3 w-3 text-gray-400" />
@@ -4821,7 +5242,7 @@ export default function ImagingPage() {
                                             setSelectedStudyId(study.id);
                                             handleFieldEdit("performedAt");
                                           }}
-                                          className="h-6 w-6 p-0"
+                                          className="h-5 w-5 p-0"
                                           data-testid="button-edit-performed-date"
                                         >
                                           <Edit className="h-3 w-3 text-gray-400" />
@@ -5070,10 +5491,10 @@ export default function ImagingPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleViewStudy(study)}
+                                onClick={() => handleViewStudy(study, activeTab === "imaging-results")}
                                 className={activeTab === 'imaging-results' ? "border-gray-200 text-gray-600 hover:bg-gray-50" : ""}
                                 data-testid={`button-edit-card-${study.id}`}
-                                title="Edit Study"
+                                title={activeTab === "imaging-results" ? "Edit Study / Edit Generated Report" : "Edit Study"}
                               >
                                 <Edit className={`h-4 w-4 ${activeTab === 'imaging-results' ? "text-gray-600 dark:text-gray-400" : ""}`} />
                               </Button>
@@ -5578,7 +5999,7 @@ export default function ImagingPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleFieldEdit("findings")}
-                        className="h-6 w-6 p-0"
+                        className="h-5 w-5 p-0"
                         data-testid="button-edit-findings"
                       >
                         <Edit className="h-3 w-3" />
@@ -5643,7 +6064,7 @@ export default function ImagingPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleFieldEdit("impression")}
-                        className="h-6 w-6 p-0"
+                        className="h-5 w-5 p-0"
                         data-testid="button-edit-impression"
                       >
                         <Edit className="h-3 w-3" />
@@ -5711,7 +6132,7 @@ export default function ImagingPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleFieldEdit("radiologist")}
-                        className="h-6 w-6 p-0"
+                        className="h-5 w-5 p-0"
                         data-testid="button-edit-radiologist"
                       >
                         <Edit className="h-3 w-3" />
@@ -6218,7 +6639,13 @@ export default function ImagingPage() {
       </Dialog>
 
       {/* View Study Dialog */}
-      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+      <Dialog open={showViewDialog} onOpenChange={(open) => {
+        setShowViewDialog(open);
+        if (!open) {
+          setViewDialogOpenedFromEditReport(false);
+          setRegenerateSuccessInView(false);
+        }
+      }}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>View Imaging Study</DialogTitle>
@@ -6310,89 +6737,197 @@ export default function ImagingPage() {
                   </p>
                 </div>
 
-                {selectedStudy.findings && (
-                  <div>
-                    <h4 className="font-medium text-lg mb-2">Findings</h4>
-                    <p className="text-gray-700 bg-gray-50 p-3 rounded-lg">
-                      {selectedStudy.findings}
-                    </p>
-                  </div>
-                )}
-
-                {selectedStudy.impression && (
-                  <div>
-                    <h4 className="font-medium text-lg mb-2">Impression</h4>
-                    <div className="text-gray-700 bg-gray-50 p-3 rounded-lg">
-                      {user?.role === 'patient' && selectedStudy.impression.includes('File:') ? (
-                        // For patient users, make filename clickable
-                        <div>
-                          {selectedStudy.impression.split(/(File:\s*[^\s]+\s*\([^)]+\))/).map((part, idx) => {
-                            const fileMatch = part.match(/File:\s*([^\s]+)\s*\(([^)]+)\)/);
-                            if (fileMatch) {
-                              const [fullMatch, fileName, fileSize] = fileMatch;
-                              return (
-                                <button
-                                  key={idx}
-                                  onClick={async () => {
-                                    try {
-                                      const token = localStorage.getItem("auth_token");
-                                      const headers: Record<string, string> = {
-                                        "X-Tenant-Subdomain": getActiveSubdomain(),
-                                      };
-                                      
-                                      if (token) {
-                                        headers["Authorization"] = `Bearer ${token}`;
-                                      }
-                                      
-                                      const response = await fetch(`/api/medical-images/${selectedStudy.id}/image?t=${Date.now()}`, {
-                                        method: "GET",
-                                        headers,
-                                        credentials: "include",
-                                      });
-                                      
-                                      if (!response.ok) {
-                                        throw new Error(`Failed to load image: ${response.status}`);
-                                      }
-                                      
-                                      const blob = await response.blob();
-                                      const blobUrl = URL.createObjectURL(blob);
-                                      
-                                      const imageForViewer = {
-                                        seriesDescription: `${selectedStudy.modality} ${selectedStudy.bodyPart}`,
-                                        type: "JPEG" as const,
-                                        imageCount: 1,
-                                        size: fileSize,
-                                        imageId: selectedStudy.id,
-                                        imageUrl: blobUrl,
-                                        mimeType: "image/jpeg",
-                                        fileName: fileName,
-                                      };
-                                      setSelectedImageSeries(imageForViewer);
-                                      setShowImageViewer(true);
-                                    } catch (error) {
-                                      console.error("Error loading image:", error);
-                                      toast({
-                                        title: "Error",
-                                        description: "Failed to load medical image. Please try again.",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
-                                  className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
-                                >
-                                  {fullMatch}
-                                </button>
-                              );
-                            }
-                            return <span key={idx}>{part}</span>;
-                          })}
-                        </div>
-                      ) : (
-                        // For non-patient users, display normally
-                        <p>{selectedStudy.impression}</p>
-                      )}
+                {/* Editable Findings & Impression when opened from Imaging Results edit */}
+                {viewDialogOpenedFromEditReport && user?.role !== "patient" ? (
+                  <>
+                    <div>
+                      <h4 className="font-medium text-lg mb-2">Findings</h4>
+                      <Textarea
+                        className="w-full min-h-[100px] text-gray-700 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-600 p-3 rounded-lg resize-y"
+                        value={viewDialogFindings}
+                        onChange={(e) => setViewDialogFindings(e.target.value)}
+                        placeholder="Enter radiological findings..."
+                        data-testid="view-dialog-findings"
+                      />
                     </div>
-                  </div>
+                    <div>
+                      <h4 className="font-medium text-lg mb-2">Impression</h4>
+                      <Textarea
+                        className="w-full min-h-[80px] text-gray-700 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-600 p-3 rounded-lg resize-y"
+                        value={viewDialogImpression}
+                        onChange={(e) => setViewDialogImpression(e.target.value)}
+                        placeholder="Enter clinical impression..."
+                        data-testid="view-dialog-impression"
+                      />
+                    </div>
+                    <Button
+                      disabled={isUpdatingViewReport || isGeneratingPDF}
+                      onClick={async () => {
+                        if (!selectedStudy?.id) return;
+                        setIsUpdatingViewReport(true);
+                        try {
+                          await apiRequest("PATCH", `/api/medical-images/${selectedStudy.id}/report-fields`, {
+                            findings: viewDialogFindings,
+                            impression: viewDialogImpression,
+                          });
+                          const updatedStudy = { ...selectedStudy, findings: viewDialogFindings, impression: viewDialogImpression };
+                          await regenerateExistingReport(updatedStudy);
+                          refetchImages();
+                        } catch (e) {
+                          console.error("Update & regenerate failed:", e);
+                          toast({
+                            title: "Update failed",
+                            description: e instanceof Error ? e.message : "Could not update and regenerate PDF.",
+                            variant: "destructive",
+                          });
+                        } finally {
+                          setIsUpdatingViewReport(false);
+                        }
+                      }}
+                    >
+                      {isUpdatingViewReport || isGeneratingPDF ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Updating...
+                        </>
+                      ) : (
+                        "Update & Regenerate PDF"
+                      )}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {selectedStudy.findings && (
+                      <div>
+                        <h4 className="font-medium text-lg mb-2">Findings</h4>
+                        <p className="text-gray-700 bg-gray-50 p-3 rounded-lg">
+                          {selectedStudy.findings}
+                        </p>
+                      </div>
+                    )}
+                    {selectedStudy.impression && (
+                      <div>
+                        <h4 className="font-medium text-lg mb-2">Impression</h4>
+                        <div className="text-gray-700 bg-gray-50 p-3 rounded-lg">
+                          {user?.role === 'patient' && selectedStudy.impression.includes('File:') ? (
+                            <div>
+                              {selectedStudy.impression.split(/(File:\s*[^\s]+\s*\([^)]+\))/).map((part, idx) => {
+                                const fileMatch = part.match(/File:\s*([^\s]+)\s*\(([^)]+)\)/);
+                                if (fileMatch) {
+                                  const [fullMatch, fileName, fileSize] = fileMatch;
+                                  return (
+                                    <button
+                                      key={idx}
+                                      onClick={async () => {
+                                        try {
+                                          const token = localStorage.getItem("auth_token");
+                                          const headers: Record<string, string> = {
+                                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                                          };
+                                          if (token) headers["Authorization"] = `Bearer ${token}`;
+                                          let blobUrl: string | null = null;
+                                          let resolvedFileName = fileName;
+                                          const medicalResponse = await fetch(`/api/medical-images/${selectedStudy.id}/image?t=${Date.now()}`, {
+                                            method: "GET",
+                                            headers,
+                                            credentials: "include",
+                                          });
+                                          if (medicalResponse.ok) {
+                                            const blob = await medicalResponse.blob();
+                                            if (blob.size > 0) blobUrl = URL.createObjectURL(blob);
+                                          }
+                                          if (!blobUrl) {
+                                            const radiologyListRes = await fetch(`/api/radiology-images/${selectedStudy.id}`, {
+                                              method: "GET",
+                                              headers,
+                                              credentials: "include",
+                                            });
+                                            if (radiologyListRes.ok) {
+                                              const data = await radiologyListRes.json();
+                                              const images = data?.images ?? [];
+                                              if (images.length > 0) {
+                                                const imgRes = await fetch(`/api/radiology-images/image/${images[0].id}`, {
+                                                  method: "GET",
+                                                  headers,
+                                                  credentials: "include",
+                                                });
+                                                if (imgRes.ok) {
+                                                  const blob = await imgRes.blob();
+                                                  if (blob.size > 0) {
+                                                    blobUrl = URL.createObjectURL(blob);
+                                                    resolvedFileName = images[0].fileName ?? fileName;
+                                                  }
+                                                }
+                                                if (!blobUrl) {
+                                                  for (const img of images) {
+                                                    const fp = img.filePath;
+                                                    if (!fp) continue;
+                                                    const relativePath = fp.includes("uploads")
+                                                      ? fp.substring(fp.indexOf("uploads")).replace(/\\/g, "/")
+                                                      : fp.startsWith("/uploads")
+                                                        ? fp.substring(1)
+                                                        : fp.replace(/\\/g, "/");
+                                                    const fileUrl = `/${relativePath}`;
+                                                    try {
+                                                      const pathRes = await fetch(fileUrl, {
+                                                        method: "GET",
+                                                        credentials: "include",
+                                                        headers,
+                                                      });
+                                                      if (pathRes.ok) {
+                                                        const blob = await pathRes.blob();
+                                                        if (blob.size > 0) {
+                                                          blobUrl = URL.createObjectURL(blob);
+                                                          resolvedFileName = img.fileName ?? fileName;
+                                                          break;
+                                                        }
+                                                      }
+                                                    } catch {
+                                                      continue;
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                          if (!blobUrl) throw new Error("No image data available.");
+                                          const imageForViewer = {
+                                            seriesDescription: `${selectedStudy.modality} ${selectedStudy.bodyPart}`,
+                                            type: "JPEG" as const,
+                                            imageCount: 1,
+                                            size: fileSize,
+                                            imageId: selectedStudy.id,
+                                            imageUrl: blobUrl,
+                                            mimeType: "image/jpeg",
+                                            fileName: resolvedFileName,
+                                          };
+                                          setSelectedImageSeries(imageForViewer);
+                                          setShowImageViewer(true);
+                                        } catch (error) {
+                                          console.error("Error loading image:", error);
+                                          toast({
+                                            title: "Error",
+                                            description: error instanceof Error ? error.message : "Failed to load medical image. Please try again.",
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                                    >
+                                      {fullMatch}
+                                    </button>
+                                  );
+                                }
+                                return <span key={idx}>{part}</span>;
+                              })}
+                            </div>
+                          ) : (
+                            <p>{selectedStudy.impression}</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {selectedStudy.radiologist && (
@@ -6402,30 +6937,13 @@ export default function ImagingPage() {
                   </div>
                 )}
 
-                {selectedStudy.signatureData && (
-                  <div>
-                    <h4 className="font-medium text-lg mb-2">
-                      Resident Physician (Signature)
-                    </h4>
-                    <div className="border border-gray-300 rounded-lg p-2 inline-block">
-                      <img
-                        src={selectedStudy.signatureData}
-                        alt="Resident Physician Signature"
-                        className="w-[120px] h-[50px] object-contain"
-                      />
-                    </div>
-                    {selectedStudy.signatureDate && (
-                      <div className="mt-2 text-sm" style={{ color: 'rgb(0, 153, 0)' }}>
-                        ✓ E-Signed by - {format(new Date(selectedStudy.signatureDate), "MMM d, yyyy HH:mm")}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
-              <div>
-                <h4 className="font-medium text-lg mb-3">Image Series</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Row: Image Series (first) and Resident Physician (Signature) (second) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-medium text-lg mb-3">Image Series</h4>
+                  <div className="grid grid-cols-1 gap-4">
                   {selectedStudy.images.map((image: any, index: number) => (
                     <div
                       key={index}
@@ -6449,53 +6967,155 @@ export default function ImagingPage() {
                           size="sm"
                           onClick={async () => {
                             try {
-                              // Fetch image with authentication headers
                               const token = localStorage.getItem("auth_token");
                               const headers: Record<string, string> = {
                                 "X-Tenant-Subdomain": getActiveSubdomain(),
                               };
-                              
-                              if (token) {
-                                headers["Authorization"] = `Bearer ${token}`;
+                              if (token) headers["Authorization"] = `Bearer ${token}`;
+
+                              setLoadingViewStudyImages(true);
+                              const loaded: Array<{ url: string; fileName: string; mimeType?: string }> = [];
+
+                              const medicalImageId = Number(selectedStudy.id);
+                              console.log("[View Study Images] medical_image_id (study id):", medicalImageId);
+                              if (isNaN(medicalImageId)) {
+                                setLoadingViewStudyImages(false);
+                                toast({ title: "Error", description: "Invalid study ID.", variant: "destructive" });
+                                return;
                               }
-                              
-                              const response = await fetch(`/api/medical-images/${selectedStudy.id}/image?t=${Date.now()}`, {
-                                method: "GET",
-                                headers,
-                                credentials: "include",
-                              });
-                              
-                              if (!response.ok) {
-                                throw new Error(`Failed to load image: ${response.status}`);
-                              }
-                              
-                              // Convert response to blob and create blob URL
-                              const blob = await response.blob();
-                              const blobUrl = URL.createObjectURL(blob);
-                              
-                              const imageForViewer = {
-                                seriesDescription: image.seriesDescription,
-                                type: image.type,
-                                imageCount: image.imageCount,
-                                size: image.size,
-                                imageId: selectedStudy.id,
-                                imageUrl: blobUrl, // Use blob URL instead of direct API endpoint
-                                mimeType: image.mimeType || "image/jpeg",
-                                fileName: (selectedStudy as any).fileName || null,
+
+                              const tryAddFromPath = async (filePath: string | null, fileName: string): Promise<boolean> => {
+                                if (!filePath || typeof filePath !== "string" || !fileName) {
+                                  console.log("[View Study Images] tryAddFromPath skip (missing path or name):", { filePath, fileName });
+                                  return false;
+                                }
+                                if (fileName.endsWith(".pending") || fileName.startsWith("ORDER-")) {
+                                  console.log("[View Study Images] tryAddFromPath skip (placeholder):", { fileName });
+                                  return false;
+                                }
+                                const relativePath = filePath.includes("uploads")
+                                  ? filePath.substring(filePath.indexOf("uploads")).replace(/\\/g, "/")
+                                  : filePath.startsWith("/uploads") ? filePath.slice(1) : filePath.replace(/\\/g, "/");
+                                const fileUrl = `/${relativePath}`;
+                                console.log("[View Study Images] fetch file_path:", { filePath, fileName, fileUrl });
+                                try {
+                                  const res = await fetch(fileUrl, { method: "GET", credentials: "include", headers });
+                                  if (res.ok) {
+                                    const blob = await res.blob();
+                                    if (blob.size > 0) {
+                                      const url = URL.createObjectURL(blob);
+                                      const mime = res.headers.get("Content-Type") || "image/jpeg";
+                                      loaded.push({ url, fileName, mimeType: mime });
+                                      console.log("[View Study Images] loaded from path:", fileName);
+                                      return true;
+                                    }
+                                  }
+                                  console.log("[View Study Images] fetch not ok:", { fileUrl, status: res.status, statusText: res.statusText });
+                                } catch (err) {
+                                  console.log("[View Study Images] fetch error:", { fileUrl, error: err });
+                                }
+                                return false;
                               };
-                              setSelectedImageSeries(imageForViewer);
-                              setShowImageViewer(true);
+
+                              const tryAddFromRadiologyApi = async (id: number, fileName?: string): Promise<boolean> => {
+                                try {
+                                  const res = await fetch(`/api/radiology-images/image/${id}`, {
+                                    method: "GET", headers, credentials: "include",
+                                  });
+                                  if (res.ok) {
+                                    const blob = await res.blob();
+                                    if (blob.size > 0) {
+                                      loaded.push({
+                                        url: URL.createObjectURL(blob),
+                                        fileName: fileName || `image-${id}`,
+                                        mimeType: res.headers.get("Content-Type") || "image/jpeg",
+                                      });
+                                      return true;
+                                    }
+                                  }
+                                } catch { /* ignore */ }
+                                return false;
+                              };
+
+                              // 1) Get radiology_images for this medical_image_id (file_name, file_path from DB)
+                              const listRes = await fetch(`/api/radiology-images/${medicalImageId}`, {
+                                method: "GET", credentials: "include", headers,
+                              });
+                              const listData = listRes.ok ? await listRes.json() : null;
+                              const radiologyList = listData?.images ?? [];
+                              console.log("[View Study Images] radiology_images response:", {
+                                status: listRes.status,
+                                count: radiologyList.length,
+                                raw: listData,
+                                file_paths: radiologyList.map((img: any) => ({
+                                  id: img.id,
+                                  file_path: img.filePath ?? img.file_path,
+                                  file_name: img.fileName ?? img.file_name,
+                                })),
+                              });
+
+                              for (const img of radiologyList) {
+                                const fp = img.filePath ?? img.file_path;
+                                const fname = img.fileName ?? img.file_name ?? "";
+                                if (await tryAddFromPath(fp, fname)) continue;
+                                const id = img.id != null ? Number(img.id) : NaN;
+                                if (!Number.isNaN(id)) await tryAddFromRadiologyApi(id, fname || undefined);
+                              }
+
+                              // 2) If none, list folder and fetch each file that exists
+                              if (loaded.length === 0) {
+                                try {
+                                  const folderRes = await fetch(`/api/medical-images/${medicalImageId}/list-folder-images`, {
+                                    method: "GET", credentials: "include", headers,
+                                  });
+                                  console.log("[View Study Images] list-folder-images response:", {
+                                    status: folderRes.status,
+                                    ok: folderRes.ok,
+                                  });
+                                  if (folderRes.ok) {
+                                    const folderData = await folderRes.json();
+                                    const files = folderData?.images ?? [];
+                                    console.log("[View Study Images] list-folder-images file_paths:", files.map((f: any) => ({ filePath: f.filePath ?? f.file_path, fileName: f.fileName ?? f.file_name })));
+                                    for (const f of files) {
+                                      const fp = f.filePath ?? "";
+                                      const fname = f.fileName ?? "";
+                                      await tryAddFromPath(fp, fname);
+                                    }
+                                  }
+                                } catch (e) {
+                                  console.log("[View Study Images] list-folder-images error:", e);
+                                }
+                              }
+
+                              setLoadingViewStudyImages(false);
+                              if (loaded.length === 0) {
+                                console.log("[View Study Images] No images loaded. Summary: medical_image_id=", medicalImageId, "radiology_images file_paths=", radiologyList.map((img: any) => ({ id: img.id, file_path: img.filePath ?? img.file_path, file_name: img.fileName ?? img.file_name })));
+                                toast({
+                                  title: "No Images Found",
+                                  description: "No uploaded images found for this study. Check file_path in radiology_images.",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+                              setViewStudyImagesList(loaded);
+                              setShowViewStudyImagesDialog(true);
                             } catch (error) {
-                              console.error("Error loading image:", error);
+                              setLoadingViewStudyImages(false);
+                              console.error("Error loading study images:", error);
                               toast({
                                 title: "Error",
-                                description: "Failed to load medical image. Please try again.",
+                                description: error instanceof Error ? error.message : "Failed to load images.",
                                 variant: "destructive",
                               });
                             }
                           }}
+                          disabled={loadingViewStudyImages}
                         >
-                          <Eye className="h-4 w-4 mr-2" />
+                          {loadingViewStudyImages ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Eye className="h-4 w-4 mr-2" />
+                          )}
                           View Images
                         </Button>
                         {/* Hide Edit Image button for patient role */}
@@ -6513,6 +7133,30 @@ export default function ImagingPage() {
                       </div>
                     </div>
                   ))}
+                  </div>
+                </div>
+                <div>
+                  <h4 className="font-medium text-lg mb-2">
+                    Resident Physician (Signature)
+                  </h4>
+                  {selectedStudy.signatureData ? (
+                    <>
+                      <div className="border border-gray-300 rounded-lg p-2 inline-block">
+                        <img
+                          src={selectedStudy.signatureData}
+                          alt="Resident Physician Signature"
+                          className="w-[120px] h-[50px] object-contain"
+                        />
+                      </div>
+                      {selectedStudy.signatureDate && (
+                        <div className="mt-2 text-sm" style={{ color: 'rgb(0, 153, 0)' }}>
+                          ✓ E-Signed by - {format(new Date(selectedStudy.signatureDate), "MMM d, yyyy HH:mm")}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No signature on file.</p>
+                  )}
                 </div>
               </div>
 
@@ -6547,6 +7191,14 @@ export default function ImagingPage() {
                 </div>
               )}
 
+              {regenerateSuccessInView && (
+                <div className="flex items-center gap-3 p-4 rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800">
+                  <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400 flex-shrink-0" />
+                  <p className="text-sm font-medium text-green-800 dark:text-green-200">
+                    PDF report has been regenerated and replaced successfully.
+                  </p>
+                </div>
+              )}
               <div className="flex justify-between items-center pt-4 border-t">
                 <Button
                   variant="outline"
@@ -6555,17 +7207,32 @@ export default function ImagingPage() {
                   Close
                 </Button>
                 <div className="flex gap-2">
-                  {/* Hide Generate Report button for patient role */}
+                  {/* Hide Generate Report / Edit Generated Report button for patient role */}
                   {user?.role !== 'patient' && (
                     <Button
                       variant="outline"
+                      disabled={viewDialogOpenedFromEditReport && isGeneratingPDF}
                       onClick={() => {
-                        setShowViewDialog(false);
-                        setShowReportDialog(true);
+                        if (viewDialogOpenedFromEditReport && selectedStudy) {
+                          regenerateExistingReport(selectedStudy);
+                        } else {
+                          setReportDialogIsEditMode(false);
+                          setShowViewDialog(false);
+                          setShowReportDialog(true);
+                        }
                       }}
                     >
-                      <FileText className="h-4 w-4 mr-2" />
-                      Generate Report
+                      {viewDialogOpenedFromEditReport && isGeneratingPDF ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Regenerating...
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="h-4 w-4 mr-2" />
+                          {viewDialogOpenedFromEditReport ? "Edit Generated Report" : "Generate Report"}
+                        </>
+                      )}
                     </Button>
                   )}
                 </div>
@@ -7020,146 +7687,8 @@ export default function ImagingPage() {
             <DialogTitle>Upload Medical Images</DialogTitle>
           </DialogHeader>
           <div className="space-y-6">
-            {/* Patient Selection */}
-            <div>
-              <Label htmlFor="upload-patient">Patient *</Label>
-              {user?.role === "patient" && currentPatient ? (
-                <div className="flex items-center gap-3 px-3 py-2 border rounded-md bg-gray-50 dark:bg-slate-700">
-                  <User className="h-4 w-4 text-blue-600" />
-                  <span className="font-medium text-gray-900 dark:text-gray-100">
-                    {currentPatient.firstName} {currentPatient.lastName}
-                  </span>
-                  <span className="text-sm text-gray-500 dark:text-gray-400">
-                    ({currentPatient.patientId})
-                  </span>
-                </div>
-              ) : (
-                <Popover
-                  open={uploadPatientSearchOpen}
-                  onOpenChange={setUploadPatientSearchOpen}
-                >
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={uploadPatientSearchOpen}
-                      className="w-full justify-between"
-                    >
-                      {uploadFormData.patientId
-                        ? patients.find(
-                            (patient: any) => patient.id.toString() === uploadFormData.patientId
-                          )
-                          ? `${
-                              patients.find(
-                                (patient: any) => patient.id.toString() === uploadFormData.patientId
-                              )?.firstName
-                            } ${
-                              patients.find(
-                                (patient: any) => patient.id.toString() === uploadFormData.patientId
-                              )?.lastName
-                            } (${
-                              patients.find(
-                                (patient: any) => patient.id.toString() === uploadFormData.patientId
-                              )?.patientId
-                            })`
-                          : "Select patient"
-                        : patientsLoading
-                        ? "Loading patients..."
-                        : "Select patient"}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[400px] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Search patients..." />
-                      <CommandEmpty>No patient found.</CommandEmpty>
-                      <CommandGroup className="max-h-64 overflow-auto">
-                        {patientsLoading ? (
-                          <CommandItem disabled>Loading patients...</CommandItem>
-                        ) : patients.length > 0 ? (
-                          patients.map((patient: any) => (
-                            <CommandItem
-                              key={patient.id}
-                              value={`${patient.firstName} ${patient.lastName} ${patient.patientId}`}
-                              onSelect={() => {
-                                setUploadFormData((prev) => ({
-                                  ...prev,
-                                  patientId: patient.id.toString(),
-                                }));
-                                setUploadPatientSearchOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={`mr-2 h-4 w-4 ${
-                                  uploadFormData.patientId === patient.id.toString()
-                                    ? "opacity-100"
-                                    : "opacity-0"
-                                }`}
-                              />
-                              {patient.firstName} {patient.lastName} ({patient.patientId})
-                            </CommandItem>
-                          ))
-                        ) : (
-                          <CommandItem disabled>No patients found</CommandItem>
-                        )}
-                      </CommandGroup>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              )}
-            </div>
-
-            {/* Study Type */}
-            <div>
-              <Label htmlFor="upload-study-type">Study Type *</Label>
-              <Popover open={studyTypeOpen} onOpenChange={setStudyTypeOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={studyTypeOpen}
-                    className="w-full justify-between"
-                  >
-                    {uploadFormData.studyType || "Select study type..."}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-full p-0">
-                  <Command>
-                    <CommandInput placeholder="Search study type..." />
-                    <CommandEmpty>No study type found.</CommandEmpty>
-                    <CommandGroup>
-                      {pricingLoading ? (
-                        <CommandItem disabled>Loading study types...</CommandItem>
-                      ) : availableStudyTypes.length === 0 ? (
-                        <CommandItem disabled>No study types available</CommandItem>
-                      ) : (
-                        availableStudyTypes.map((pricing: any) => (
-                          <CommandItem
-                            key={pricing.id}
-                            value={pricing.imagingType}
-                            onSelect={(currentValue) => {
-                              setUploadFormData({ ...uploadFormData, studyType: currentValue });
-                              setStudyTypeOpen(false);
-                            }}
-                          >
-                            <CheckIcon
-                              className={`mr-2 h-4 w-4 ${
-                                uploadFormData.studyType === pricing.imagingType ? "opacity-100" : "opacity-0"
-                              }`}
-                            />
-                            {pricing.imagingType}
-                          </CommandItem>
-                        ))
-                      )}
-                    </CommandGroup>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            {/* Select Role and User */}
-              <div className="grid grid-cols-2 gap-4">
+            {/* Row 1: Select Role and Name * */}
+            <div className="grid grid-cols-2 gap-4">
                 <div>
                 <Label htmlFor="select-role">Select Role *</Label>
                 {(user?.role === 'nurse' || user?.role === 'doctor') ? (
@@ -7310,8 +7839,164 @@ export default function ImagingPage() {
                   </div>
                 </div>
 
-            {/* Study Information */}
+            {/* Row 2: Patient * and Priority */}
             <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="upload-patient">Patient *</Label>
+                {user?.role === "patient" && currentPatient ? (
+                  <div className="flex items-center gap-3 px-3 py-2 border rounded-md bg-gray-50 dark:bg-slate-700">
+                    <User className="h-4 w-4 text-blue-600" />
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {currentPatient.firstName} {currentPatient.lastName}
+                    </span>
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
+                      ({currentPatient.patientId})
+                    </span>
+                  </div>
+                ) : (
+                  <Popover
+                    open={uploadPatientSearchOpen}
+                    onOpenChange={setUploadPatientSearchOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={uploadPatientSearchOpen}
+                        className="w-full justify-between"
+                      >
+                        {uploadFormData.patientId
+                          ? patients.find(
+                              (patient: any) => patient.id.toString() === uploadFormData.patientId
+                            )
+                            ? `${
+                                patients.find(
+                                  (patient: any) => patient.id.toString() === uploadFormData.patientId
+                                )?.firstName
+                              } ${
+                                patients.find(
+                                  (patient: any) => patient.id.toString() === uploadFormData.patientId
+                                )?.lastName
+                              } (${
+                                patients.find(
+                                  (patient: any) => patient.id.toString() === uploadFormData.patientId
+                                )?.patientId
+                              })`
+                            : "Select patient"
+                          : patientsLoading
+                          ? "Loading patients..."
+                          : "Select patient"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[400px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search patients..." />
+                        <CommandEmpty>No patient found.</CommandEmpty>
+                        <CommandGroup className="max-h-64 overflow-auto">
+                          {patientsLoading ? (
+                            <CommandItem disabled>Loading patients...</CommandItem>
+                          ) : patients.length > 0 ? (
+                            patients.map((patient: any) => (
+                              <CommandItem
+                                key={patient.id}
+                                value={`${patient.firstName} ${patient.lastName} ${patient.patientId}`}
+                                onSelect={() => {
+                                  setUploadFormData((prev) => ({
+                                    ...prev,
+                                    patientId: patient.id.toString(),
+                                  }));
+                                  setUploadPatientSearchOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${
+                                    uploadFormData.patientId === patient.id.toString()
+                                      ? "opacity-100"
+                                      : "opacity-0"
+                                  }`}
+                                />
+                                {patient.firstName} {patient.lastName} ({patient.patientId})
+                              </CommandItem>
+                            ))
+                          ) : (
+                            <CommandItem disabled>No patients found</CommandItem>
+                          )}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
+              </div>
+              <div>
+                <Label htmlFor="upload-priority">Priority</Label>
+                <Select
+                  value={uploadFormData.priority}
+                  onValueChange={(value) =>
+                    setUploadFormData({ ...uploadFormData, priority: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="routine">Routine</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
+                    <SelectItem value="stat">STAT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Row 3: Study Type * and Modality * */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="upload-study-type">Study Type *</Label>
+                <Popover open={studyTypeOpen} onOpenChange={setStudyTypeOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={studyTypeOpen}
+                      className="w-full justify-between"
+                    >
+                      {uploadFormData.studyType || "Select study type..."}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-full p-0">
+                    <Command>
+                      <CommandInput placeholder="Search study type..." />
+                      <CommandEmpty>No study type found.</CommandEmpty>
+                      <CommandGroup>
+                        {pricingLoading ? (
+                          <CommandItem disabled>Loading study types...</CommandItem>
+                        ) : availableStudyTypes.length === 0 ? (
+                          <CommandItem disabled>No study types available</CommandItem>
+                        ) : (
+                          availableStudyTypes.map((pricing: any) => (
+                            <CommandItem
+                              key={pricing.id}
+                              value={pricing.imagingType}
+                              onSelect={(currentValue) => {
+                                setUploadFormData({ ...uploadFormData, studyType: currentValue });
+                                setStudyTypeOpen(false);
+                              }}
+                            >
+                              <CheckIcon
+                                className={`mr-2 h-4 w-4 ${
+                                  uploadFormData.studyType === pricing.imagingType ? "opacity-100" : "opacity-0"
+                                }`}
+                              />
+                              {pricing.imagingType}
+                            </CommandItem>
+                          ))
+                        )}
+                      </CommandGroup>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
               <div>
                 <Label htmlFor="upload-modality">Modality *</Label>
                 <Popover open={modalityOpen} onOpenChange={setModalityOpen}>
@@ -7336,10 +8021,10 @@ export default function ImagingPage() {
                             key={modality}
                             value={modality}
                             onSelect={(currentValue) => {
-                              setUploadFormData({ 
-                                ...uploadFormData, 
+                              setUploadFormData({
+                                ...uploadFormData,
                                 modality: currentValue,
-                                bodyPart: "" // Reset body part when modality changes
+                                bodyPart: "",
                               });
                               setModalityOpen(false);
                             }}
@@ -7357,26 +8042,9 @@ export default function ImagingPage() {
                   </PopoverContent>
                 </Popover>
               </div>
-              <div>
-                <Label htmlFor="upload-priority">Priority</Label>
-                <Select
-                  value={uploadFormData.priority}
-                  onValueChange={(value) =>
-                    setUploadFormData({ ...uploadFormData, priority: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="routine">Routine</SelectItem>
-                    <SelectItem value="urgent">Urgent</SelectItem>
-                    <SelectItem value="stat">STAT</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
 
+            {/* Body Part * */}
             <div>
               <Label htmlFor="upload-body-part">Body Part *</Label>
               <Popover open={bodyPartOpen} onOpenChange={setBodyPartOpen}>
@@ -7467,6 +8135,67 @@ export default function ImagingPage() {
                 )}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Study Images – all uploaded images from radiology_images (file_path) */}
+      <Dialog
+        open={showViewStudyImagesDialog}
+        onOpenChange={(open) => {
+          if (!open) {
+            viewStudyImagesList.forEach((item) => {
+              if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+            });
+            setViewStudyImagesList([]);
+          }
+          setShowViewStudyImagesDialog(open);
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>View Study Images</DialogTitle>
+            <p className="text-sm text-gray-600">
+              Images loaded from database (radiology_images file_path). Click an image to view full size.
+            </p>
+          </DialogHeader>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 py-4">
+            {viewStudyImagesList.map((item, idx) => (
+              <button
+                key={idx}
+                type="button"
+                className="rounded-lg border border-gray-200 overflow-hidden hover:border-blue-400 hover:shadow-md transition-all text-left"
+                onClick={() => {
+                  setSelectedImageSeries({
+                    seriesDescription: item.fileName || "Study Image",
+                    type: "Image",
+                    imageCount: viewStudyImagesList.length,
+                    size: "",
+                    imageId: null,
+                    imageUrl: item.url,
+                    mimeType: item.mimeType || "image/jpeg",
+                    fileName: item.fileName,
+                  });
+                  setShowImageViewer(true);
+                }}
+              >
+                <div className="aspect-square bg-gray-100 flex items-center justify-center">
+                  <img
+                    src={item.url}
+                    alt={item.fileName || "Study image"}
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+                <div className="p-2 text-xs text-gray-600 truncate" title={item.fileName}>
+                  {item.fileName || `Image ${idx + 1}`}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end pt-2 border-t">
+            <Button variant="outline" onClick={() => setShowViewStudyImagesDialog(false)}>
+              Close
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -8384,82 +9113,100 @@ export default function ImagingPage() {
       </Dialog>
 
       {/* Edit Image Dialog */}
-      <Dialog open={showEditImageDialog} onOpenChange={setShowEditImageDialog}>
+      <Dialog
+        open={showEditImageDialog}
+        onOpenChange={(open) => {
+          setShowEditImageDialog(open);
+          if (!open) {
+            setReplaceDialogPreviews([]);
+            setReplaceDialogExistingPreviews((prev) => {
+              prev.forEach((p) => {
+                if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url);
+              });
+              return [];
+            });
+          }
+        }}
+      >
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Replace Medical Image</DialogTitle>
+            {editingStudyId && selectedStudy && (
+              <p className="text-sm text-muted-foreground mt-1">
+                Medical Image ID: <strong>{editingStudyId}</strong>
+                {selectedStudy.imageId && (
+                  <span className="ml-2">(Image ID: <strong>{selectedStudy.imageId}</strong>)</span>
+                )}
+                {" — new images will be saved with this ID and added to radiology_images."}
+              </p>
+            )}
           </DialogHeader>
           {editingStudyId && selectedStudy && (
             <div className="space-y-4">
-              {/* Display Existing Images */}
-              {selectedStudy.images && selectedStudy.images.length > 0 && (
-                <div>
-                  <Label className="text-sm font-medium mb-3 block">Existing Images ({selectedStudy.images.length})</Label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto">
-                    {selectedStudy.images.map((image: any, index: number) => (
+              {/* Existing Images – preview first */}
+              <div>
+                <Label className="text-sm font-medium mb-3 block">Existing Images</Label>
+                {loadingReplaceExistingPreviews ? (
+                  <div className="flex items-center justify-center py-8 gap-2 text-gray-500">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span className="text-sm">Loading previews…</span>
+                  </div>
+                ) : replaceDialogExistingPreviews.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-64 overflow-y-auto p-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/50">
+                    {replaceDialogExistingPreviews.map((item) => (
                       <div
-                        key={index}
-                        className="border border-gray-200 rounded-lg p-3 flex items-center justify-between"
+                        key={item.id}
+                        className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 aspect-square flex items-center justify-center group"
                       >
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm truncate">
-                            {image.seriesDescription || image.fileName || `Image ${index + 1}`}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            {image.size || 'N/A'} • {image.type || 'N/A'}
-                          </div>
+                        <img
+                          src={item.url}
+                          alt={item.fileName}
+                          className="w-full h-full object-contain"
+                        />
+                        <div className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-xs py-1 px-2 truncate">
+                          {item.fileName}
                         </div>
                         <Button
                           variant="ghost"
                           size="sm"
+                          className="absolute top-1 right-1 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 bg-red-500/90 text-white hover:bg-red-600"
+                          title="Delete this image"
                           onClick={async () => {
                             try {
-                              // Use the image ID from the image object, fallback to study ID
-                              const imageIdToDelete = image.id || selectedStudy.id;
-                              
-                              // Delete the image from database
+                              const isRadiologyId = item.id !== Number(editingStudyId);
                               const response = await apiRequest(
                                 "DELETE",
-                                `/api/medical-images/${imageIdToDelete}`,
+                                isRadiologyId ? `/api/radiology-images/${item.id}` : `/api/medical-images/${item.id}`,
                                 {}
                               );
-                              
                               if (response.ok) {
-                                toast({
-                                  title: "Image Deleted",
-                                  description: "Image has been deleted successfully.",
-                                });
-                                // Refresh the study data
+                                toast({ title: "Image Deleted", description: "Image has been deleted." });
                                 await refetchImages();
-                                // Close dialog if no images left
-                                if (selectedStudy.images.length === 1) {
+                                setReplaceDialogExistingPreviews((prev) => {
+                                  const next = prev.filter((p) => p.id !== item.id);
+                                  if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+                                  return next;
+                                });
+                                if (replaceDialogExistingPreviews.length <= 1) {
                                   setShowEditImageDialog(false);
                                   setEditingStudyId(null);
-                                } else {
-                                  // Update selectedStudy to reflect the deletion
-                                  const updatedImages = selectedStudy.images.filter((_: any, i: number) => i !== index);
-                                  // Note: This is a local update, refetchImages will get the latest data
                                 }
                               }
-                            } catch (error) {
-                              console.error("Error deleting image:", error);
-                              toast({
-                                title: "Delete Failed",
-                                description: "Failed to delete image. Please try again.",
-                                variant: "destructive",
-                              });
+                            } catch (err) {
+                              console.error(err);
+                              toast({ title: "Delete Failed", description: "Failed to delete image.", variant: "destructive" });
                             }
                           }}
-                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                          title="Delete this image"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
+                ) : (
+                  <p className="text-sm text-gray-500 py-2">No existing images. Add new images below.</p>
+                )}
+              </div>
 
               {/* Add New Images Section */}
               <div>
@@ -8473,10 +9220,26 @@ export default function ImagingPage() {
                     accept="image/*,.dcm,.dicom,.jpg,.jpeg,.png,.gif,.bmp,.tiff,.tif,.webp"
                     onChange={(e) => {
                       const files = e.target.files;
-                      if (files) {
+                      if (files && files.length > 0) {
                         const newFiles = Array.from(files);
-                        setSelectedFiles([...selectedFiles, ...newFiles]);
+                        setSelectedFiles((prev) => [...prev, ...newFiles]);
+                        const previewPromises = newFiles.map((file): Promise<string> => {
+                          return new Promise((resolve) => {
+                            if (file.type.startsWith("image/")) {
+                              const reader = new FileReader();
+                              reader.onload = (ev) => resolve((ev.target?.result as string) ?? "");
+                              reader.onerror = () => resolve("");
+                              reader.readAsDataURL(file);
+                            } else {
+                              resolve("");
+                            }
+                          });
+                        });
+                        Promise.all(previewPromises).then((previews) => {
+                          setReplaceDialogPreviews((prev) => [...prev, ...previews.filter((p) => p !== "")]);
+                        });
                       }
+                      e.target.value = "";
                     }}
                     className="hidden"
                     data-testid="input-replacement-file"
@@ -8519,6 +9282,7 @@ export default function ImagingPage() {
                             onClick={() => {
                               const newFiles = selectedFiles.filter((_, i) => i !== index);
                               setSelectedFiles(newFiles);
+                              setReplaceDialogPreviews((prev) => prev.filter((_, i) => i !== index));
                             }}
                             className="h-5 w-5 p-0 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
                             title="Remove this file"
@@ -8530,6 +9294,37 @@ export default function ImagingPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Image preview after select/upload */}
+                {(replaceDialogPreviews.length > 0 || selectedFiles.length > 0) && (
+                  <div className="mt-3 space-y-2">
+                    <Label className="text-sm font-medium">Preview</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-64 overflow-y-auto p-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/50">
+                      {selectedFiles.map((file, index) => {
+                        const previewUrl = replaceDialogPreviews[index];
+                        return (
+                          <div
+                            key={index}
+                            className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 aspect-square flex items-center justify-center"
+                          >
+                            {previewUrl ? (
+                              <img
+                                src={previewUrl}
+                                alt={file.name}
+                                className="w-full h-full object-contain"
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center p-2 text-center">
+                                <FileImage className="h-8 w-8 text-gray-400 mb-1" />
+                                <span className="text-xs text-gray-500 truncate w-full">{file.name}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
               
               <div className="flex justify-end gap-2 pt-4 border-t">
@@ -8538,6 +9333,7 @@ export default function ImagingPage() {
                   onClick={() => {
                     setShowEditImageDialog(false);
                     setSelectedFiles([]);
+                    setReplaceDialogPreviews([]);
                     setUploadedFile(null);
                     setEditingStudyId(null);
                   }}
@@ -8547,51 +9343,48 @@ export default function ImagingPage() {
                 </Button>
                 <Button
                   onClick={async () => {
-                    if (selectedFiles.length > 0 && editingStudyId) {
-                      try {
-                        const formData = new FormData();
-                        formData.append('file', selectedFiles[0]);
-                        
-                        const token = localStorage.getItem('auth_token');
-                        const headers: Record<string, string> = {
-                          'X-Tenant-Subdomain': getActiveSubdomain()
-                        };
-                        
-                        if (token) {
-                          headers['Authorization'] = `Bearer ${token}`;
-                        }
-                        
-                        const response = await fetch(`/api/medical-images/${editingStudyId}/replace`, {
-                          method: 'PUT',
-                          headers,
-                          body: formData,
-                          credentials: 'include',
-                        });
-                        
-                        if (!response.ok) {
-                          const errorText = await response.text();
-                          throw new Error(`${response.status}: ${errorText}`);
-                        }
-                        
-                        const data = await response.json();
-                        await refetchImages();
-                        setShowEditImageDialog(false);
-                        setSelectedFiles([]);
-                        setUploadedFile(null);
-                        setEditingStudyId(null);
-                        
-                        toast({
-                          title: "Image Saved Successfully",
-                          description: "Image has been replaced successfully.",
-                        });
-                      } catch (error) {
-                        console.error("Error replacing image:", error);
-                        toast({
-                          title: "Replace Failed",
-                          description: error instanceof Error ? error.message : "Failed to replace image. Please try again.",
-                          variant: "destructive",
-                        });
+                    if (selectedFiles.length === 0 || !editingStudyId) return;
+                    const token = localStorage.getItem('auth_token');
+                    const headers: Record<string, string> = { 'X-Tenant-Subdomain': getActiveSubdomain() };
+                    if (token) headers['Authorization'] = `Bearer ${token}`;
+                    try {
+                      const formData = new FormData();
+                      selectedFiles.forEach((f) => formData.append('files', f));
+                      const addRes = await fetch(`/api/medical-images/${editingStudyId}/add-images`, {
+                        method: 'POST',
+                        headers,
+                        body: formData,
+                        credentials: 'include',
+                      });
+                      if (!addRes.ok) {
+                        const errText = await addRes.text();
+                        throw new Error(addRes.status + ": " + errText);
                       }
+                      const addData = await addRes.json();
+                      const fileNames: string[] = addData?.fileNames ?? [];
+                      const savedCount = addData?.savedCount ?? fileNames.length;
+                      if (fileNames.length === 0) {
+                        throw new Error("No files were saved on the server");
+                      }
+                      await refetchImages();
+                      const message = `${savedCount ?? fileNames.length} image(s) saved to server path and database.`;
+                      setSelectedFiles([]);
+                      setReplaceDialogPreviews([]);
+                      setUploadedFile(null);
+                      setShowEditImageDialog(false);
+                      setEditingStudyId(null);
+                      setReplaceDialogExistingPreviews((prev) => {
+                        prev.forEach((p) => { if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url); });
+                        return [];
+                      });
+                      setReplaceSuccessMessage(message);
+                    } catch (error) {
+                      console.error("Error saving images:", error);
+                      toast({
+                        title: "Save Failed",
+                        description: error instanceof Error ? error.message : "Failed to save. Please try again.",
+                        variant: "destructive",
+                      });
                     }
                   }}
                   disabled={selectedFiles.length === 0}
@@ -8605,13 +9398,27 @@ export default function ImagingPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Replace success modal */}
+      <Dialog open={replaceSuccessMessage != null} onOpenChange={(open) => { if (!open) setReplaceSuccessMessage(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Images Saved</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{replaceSuccessMessage}</p>
+          <div className="flex justify-end pt-2">
+            <Button onClick={() => setReplaceSuccessMessage(null)}>OK</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Body Part Images Dialog */}
       <Dialog 
         open={showBodyPartImagesDialog} 
         onOpenChange={(open) => {
           setShowBodyPartImagesDialog(open);
-          // Clean up object URLs when dialog closes
           if (!open) {
+            setBodyPartDialogMedicalImageId(null);
+            setBodyPartDialogImageId(null);
             Object.values(bodyPartImagePreviews).forEach((url) => {
               if (url.startsWith('blob:')) {
                 URL.revokeObjectURL(url);
@@ -8624,6 +9431,15 @@ export default function ImagingPage() {
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>All Images for: {selectedBodyPart}</DialogTitle>
+            {(bodyPartDialogMedicalImageId != null || bodyPartDialogImageId) && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Medical Image ID: <strong>{bodyPartDialogMedicalImageId ?? "—"}</strong>
+                {bodyPartDialogImageId != null && (
+                  <> · Image ID: <strong>{bodyPartDialogImageId}</strong></>
+                )}
+                {" — used to load rows from radiology_images (file_path)"}
+              </p>
+            )}
           </DialogHeader>
           <div className="space-y-4">
             {loadingBodyPartImages ? (
@@ -8639,16 +9455,28 @@ export default function ImagingPage() {
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {bodyPartImages.map((image, index) => {
-                  const imageKey = image.id || index;
+                  const imageKey = image.id ?? index;
                   const previewUrl = bodyPartImagePreviews[imageKey];
-                  
+                  const fp = image.filePath ?? (image as any).file_path;
+                  const filePathSrc =
+                    image.uploadsDisplayUrl ||
+                    (fp && typeof fp === "string" && fp.includes("uploads")
+                      ? `/${fp.substring(fp.indexOf("uploads")).replace(/\\/g, "/")}`
+                      : null);
+                  // Do NOT use API URL (/api/radiology-images/image/73) as img src - browser would not send Authorization and get 401. Use only blob URL (previewUrl) or public path (filePathSrc).
+                  const thumbSrc = previewUrl || filePathSrc;
+
                   return (
                     <div
                       key={imageKey}
                     className="border rounded-lg p-3 hover:shadow-md transition-shadow cursor-pointer"
                       onClick={async () => {
                         try {
-                          const token = localStorage.getItem("auth_token");
+                          const authToken = localStorage.getItem("auth_token");
+                          const authHeaders: Record<string, string> = {
+                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+                          };
                           let imageUrl: string | null = null;
                           let lastError: Error | null = null;
 
@@ -8658,18 +9486,65 @@ export default function ImagingPage() {
                             console.log(`✅ Using base64 image data from response`);
                           }
 
-                          // Priority 2: Try to fetch image from radiology image endpoint using image ID
-                          if (!imageUrl && image.id) {
+                          // Priority 1b: Direct URL from radiology_images (file_path → /uploads/... for browser)
+                          if (!imageUrl) {
+                            const fp = image.filePath ?? (image as any).file_path;
+                            const directUrl = image.uploadsDisplayUrl || (fp && typeof fp === "string" && fp.includes("uploads")
+                              ? `/${fp.substring(fp.indexOf("uploads")).replace(/\\/g, "/")}`
+                              : null);
+                            if (directUrl) {
+                              try {
+                                const response = await fetch(directUrl, { method: "GET", credentials: "include" });
+                                if (response.ok) {
+                                  const blob = await response.blob();
+                                  if (blob.size > 0) {
+                                    imageUrl = URL.createObjectURL(blob);
+                                    console.log(`✅ Loaded image from uploads path (file_path)`);
+                                  }
+                                }
+                              } catch (_) { /* try next */ }
+                            }
+                          }
+
+                          // Priority 1c: For placeholder card (ORDER-*.pending / isMainImage), try list-folder-images first to load any image from study folder
+                          const isPlaceholderCard = image.isMainImage || (typeof image.fileName === "string" && (image.fileName.endsWith(".pending") || image.fileName.startsWith("ORDER-")));
+                          if (!imageUrl && isPlaceholderCard && image.studyId) {
                             try {
-                              console.log(`🔄 Attempting to load image from radiology-images endpoint: /api/radiology-images/image/${image.id}`);
-                              const response = await fetch(`/api/radiology-images/image/${image.id}`, {
+                              const studyIdNum = Number(image.studyId);
+                              if (!Number.isNaN(studyIdNum)) {
+                                const listRes = await fetch(`/api/medical-images/${studyIdNum}/list-folder-images`, {
+                                  method: "GET", credentials: "include", headers: authHeaders,
+                                });
+                                if (listRes.ok) {
+                                  const listData = await listRes.json();
+                                  const files = listData?.images ?? [];
+                                  for (const item of files) {
+                                    const fp = item.filePath?.startsWith("/") ? item.filePath.slice(1) : item.filePath;
+                                    if (!fp) continue;
+                                    const fileUrl = `/${fp.replace(/\\/g, "/")}`;
+                                    const pathRes = await fetch(fileUrl, { method: "GET", credentials: "include" });
+                                    if (pathRes.ok) {
+                                      const blob = await pathRes.blob();
+                                      if (blob.size > 0) {
+                                        imageUrl = URL.createObjectURL(blob);
+                                        console.log(`✅ Loaded image from folder (placeholder card): ${item.fileName}`);
+                                        break;
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            } catch (_) { /* try next */ }
+                          }
+
+                          // Priority 2: Try to fetch image from radiology image endpoint using image ID (numeric only)
+                          const numericImageId = typeof image.id === 'number' ? image.id : (typeof image.id === 'string' && /^\d+$/.test(String(image.id)) ? parseInt(String(image.id), 10) : null);
+                          if (!imageUrl && numericImageId != null && !Number.isNaN(numericImageId)) {
+                            try {
+                              console.log(`🔄 Attempting to load image from radiology-images endpoint: /api/radiology-images/image/${numericImageId}`);
+                              const response = await fetch(`/api/radiology-images/image/${numericImageId}`, {
                                 method: "GET",
-                                headers: {
-                                  "X-Tenant-Subdomain": getActiveSubdomain(),
-                                  ...(token && {
-                                    Authorization: `Bearer ${token}`,
-                                  }),
-                                },
+                                headers: authHeaders,
                                 credentials: "include",
                               });
 
@@ -8690,6 +9565,24 @@ export default function ImagingPage() {
                               lastError = fetchError instanceof Error ? fetchError : new Error("Failed to fetch image");
                               // Don't throw here - continue to fallback methods
                             }
+                          }
+
+                          // Priority 2b: For main/synthetic image (no radiology id), try medical-images first so server can serve from folder
+                          if (!imageUrl && image.studyId && !image.id) {
+                            try {
+                              const response = await fetch(`/api/medical-images/${image.studyId}/image`, {
+                                method: "GET",
+                                headers: authHeaders,
+                                credentials: "include",
+                              });
+                              if (response.ok) {
+                                const blob = await response.blob();
+                                if (blob.size > 0) {
+                                  imageUrl = URL.createObjectURL(blob);
+                                  console.log(`✅ Loaded main image from medical-images endpoint (study ${image.studyId})`);
+                                }
+                              }
+                            } catch (_) { /* continue to next method */ }
                           }
 
                           // Priority 3: Try to use filePath from database to serve directly from server
@@ -8748,12 +9641,7 @@ export default function ImagingPage() {
                               console.log(`🔄 Attempting to load image from medical-images endpoint: /api/medical-images/${image.studyId}/image`);
                               const response = await fetch(`/api/medical-images/${image.studyId}/image`, {
                                 method: "GET",
-                                headers: {
-                                  "X-Tenant-Subdomain": getActiveSubdomain(),
-                                  ...(token && {
-                                    Authorization: `Bearer ${token}`,
-                                  }),
-                                },
+                                headers: authHeaders,
                                 credentials: "include",
                               });
 
@@ -8780,15 +9668,46 @@ export default function ImagingPage() {
                             console.warn(`⚠️ Cannot try medical-images endpoint: studyId is not available`);
                           }
 
-                          // If still no image URL, throw error with helpful message
-                          if (!imageUrl) {
-                            let errorMessage = "Unable to load image. ";
-                            if (lastError) {
-                              errorMessage += lastError.message;
-                        } else {
-                              errorMessage += "The image file may not exist on the server or may not be accessible.";
+                          // Priority 5: For main/synthetic image, list folder and try each file URL (fallback when single-image 404s)
+                          if (!imageUrl && image.studyId) {
+                            try {
+                              const listRes = await fetch(
+                                `/api/medical-images/${image.studyId}/list-folder-images`,
+                                {
+                                  method: "GET",
+                                  credentials: "include",
+                                  headers: authHeaders,
+                                }
+                              );
+                              if (listRes.ok) {
+                                const listData = await listRes.json();
+                                const files = listData?.images ?? [];
+                                for (const item of files) {
+                                  const fp = item.filePath?.startsWith("/") ? item.filePath.slice(1) : item.filePath;
+                                  if (!fp) continue;
+                                  const fileUrl = `/${fp.replace(/\\/g, "/")}`;
+                                  const pathRes = await fetch(fileUrl, { method: "GET", credentials: "include" });
+                                  if (pathRes.ok) {
+                                    const blob = await pathRes.blob();
+                                    if (blob.size > 0) {
+                                      imageUrl = URL.createObjectURL(blob);
+                                      console.log(`✅ Loaded image from list-folder fallback: ${item.fileName}`);
+                                      break;
+                                    }
+                                  }
+                                }
+                              }
+                            } catch (_) {
+                              /* ignore */
                             }
-                            errorMessage += ` (Image ID: ${image.id || 'N/A'}, Study ID: ${image.studyId || 'N/A'}, File: ${image.fileName || 'N/A'})`;
+                          }
+
+                          // If still no image URL, show helpful error
+                          if (!imageUrl) {
+                            const isMainPlaceholder = !image.id || image.isMainImage;
+                            const errorMessage = isMainPlaceholder
+                              ? "No image file found for this study. The file may not have been uploaded yet or may not be in the server folder."
+                              : `Unable to load image. ${lastError?.message || "The image file may not exist on the server or may not be accessible."} (Study ID: ${image.studyId || "N/A"}, File: ${image.fileName || "N/A"})`;
                             console.error(`❌ All image loading methods failed:`, {
                               imageId: image.id,
                               studyId: image.studyId,
@@ -8798,7 +9717,7 @@ export default function ImagingPage() {
                               lastError: lastError?.message
                             });
                             throw new Error(errorMessage);
-                        }
+                          }
 
                         const imageForViewer = {
                           seriesDescription: `${image.modality} - ${image.studyType}`,
@@ -8825,20 +9744,19 @@ export default function ImagingPage() {
                     }}
                   >
                     <div className="aspect-square bg-gray-100 dark:bg-gray-800 rounded-md mb-2 flex items-center justify-center overflow-hidden">
-                        {previewUrl ? (
+                        {thumbSrc ? (
                           <img
-                            src={previewUrl}
-                            alt={image.fileName || `Image ${index + 1}`}
-                            className="w-full h-full object-contain"
+                            src={thumbSrc}
+                            alt={image.fileName ?? (image as any).file_name ?? `Image ${index + 1}`}
+                            className="w-full h-full object-contain min-h-[120px]"
                             onError={(e) => {
-                              // If preview fails to load, show placeholder
                               const target = e.target as HTMLImageElement;
-                              target.style.display = 'none';
+                              target.style.display = "none";
                               const parent = target.parentElement;
                               if (parent) {
-                                const placeholder = document.createElement('div');
-                                placeholder.className = 'flex items-center justify-center w-full h-full';
-                                placeholder.innerHTML = '<svg class="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>';
+                                const placeholder = document.createElement("div");
+                                placeholder.className = "flex items-center justify-center w-full h-full min-h-[120px] text-gray-400";
+                                placeholder.innerHTML = '<svg class="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>';
                                 parent.appendChild(placeholder);
                               }
                             }}
@@ -8854,8 +9772,13 @@ export default function ImagingPage() {
                       )}
                     </div>
                     <div className="text-xs space-y-1">
-                      <div className="font-medium truncate" title={image.fileName}>
-                        {image.fileName || `Image ${index + 1}`}
+                      {image.imageId && (
+                        <div className="font-medium truncate text-blue-600" title={image.imageId}>
+                          {image.imageId}
+                        </div>
+                      )}
+                      <div className="font-medium truncate" title={image.fileName ?? (image as any).file_name ?? ""}>
+                        {image.fileName ?? (image as any).file_name ?? `Image ${index + 1}`}
                       </div>
                       {image.patientName && (
                         <div className="text-gray-500 truncate" title={image.patientName}>

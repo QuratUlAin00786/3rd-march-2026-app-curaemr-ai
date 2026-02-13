@@ -464,6 +464,16 @@ export const medicalRecords = pgTable("medical_records", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Medical record file attachments (e.g. consultation PDFs)
+export const medicalRecordsFiles = pgTable("medical_records_files", {
+  id: serial("id").primaryKey(),
+  medicalRecordId: integer("medical_record_id").notNull().references(() => medicalRecords.id, { onDelete: "cascade" }),
+  filePath: text("file_path").notNull(),
+  fileName: text("file_name").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // Appointments
 export const appointments = pgTable("appointments", {
   id: serial("id").primaryKey(),
@@ -2049,7 +2059,14 @@ export const patientCommunicationsRelations = relations(patientCommunications, (
   }),
 }));
 
-export const medicalRecordsRelations = relations(medicalRecords, ({ one }) => ({
+export const medicalRecordsFilesRelations = relations(medicalRecordsFiles, ({ one }) => ({
+  medicalRecord: one(medicalRecords, {
+    fields: [medicalRecordsFiles.medicalRecordId],
+    references: [medicalRecords.id],
+  }),
+}));
+
+export const medicalRecordsRelations = relations(medicalRecords, ({ one, many }) => ({
   organization: one(organizations, {
     fields: [medicalRecords.organizationId],
     references: [organizations.id],
@@ -2062,6 +2079,7 @@ export const medicalRecordsRelations = relations(medicalRecords, ({ one }) => ({
     fields: [medicalRecords.providerId],
     references: [users.id],
   }),
+  files: many(medicalRecordsFiles),
 }));
 
 export const appointmentsRelations = relations(appointments, ({ one }) => ({
@@ -3125,6 +3143,9 @@ export type InsertPatient = z.infer<typeof insertPatientSchema>;
 
 export type MedicalRecord = typeof medicalRecords.$inferSelect;
 export type InsertMedicalRecord = z.infer<typeof insertMedicalRecordSchema>;
+
+export type MedicalRecordsFile = typeof medicalRecordsFiles.$inferSelect;
+export type InsertMedicalRecordsFile = typeof medicalRecordsFiles.$inferInsert;
 
 export type Appointment = typeof appointments.$inferSelect;
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;

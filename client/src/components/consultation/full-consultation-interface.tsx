@@ -41,7 +41,7 @@ import {
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, buildUrl } from "@/lib/queryClient";
 import jsPDF from "jspdf";
 import { useTenant } from "@/hooks/use-tenant";
 
@@ -97,6 +97,59 @@ function getTenantSubdomain(): string {
   }
   
   return 'demo';
+}
+
+function ConsultationsTabContent({
+  patientId,
+  files,
+  loading,
+  onLoad,
+  buildUrl,
+  getTenantSubdomain,
+}: {
+  patientId: number;
+  files: { id: number; fileName: string; filePath: string; createdAt: string }[];
+  loading: boolean;
+  onLoad: () => void;
+  buildUrl: (path: string) => string;
+  getTenantSubdomain: () => string;
+}) {
+  useEffect(() => {
+    onLoad();
+  }, [patientId]);
+  const handleView = async (fileId: number) => {
+    const token = localStorage.getItem("auth_token");
+    const res = await fetch(buildUrl(`/api/consultation-files/${fileId}/download`), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Tenant-Subdomain": getTenantSubdomain(),
+      },
+      credentials: "include",
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+  if (loading) return <p className="text-sm text-gray-500">Loading consultation files...</p>;
+  if (files.length === 0) return <p className="text-sm text-gray-500">No consultation PDFs yet. Use &quot;View Full Consultation&quot; to generate and save one.</p>;
+  return (
+    <ul className="space-y-2 border rounded-lg p-4 bg-gray-50">
+      {files.map((f) => (
+        <li key={f.id} className="flex items-center justify-between gap-4 py-2 border-b border-gray-200 last:border-0">
+          <div>
+            <span className="font-medium text-sm">{f.fileName}</span>
+            <span className="text-gray-500 text-sm ml-2">{format(new Date(f.createdAt), "MMM d, yyyy HH:mm")}</span>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => handleView(f.id)}>
+            <Download className="w-4 h-4 mr-1" />
+            View / Download
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 interface FullConsultationInterfaceProps {
@@ -529,15 +582,30 @@ ${
         'X-Tenant-Subdomain': getTenantSubdomain()
       };
 
-      const [clinicHeaderRes, clinicFooterRes, patientRecordsRes] = await Promise.all([
-        fetch('/api/clinic-headers', { headers }).catch(() => null),
-        fetch('/api/clinic-footers', { headers }).catch(() => null),
-        currentPatientId ? fetch(`/api/patients/${currentPatientId}/records`, { headers }).catch(() => null) : Promise.resolve(null)
-      ]);
+      // Fetch header/footer with same auth and credentials as rest of app so PDF can access them
+      const fetchOpts = { headers, credentials: 'include' as RequestCredentials };
+      let clinicHeader: any = null;
+      let clinicFooter: any = null;
+      try {
+        const [headerRes, footerRes] = await Promise.all([
+          fetch(buildUrl('/api/clinic-headers'), fetchOpts),
+          fetch(buildUrl('/api/clinic-footers'), fetchOpts)
+        ]);
+        if (headerRes.ok) {
+          clinicHeader = await headerRes.json();
+        }
+        if (footerRes.ok) {
+          clinicFooter = await footerRes.json();
+        }
+      } catch (e) {
+        console.warn('[View Full Consultation] Could not load clinic header/footer:', e);
+      }
 
-      const clinicHeader = clinicHeaderRes?.ok ? await clinicHeaderRes.json() : null;
-      const clinicFooter = clinicFooterRes?.ok ? await clinicFooterRes.json() : null;
-      const patientRecords = patientRecordsRes?.ok ? await patientRecordsRes.json() : null;
+      let patientRecords: any = null;
+      if (currentPatientId) {
+        const patientRecordsRes = await fetch(buildUrl(`/api/patients/${currentPatientId}/records`), fetchOpts).catch(() => null);
+        patientRecords = patientRecordsRes?.ok ? await patientRecordsRes.json() : null;
+      }
 
       let dbVitals: any = {};
       if (patientRecords?.length > 0) {
@@ -573,114 +641,73 @@ ${
 
       const pdf = new jsPDF();
       let yPosition = 15;
-      const lineHeight = 6;
+      const lineHeight = 5.5;
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
       const marginLeft = 15;
       const marginRight = 15;
       const maxWidth = pageWidth - marginLeft - marginRight;
+      const bodyFontSize = 10; // 10px body text; headings use addSection (12px) or title (14px)
 
+      // Header from clinic_headers: one row, logo top-left, details to the right (no blue lines)
       const addHeader = () => {
+        const headerHeight = 32;
+        pdf.setTextColor(0, 0, 0);
         if (clinicHeader) {
-          const headerHeight = 35;
+          const logoSize = 24;
+          const logoTextGap = 6;
+          const textStartX = marginLeft + (clinicHeader.logoBase64 ? logoSize + logoTextGap : 0);
 
-          let textStartX = marginLeft;
-          let textAlign: 'left' | 'center' | 'right' = 'left';
-          const logoSize = 25;
-          const logoTextGap = 5;
-
-          if (clinicHeader.logoBase64 && clinicHeader.logoPosition === 'center') {
-            pdf.setFontSize(16);
-            pdf.setFont('helvetica', 'bold');
-            const clinicNameWidth = pdf.getTextWidth(clinicHeader.clinicName || 'Clinic');
-            
-            pdf.setFontSize(8);
-            pdf.setFont('helvetica', 'normal');
-            let maxTextWidth = clinicNameWidth;
-            if (clinicHeader.address) {
-              maxTextWidth = Math.max(maxTextWidth, pdf.getTextWidth(clinicHeader.address));
+          if (clinicHeader.logoBase64) {
+            try {
+              pdf.addImage(clinicHeader.logoBase64, 'PNG', marginLeft, 5, logoSize, logoSize);
+            } catch {
+              // skip logo if invalid
             }
-            if (clinicHeader.phone || clinicHeader.email) {
-              const contact = [clinicHeader.phone, clinicHeader.email].filter(Boolean).join(' | ');
-              maxTextWidth = Math.max(maxTextWidth, pdf.getTextWidth(contact));
-            }
-            if (clinicHeader.website) {
-              maxTextWidth = Math.max(maxTextWidth, pdf.getTextWidth(clinicHeader.website));
-            }
-
-            const combinedWidth = logoSize + logoTextGap + maxTextWidth;
-            const logoX = (pageWidth - combinedWidth) / 2;
-            textStartX = logoX + logoSize + logoTextGap;
-
-            pdf.addImage(clinicHeader.logoBase64, 'PNG', logoX, 5, logoSize, logoSize);
-          } else if (clinicHeader.logoBase64 && clinicHeader.logoPosition === 'left') {
-            pdf.addImage(clinicHeader.logoBase64, 'PNG', marginLeft, 5, logoSize, logoSize);
-            textStartX = marginLeft + logoSize + logoTextGap;
-          } else if (clinicHeader.logoBase64 && clinicHeader.logoPosition === 'right') {
-            pdf.addImage(clinicHeader.logoBase64, 'PNG', pageWidth - marginRight - logoSize, 5, logoSize, logoSize);
-            textStartX = pageWidth - marginRight - logoSize - logoTextGap;
-            textAlign = 'right';
           }
 
-          pdf.setTextColor(0, 0, 0);
-          pdf.setFontSize(16);
+          pdf.setFontSize(12);
           pdf.setFont('helvetica', 'bold');
-          pdf.text(clinicHeader.clinicName || 'Clinic', textStartX, 12, { align: textAlign });
+          pdf.text(clinicHeader.clinicName || 'Clinic', textStartX, 12);
 
           pdf.setFontSize(8);
           pdf.setFont('helvetica', 'normal');
-          let infoY = 18;
+          let infoY = 17;
           if (clinicHeader.address) {
-            pdf.text(clinicHeader.address, textStartX, infoY, { align: textAlign });
+            pdf.text(clinicHeader.address, textStartX, infoY);
             infoY += 4;
           }
           if (clinicHeader.phone || clinicHeader.email) {
             const contact = [clinicHeader.phone, clinicHeader.email].filter(Boolean).join(' | ');
-            pdf.text(contact, textStartX, infoY, { align: textAlign });
+            pdf.text(contact, textStartX, infoY);
             infoY += 4;
           }
           if (clinicHeader.website) {
-            pdf.text(clinicHeader.website, textStartX, infoY, { align: textAlign });
+            pdf.text(clinicHeader.website, textStartX, infoY);
           }
-
-          yPosition = headerHeight + 10;
-        }
-      };
-
-      const addFooter = (pageNum: number) => {
-        if (clinicFooter) {
-          const footerHeight = 15;
-          const footerY = pageHeight - footerHeight;
-          
-          const bgColor = clinicFooter.backgroundColor || '#4A7DFF';
-          const rgb = parseInt(bgColor.slice(1), 16);
-          const r = (rgb >> 16) & 255;
-          const g = (rgb >> 8) & 255;
-          const b = rgb & 255;
-          pdf.setFillColor(r, g, b);
-          pdf.rect(0, footerY, pageWidth, footerHeight, 'F');
-
-          const textColor = clinicFooter.textColor || '#FFFFFF';
-          const trgb = parseInt(textColor.slice(1), 16);
-          const tr = (trgb >> 16) & 255;
-          const tg = (trgb >> 8) & 255;
-          const tb = trgb & 255;
-          pdf.setTextColor(tr, tg, tb);
-
-          pdf.setFontSize(8);
-          pdf.setFont('helvetica', 'normal');
-          pdf.text(clinicFooter.footerText || '', pageWidth / 2, footerY + 7, { align: 'center' });
-          pdf.text(`Page ${pageNum}`, pageWidth - marginRight, footerY + 11, { align: 'right' });
-          
-          pdf.setTextColor(0, 0, 0);
         } else {
-          pdf.setFontSize(8);
-          pdf.text(`Page ${pageNum}`, pageWidth - marginRight, pageHeight - 10, { align: 'right' });
+          pdf.setFontSize(12);
+          pdf.setFont('helvetica', 'bold');
+          pdf.text('Consultation Report', marginLeft, 12);
         }
+        yPosition = headerHeight + 10;
       };
 
-      const addText = (text: string, fontSize: number = 10, isBold: boolean = false, color: string = 'black') => {
-        const footerSpace = clinicFooter ? 20 : 15;
+      // Footer from clinic_footers: small font, centered (no blue bar to match sample)
+      const addFooter = (pageNum: number) => {
+        const footerY = pageHeight - 12;
+        pdf.setTextColor(100, 100, 100);
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'normal');
+        if (clinicFooter?.footerText) {
+          pdf.text(clinicFooter.footerText, pageWidth / 2, footerY - 2, { align: 'center' });
+        }
+        pdf.text(`Page ${pageNum}`, pageWidth - marginRight, footerY + 4, { align: 'right' });
+        pdf.setTextColor(0, 0, 0);
+      };
+
+      const addText = (text: string, fontSize: number = bodyFontSize, isBold: boolean = false) => {
+        const footerSpace = 18;
         if (yPosition > pageHeight - footerSpace) {
           addFooter(pdf.getCurrentPageInfo().pageNumber);
           pdf.addPage();
@@ -688,36 +715,30 @@ ${
         }
         pdf.setFontSize(fontSize);
         pdf.setFont('helvetica', isBold ? 'bold' : 'normal');
-        if (color === 'blue') pdf.setTextColor(74, 125, 255);
-        else pdf.setTextColor(0, 0, 0);
-        
+        pdf.setTextColor(0, 0, 0);
         const lines = pdf.splitTextToSize(text, maxWidth);
         pdf.text(lines, marginLeft, yPosition);
         yPosition += lines.length * lineHeight;
       };
 
+      // Section heading: black, no blue line (spacing only)
       const addSection = (title: string) => {
-        yPosition += 4;
-        pdf.setDrawColor(74, 125, 255);
-        pdf.setLineWidth(0.5);
-        pdf.line(marginLeft, yPosition, pageWidth - marginRight, yPosition);
         yPosition += 6;
-        addText(title, 12, true, 'blue');
+        addText(title, 12, true);
         yPosition += 2;
       };
 
       addHeader();
 
-      pdf.setFontSize(16);
+      pdf.setFontSize(14);
       pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(74, 125, 255);
+      pdf.setTextColor(0, 0, 0);
       pdf.text('FULL CONSULTATION REPORT', pageWidth / 2, yPosition, { align: 'center' });
       yPosition += 12;
-      pdf.setTextColor(0, 0, 0);
 
-      addText(`Patient: ${currentPatientName}`, 11, true);
-      addText(`Date: ${format(new Date(), 'MMMM dd, yyyy - HH:mm')}`, 9);
-      addText(`Consultation ID: ${currentPatientId}-${Date.now()}`, 9);
+      addText(`Patient: ${currentPatientName}`, bodyFontSize, true);
+      addText(`Date: ${format(new Date(), 'MMMM dd, yyyy - HH:mm')}`, bodyFontSize);
+      addText(`Consultation ID: ${currentPatientId}-${Date.now()}`, bodyFontSize);
 
       addSection('VITALS');
       addText(`Blood Pressure: ${finalVitals.bloodPressure}`);
@@ -749,7 +770,7 @@ ${
       addSection('EXAMINATION');
       addText(clinicalNotes || 'Not recorded');
       if (transcript) {
-        addText(`[Live Transcript: ${transcript}]`, 9);
+        addText(`[Live Transcript: ${transcript}]`, bodyFontSize);
       }
 
       addSection('ASSESSMENT');
@@ -779,9 +800,9 @@ ${
         addText(`Prescriptions (${consultationData.prescriptions.length}):`, 10, true);
         consultationData.prescriptions.forEach((rx, idx) => {
           addText(`${idx + 1}. ${rx.medication} ${rx.dosage}`);
-          addText(`   ${rx.frequency} for ${rx.duration}`, 9);
+          addText(`   ${rx.frequency} for ${rx.duration}`);
           if (rx.instructions) {
-            addText(`   Instructions: ${rx.instructions}`, 9);
+            addText(`   Instructions: ${rx.instructions}`);
           }
         });
       }
@@ -790,8 +811,8 @@ ${
         yPosition += 2;
         addText(`Referrals (${consultationData.referrals.length}):`, 10, true);
         consultationData.referrals.forEach((ref, idx) => {
-          addText(`${idx + 1}. ${ref.specialty} - ${ref.urgency.toUpperCase()}`, 9);
-          addText(`   Reason: ${ref.reason}`, 9);
+          addText(`${idx + 1}. ${ref.specialty} - ${ref.urgency.toUpperCase()}`);
+          addText(`   Reason: ${ref.reason}`);
         });
       }
 
@@ -799,18 +820,47 @@ ${
         yPosition += 2;
         addText(`Investigations (${consultationData.investigations.length}):`, 10, true);
         consultationData.investigations.forEach((inv, idx) => {
-          addText(`${idx + 1}. ${inv.type} - ${inv.urgency.toUpperCase()}`, 9);
-          addText(`   Reason: ${inv.reason}`, 9);
+          addText(`${idx + 1}. ${inv.type} - ${inv.urgency.toUpperCase()}`);
+          addText(`   Reason: ${inv.reason}`);
         });
       }
 
       addFooter(pdf.getCurrentPageInfo().pageNumber);
 
+      const dataUrl = pdf.output("dataurlstring");
+      const pdfBase64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : "";
+
+      if (currentPatientId && pdfBase64) {
+        const token = localStorage.getItem("auth_token");
+        const saveRes = await fetch(buildUrl("/api/consultation-pdf/save"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "X-Tenant-Subdomain": getTenantSubdomain(),
+          },
+          credentials: "include",
+          body: JSON.stringify({ patientId: currentPatientId, pdfBase64 }),
+        });
+        if (!saveRes.ok) {
+          const err = await saveRes.json().catch(() => ({}));
+          toast({
+            title: "PDF saved locally only",
+            description: err?.error || "Could not save consultation to server.",
+            variant: "destructive",
+          });
+        } else if (currentPatientId) {
+          refetchConsultationFiles(currentPatientId);
+        }
+      }
+
       pdf.save(`Consultation_${currentPatientName.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd_HHmm')}.pdf`);
 
       toast({
         title: "PDF Report Generated",
-        description: "Full consultation report with clinic branding has been downloaded successfully.",
+        description: pdfBase64 && currentPatientId
+          ? "Full consultation report has been downloaded and saved to Consultations."
+          : "Full consultation report with clinic branding has been downloaded successfully.",
       });
     } catch (error) {
       toast({
@@ -1304,7 +1354,23 @@ ${
     setShowPdfSavedModal(open);
   }, []);
   const [isViewAnalysisDownloading, setIsViewAnalysisDownloading] = useState(false);
-  const [anatomicalUploadsTab, setAnatomicalUploadsTab] = useState<"overview" | "uploads">("overview");
+  const [anatomicalUploadsTab, setAnatomicalUploadsTab] = useState<"overview" | "uploads" | "consultations">("overview");
+  const [consultationFiles, setConsultationFiles] = useState<{ id: number; fileName: string; filePath: string; createdAt: string }[]>([]);
+  const [consultationFilesLoading, setConsultationFilesLoading] = useState(false);
+  const refetchConsultationFiles = useCallback((pid: number) => {
+    setConsultationFilesLoading(true);
+    fetch(buildUrl(`/api/patients/${pid}/consultation-files`), {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+        "X-Tenant-Subdomain": getTenantSubdomain(),
+      },
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setConsultationFiles(Array.isArray(data) ? data : []))
+      .catch(() => setConsultationFiles([]))
+      .finally(() => setConsultationFilesLoading(false));
+  }, [buildUrl, getTenantSubdomain]);
   const [uploadsSubTab, setUploadsSubTab] = useState<"files" | "image">("files");
   const [anatomicalFiles, setAnatomicalFiles] = useState<AnatomicalUploadFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
@@ -6386,14 +6452,31 @@ ${
           <Tabs
             value={anatomicalUploadsTab}
             onValueChange={(value) =>
-              setAnatomicalUploadsTab(value as "overview" | "uploads")
+              setAnatomicalUploadsTab(value as "overview" | "uploads" | "consultations")
             }
             className="space-y-4"
           >
             <TabsList className="space-x-2">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="uploads">Anatomical analysis uploads</TabsTrigger>
+              <TabsTrigger value="consultations">Consultations</TabsTrigger>
             </TabsList>
+            <TabsContent value="consultations" className="space-y-4">
+              {(() => {
+                const pid = patientId ?? patient?.id;
+                if (!pid) return <p className="text-sm text-gray-500">No patient selected.</p>;
+                return (
+                  <ConsultationsTabContent
+                    patientId={pid}
+                    files={consultationFiles}
+                    loading={consultationFilesLoading}
+                    onLoad={() => refetchConsultationFiles(pid)}
+                    buildUrl={buildUrl}
+                    getTenantSubdomain={getTenantSubdomain}
+                  />
+                );
+              })()}
+            </TabsContent>
             <TabsContent value="overview" className="space-y-6">
             {/* Saved Image */}
             {imagesLoading && (

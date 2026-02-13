@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { storage } from "../storage";
-import { authService } from "../services/auth";
+import { authService, type AuthTokenPayload } from "../services/auth";
 
 export interface TenantRequest extends Request {
   tenant?: {
@@ -322,7 +322,13 @@ export async function authMiddleware(req: TenantRequest, res: Response, next: Ne
     
     console.log(`[AUTH-MIDDLEWARE] Token found, verifying...`);
 
-    const payload = authService.verifyToken(token);
+    let payload: AuthTokenPayload | null = null;
+    try {
+      payload = authService.verifyToken(token);
+    } catch (verifyError: any) {
+      console.error(`[AUTH-MIDDLEWARE] Token verification threw:`, verifyError?.message);
+      return res.status(401).json({ error: "Invalid token", details: verifyError?.message });
+    }
     if (!payload) {
       return res.status(401).json({ error: "Invalid token" });
     }
@@ -342,11 +348,17 @@ export async function authMiddleware(req: TenantRequest, res: Response, next: Ne
       });
     }
 
-    // Get user details
+    // Get user details (coerce to number - JWT decode can return strings in some runtimes)
+    const userId = Number(payload.userId);
+    const orgId = Number(payload.organizationId);
+    if (Number.isNaN(userId) || Number.isNaN(orgId)) {
+      console.error(`[AUTH-MIDDLEWARE] Invalid token payload: userId=${payload.userId}, organizationId=${payload.organizationId}`);
+      return res.status(401).json({ error: "Invalid token" });
+    }
     try {
-      const user = await storage.getUser(payload.userId, payload.organizationId);
+      const user = await storage.getUser(userId, orgId);
       if (!user || !user.isActive) {
-        console.error(`[AUTH-MIDDLEWARE] User not found or inactive: userId=${payload.userId}, orgId=${payload.organizationId}`);
+        console.error(`[AUTH-MIDDLEWARE] User not found or inactive: userId=${userId}, orgId=${orgId}`);
         return res.status(401).json({ error: "User not found or inactive" });
       }
 
@@ -364,7 +376,7 @@ export async function authMiddleware(req: TenantRequest, res: Response, next: Ne
       console.error(`[AUTH-MIDDLEWARE] Database error stack:`, dbError?.stack);
       // Don't send response if already sent
       if (!res.headersSent) {
-        return res.status(500).json({ error: "Authentication required", details: "Database error" });
+        return res.status(500).json({ error: "Authentication required", details: dbError?.message ?? "Database error" });
       }
     }
   } catch (error: any) {

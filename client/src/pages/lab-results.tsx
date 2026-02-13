@@ -3449,7 +3449,7 @@ Report generated from Cura EMR System`;
                           {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Inv/Sign</th>
                           )}
-                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Actions</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '7%', minWidth: '4.5rem' }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-gray-700">
@@ -3862,8 +3862,8 @@ Report generated from Cura EMR System`;
                               </div>
                             </td>
                             )}
-                            <td className="px-1 py-1.5 text-[11px] min-w-0">
-                              <div className="flex items-center gap-0.5 justify-center flex-shrink-0 flex-wrap">
+                            <td className="px-1 py-1.5 text-[11px] min-w-[4.5rem] w-[4.5rem] shrink-0">
+                              <div className="flex items-center gap-0.5 justify-center flex-shrink-0">
                                 {activeTab === "request" ? (
                                   <>
                                     {user?.role !== 'patient' && canEdit('lab_results') && (
@@ -3871,33 +3871,33 @@ Report generated from Cura EMR System`;
                                       variant="ghost"
                                       size="sm"
                                         onClick={() => handleViewResult(result)}
-                                      className="h-5 w-5 p-0"
+                                      className="h-4 w-4 min-w-4 p-0 shrink-0"
                                         data-testid={`button-edit-${result.id}`}
                                         title="Edit"
                                     >
-                                        <Edit className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
+                                        <Edit className="w-[10px] h-[10px] text-gray-600 dark:text-gray-400 shrink-0" />
                                     </Button>
                                     )}
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => handleGeneratePrescription(result)}
-                                      className="h-5 w-5 p-0"
+                                      className="h-4 w-4 min-w-4 p-0 shrink-0"
                                       data-testid={`button-prescription-${result.id}`}
                                       title={user?.role === 'patient' ? 'View Prescription' : 'Generate Prescription'}
                                     >
-                                      <Eye className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
+                                      <Eye className="w-[10px] h-[10px] text-gray-600 dark:text-gray-400 shrink-0" />
                                     </Button>
                                     {user?.role !== 'patient' && canDelete('lab_results') && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => handleDeleteResult(result.id)}
-                                        className="h-5 w-5 p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                                        className="h-4 w-4 min-w-4 p-0 shrink-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
                                         data-testid={`button-delete-${result.id}`}
                                         title="Delete"
                                       >
-                                        <Trash2 className="h-2.5 w-2.5" />
+                                        <Trash2 className="w-[10px] h-[10px] shrink-0" />
                                       </Button>
                                     )}
                                   </>
@@ -4640,11 +4640,11 @@ Report generated from Cura EMR System`;
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-full p-0">
-                    <Command>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-full p-0 overflow-hidden">
+                    <Command className="[&_[cmdk-group]]:min-w-0">
                       <CommandInput placeholder="Search patients..." />
                       <CommandEmpty>No patient found.</CommandEmpty>
-                      <CommandGroup>
+                      <CommandGroup className="min-w-0">
                         {patientsLoading ? (
                           <CommandItem disabled>Loading patients...</CommandItem>
                         ) : patients &&
@@ -4662,16 +4662,19 @@ Report generated from Cura EMR System`;
                                 }));
                                 setPatientSearchOpen(false);
                               }}
+                              className="min-w-0 w-full whitespace-normal break-words items-start py-2"
                             >
                               <Check
-                                className={`mr-2 h-4 w-4 ${
+                                className={`mt-0.5 mr-2 h-4 w-4 shrink-0 ${
                                   orderFormData.patientId ===
                                   patient.id.toString()
                                     ? "opacity-100"
                                     : "opacity-0"
                                 }`}
                               />
-                              {`${patient.firstName} ${patient.lastName} (${patient.patientId})`}
+                              <span className="min-w-0 flex-1 break-words">
+                                {`${patient.firstName} ${patient.lastName} (${patient.patientId})`}
+                              </span>
                             </CommandItem>
                           ))
                         ) : (

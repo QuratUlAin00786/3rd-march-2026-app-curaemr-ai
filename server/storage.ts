@@ -1,11 +1,12 @@
 import { isDoctorLike } from './utils/role-utils.js';
 import { 
-  organizations, users, patients, medicalRecords, appointments, invoices, payments, aiInsights, subscriptions, patientCommunications, consultations, notifications, prescriptions, documents, medicalImages, clinicalPhotos, labResults, riskAssessments, claims, revenueRecords, insuranceVerifications, clinicalProcedures, emergencyProtocols, medicationsDatabase, roles, staffShifts, doctorDefaultShifts, gdprConsents, gdprDataRequests, gdprAuditTrail, gdprProcessingActivities, conversations as conversationsTable, messages, messageCampaigns, messageTemplates, userConversationFavorites, messageTags, messageTagAssignments, voiceNotes, saasOwners, saasPackages, saasSubscriptions, saasPayments, saasInvoices, saasSettings, chatbotConfigs, chatbotSessions, chatbotMessages, chatbotAnalytics, musclePositions, userDocumentPreferences, letterDrafts, forecastModels, financialForecasts, quickbooksConnections, quickbooksSyncLogs, quickbooksCustomerMappings, quickbooksInvoiceMappings, quickbooksPaymentMappings, quickbooksAccountMappings, quickbooksItemMappings, quickbooksSyncConfigs, doctorsFee, labTestPricing, imagingPricing, treatments, treatmentsInfo, clinicHeaders, clinicFooters, symptomChecks,   forms, formSections, formFields, formShares, formShareLogs, formResponses, formResponseValues, prescriptionShareLogs,
+  organizations, users, patients, medicalRecords, medicalRecordsFiles, appointments, invoices, payments, aiInsights, subscriptions, patientCommunications, consultations, notifications, prescriptions, documents, medicalImages, clinicalPhotos, labResults, riskAssessments, claims, revenueRecords, insuranceVerifications, clinicalProcedures, emergencyProtocols, medicationsDatabase, roles, staffShifts, doctorDefaultShifts, gdprConsents, gdprDataRequests, gdprAuditTrail, gdprProcessingActivities, conversations as conversationsTable, messages, messageCampaigns, messageTemplates, userConversationFavorites, messageTags, messageTagAssignments, voiceNotes, saasOwners, saasPackages, saasSubscriptions, saasPayments, saasInvoices, saasSettings, chatbotConfigs, chatbotSessions, chatbotMessages, chatbotAnalytics, musclePositions, userDocumentPreferences, letterDrafts, forecastModels, financialForecasts, quickbooksConnections, quickbooksSyncLogs, quickbooksCustomerMappings, quickbooksInvoiceMappings, quickbooksPaymentMappings, quickbooksAccountMappings, quickbooksItemMappings, quickbooksSyncConfigs, doctorsFee, labTestPricing, imagingPricing, treatments, treatmentsInfo, clinicHeaders, clinicFooters, symptomChecks,   forms, formSections, formFields, formShares, formShareLogs, formResponses, formResponseValues, prescriptionShareLogs,
   type Organization, type InsertOrganization,
   type User, type InsertUser,
   type Role, type InsertRole,
   type Patient, type InsertPatient,
   type MedicalRecord, type InsertMedicalRecord,
+  type MedicalRecordsFile, type InsertMedicalRecordsFile,
   type Appointment, type InsertAppointment,
   type Invoice, type InsertInvoice,
   type AiInsight, type InsertAiInsight,
@@ -1487,6 +1488,42 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(medicalRecords.id, id), eq(medicalRecords.organizationId, organizationId)))
       .returning();
     return result.length > 0;
+  }
+
+  async createMedicalRecordsFile(record: InsertMedicalRecordsFile): Promise<MedicalRecordsFile> {
+    const [created] = await db.insert(medicalRecordsFiles).values(record).returning();
+    return created;
+  }
+
+  async getMedicalRecordsFilesByPatient(patientId: number, organizationId: number): Promise<MedicalRecordsFile[]> {
+    const records = await db.select().from(medicalRecords)
+      .where(and(eq(medicalRecords.patientId, patientId), eq(medicalRecords.organizationId, organizationId)));
+    const recordIds = records.map((r) => r.id);
+    if (recordIds.length === 0) return [];
+    const files = await db.select().from(medicalRecordsFiles)
+      .where(inArray(medicalRecordsFiles.medicalRecordId, recordIds))
+      .orderBy(desc(medicalRecordsFiles.createdAt));
+    return files;
+  }
+
+  /** Files from medical_records_files for medical records with type = 'consultation' (Consultations tab). */
+  async getConsultationFilesByPatient(patientId: number, organizationId: number): Promise<MedicalRecordsFile[]> {
+    const rows = await db.select({ file: medicalRecordsFiles }).from(medicalRecordsFiles)
+      .innerJoin(medicalRecords, eq(medicalRecordsFiles.medicalRecordId, medicalRecords.id))
+      .where(and(
+        eq(medicalRecords.patientId, patientId),
+        eq(medicalRecords.organizationId, organizationId),
+        eq(medicalRecords.type, "consultation")
+      ))
+      .orderBy(desc(medicalRecordsFiles.createdAt));
+    return rows.map((r) => r.file);
+  }
+
+  async getMedicalRecordsFileById(id: number, organizationId: number): Promise<MedicalRecordsFile | undefined> {
+    const rows = await db.select({ file: medicalRecordsFiles }).from(medicalRecordsFiles)
+      .innerJoin(medicalRecords, eq(medicalRecordsFiles.medicalRecordId, medicalRecords.id))
+      .where(and(eq(medicalRecordsFiles.id, id), eq(medicalRecords.organizationId, organizationId)));
+    return rows[0]?.file ?? undefined;
   }
 
   // Appointments

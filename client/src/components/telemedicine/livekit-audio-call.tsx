@@ -60,6 +60,19 @@ export function LiveKitAudioCall({
     connect,
   ]);
 
+  // When the other participant leaves the room (they ended the call), close the call UI
+  useEffect(() => {
+    if (!room || !onDisconnect) return;
+    const handleParticipantDisconnected = () => {
+      console.log("[LiveKitAudioCall] Remote participant left – ending call");
+      onDisconnect();
+    };
+    room.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+    return () => {
+      room.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+    };
+  }, [room, onDisconnect]);
+
   // Attach remote audio tracks to audio elements
   useEffect(() => {
     if (!room || !isConnected) return;
