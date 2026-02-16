@@ -1,7 +1,7 @@
 import { ChangeEvent, useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest, getTenantSubdomain } from "@/lib/queryClient";
+import { queryClient, apiRequest, getTenantSubdomain, buildUrl } from "@/lib/queryClient";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import type { User, Patient } from "@shared/schema";
@@ -37,6 +37,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +59,7 @@ import {
   SectionInput,
   FieldType,
 } from "@/components/forms/FormBuilder";
+import { FORM_TEMPLATES, cloneTemplateAsPayload, type FormTemplate } from "@/data/form-templates";
 import { FormFill } from "@/components/forms/FormFill";
 import {
   Bold,
@@ -70,6 +77,7 @@ import {
   Image,
   Link,
   MoreHorizontal,
+  MoreVertical,
   Clock,
   Palette,
   Highlighter,
@@ -91,6 +99,7 @@ import {
   RefreshCw,
   ChevronsUpDown,
   Trash2,
+  Share2,
 } from "lucide-react";
 
 interface FormFieldSummary {
@@ -893,6 +902,7 @@ export default function Forms() {
   const [showDeleteFormDialog, setShowDeleteFormDialog] = useState(false);
   const [filledFormToDelete, setFilledFormToDelete] = useState<any>(null);
   const [showDeleteFilledFormDialog, setShowDeleteFilledFormDialog] = useState(false);
+  const [showFilledFormFileMissingDialog, setShowFilledFormFileMissingDialog] = useState(false);
   const [formLoadPayload, setFormLoadPayload] = useState<FormBuilderLoadPayload | undefined>(undefined);
   type FormsTab = "dynamic" | "saved" | "filled" | "forms" | "editor";
   const userIsPatient = Boolean(user && user.role === "patient");
@@ -911,7 +921,38 @@ export default function Forms() {
   const [selectedFormForResponses, setSelectedFormForResponses] = useState<FormSummary | null>(null);
   const [formResponsesData, setFormResponsesData] = useState<FormResponsesPayload | null>(null);
   const [formResponsesLoading, setFormResponsesLoading] = useState(false);
-  const [filledViewMode, setFilledViewMode] = useState<"grid" | "list">("grid");
+  const [filledViewMode, setFilledViewMode] = useState<"grid" | "list">("list");
+  const [savedViewMode, setSavedViewMode] = useState<"grid" | "list">("list");
+  const [templatePreview, setTemplatePreview] = useState<FormTemplate | null>(null);
+  const [templateViewMode, setTemplateViewMode] = useState<"grid" | "list">("list");
+  const [templateSearchQuery, setTemplateSearchQuery] = useState("");
+  const [customTemplateTab, setCustomTemplateTab] = useState<"custom" | "templates">("custom");
+  const filteredFormTemplates = useMemo(() => {
+    if (!templateSearchQuery.trim()) return FORM_TEMPLATES;
+    const q = templateSearchQuery.trim().toLowerCase();
+    return FORM_TEMPLATES.filter(
+      (t) => t.title.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)
+    );
+  }, [templateSearchQuery]);
+
+  const categoryOrder = ["Doctor-Related", "Patient-Related", "Nurse-Related", "Admin-Related"];
+  const templatesByCategory = useMemo(() => {
+    const map = new Map<string, FormTemplate[]>();
+    for (const t of filteredFormTemplates) {
+      const list = map.get(t.category) ?? [];
+      list.push(t);
+      map.set(t.category, list);
+    }
+    const ordered: { category: string; templates: FormTemplate[] }[] = [];
+    for (const cat of categoryOrder) {
+      const list = map.get(cat);
+      if (list?.length) ordered.push({ category: cat, templates: list });
+    }
+    for (const [cat, list] of Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+      if (!categoryOrder.includes(cat)) ordered.push({ category: cat, templates: list });
+    }
+    return ordered;
+  }, [filteredFormTemplates]);
   const openShareLinksDialog = (form: FormSummary) => {
     setCurrentLinkForm(form);
     setShowShareLinksDialog(true);
@@ -2372,6 +2413,17 @@ Coverage Details: [Insurance Coverage]`;
     setActiveFormsTab("dynamic");
   };
 
+  const loadTemplateIntoBuilder = (template: FormTemplate) => {
+    const payload = cloneTemplateAsPayload(template);
+    setFormLoadPayload(payload);
+    setTemplatePreview(null);
+    toast({
+      title: "Template loaded",
+      description: `"${template.title}" is now in the builder. Edit and save as a new Custom Form—the original template is unchanged.`,
+    });
+    setActiveFormsTab("dynamic");
+  };
+
   const handleViewFormResponses = async (form: FormSummary) => {
     setSelectedFormForResponses(form);
     setFormResponsesData(null);
@@ -2852,6 +2904,76 @@ const formIds = useMemo(
     setShowDeleteFilledFormDialog(true);
   };
 
+  /** Build PDF URL from document metadata. Uses API base URL so in dev/proxy the request hits the server that serves /uploads. */
+  const getFilledFormPdfUrl = (doc: any): string | null => {
+    const raw = doc.metadata?.pdfPath;
+    if (!raw || typeof raw !== "string") return null;
+    const path = raw.replace(/\\/g, "/").replace(/^\/+/, "");
+    const slug = path.startsWith("uploads") ? path : `uploads/${path}`;
+    return buildUrl(`/${slug}`);
+  };
+
+  /** Check if the filled form PDF exists on the server: HEAD request to the PDF URL (same origin as API). */
+  const checkFilledFormFileExists = async (doc: any): Promise<boolean> => {
+    const url = getFilledFormPdfUrl(doc);
+    if (!url) return false;
+    try {
+      const token = localStorage.getItem("auth_token");
+      const headers: Record<string, string> = { "X-Tenant-Subdomain": getTenantSubdomain() };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const response = await fetch(url, { method: "HEAD", credentials: "include", headers });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const loadFilledForm = async (doc: any) => {
+    const link = getFilledFormPdfUrl(doc);
+    if (!link) {
+      setShowFilledFormFileMissingDialog(true);
+      return;
+    }
+    const exists = await checkFilledFormFileExists(doc);
+    if (!exists) {
+      setShowFilledFormFileMissingDialog(true);
+      return;
+    }
+    window.open(link, "_blank");
+  };
+
+  const downloadFilledForm = async (doc: any) => {
+    const link = getFilledFormPdfUrl(doc);
+    if (!link) {
+      setShowFilledFormFileMissingDialog(true);
+      return;
+    }
+    const exists = await checkFilledFormFileExists(doc);
+    if (!exists) {
+      setShowFilledFormFileMissingDialog(true);
+      return;
+    }
+    const anchor = document.createElement("a");
+    anchor.href = link;
+    anchor.download = doc.name || `form-${doc.id}.pdf`;
+    anchor.target = "_blank";
+    anchor.click();
+  };
+
+  const handleDeleteFilledFormClick = async (doc: any) => {
+    const link = getFilledFormPdfUrl(doc);
+    if (!link) {
+      setShowFilledFormFileMissingDialog(true);
+      return;
+    }
+    const exists = await checkFilledFormFileExists(doc);
+    if (!exists) {
+      setShowFilledFormFileMissingDialog(true);
+      return;
+    }
+    openDeleteFilledFormDialog(doc);
+  };
+
   const filledFormCardContent = (doc: any) => {
   const link = doc.metadata?.pdfPath ? `/${doc.metadata.pdfPath}` : null;
     const creatorInfo = resolveFormCreator(doc);
@@ -2883,15 +3005,9 @@ const formIds = useMemo(
         )}
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        {link ? (
-          <Button size="sm" variant="outline" asChild>
-            <a href={link} target="_blank" rel="noreferrer">
-              View Form
-            </a>
-          </Button>
-        ) : (
-          <span className="text-[11px] text-rose-500">PDF missing</span>
-        )}
+        <Button size="sm" variant="outline" onClick={() => loadFilledForm(doc)}>
+          View Form
+        </Button>
         {doc.metadata?.headerName && (
           <span className="text-[11px] text-muted-foreground">
             Clinic: {doc.metadata.headerName}
@@ -2900,7 +3016,7 @@ const formIds = useMemo(
         <Button
           size="sm"
           variant="ghost"
-          onClick={() => openDeleteFilledFormDialog(doc)}
+          onClick={() => handleDeleteFilledFormClick(doc)}
           className="text-rose-500 hover:bg-rose-50/70 dark:text-rose-400 dark:hover:bg-rose-500/10"
           title="Delete PDF"
         >
@@ -2910,36 +3026,6 @@ const formIds = useMemo(
     </>
   );
 };
-
-  const loadFilledForm = (doc: any) => {
-    const link = doc.metadata?.pdfPath ? `/${doc.metadata.pdfPath}` : null;
-    if (link) {
-      window.open(link, "_blank");
-    } else {
-      toast({
-        title: "Missing PDF",
-        description: "This filled form does not have a PDF available.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const downloadFilledForm = (doc: any) => {
-    const link = doc.metadata?.pdfPath ? `/${doc.metadata.pdfPath}` : null;
-    if (link) {
-      const anchor = document.createElement("a");
-      anchor.href = link;
-      anchor.download = doc.name || `form-${doc.id}.pdf`;
-      anchor.target = "_blank";
-      anchor.click();
-    } else {
-      toast({
-        title: "Download unavailable",
-        description: "Unable to download because the PDF is missing.",
-        variant: "destructive",
-      });
-    }
-  };
 
   const resendShareEmailMutation = useMutation({
     mutationFn: async (logId: number) => {
@@ -6271,12 +6357,12 @@ const formIds = useMemo(
                     Dynamic Form Builder
                   </TabsTrigger>
                   <TabsTrigger value="saved">
-                    Saved Forms
+                    Custom/Template Forms
                   </TabsTrigger>
                 </>
               )}
               <TabsTrigger value="filled">
-                Filled Forms
+                Filled Forms(responses)
               </TabsTrigger>
               {/* Document Editor tab hidden */}
               {false && !userIsPatient && (
@@ -6307,19 +6393,136 @@ const formIds = useMemo(
                 value="saved"
                 className="space-y-5 rounded-3xl border border-gray-200 bg-white p-5 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-600 dark:text-gray-300">Saved Forms</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-500">
-                      Send one of your saved dynamic forms to a patient using a secure link.
-                    </p>
-                  </div>
-                  <span className="text-xs text-gray-400">Auto synced</span>
-                </div>
+                <Tabs value={customTemplateTab} onValueChange={(v) => setCustomTemplateTab(v as "custom" | "templates")} className="w-full">
+                  <TabsList className="grid w-full grid-cols-2 mb-4">
+                    <TabsTrigger value="custom">Custom Forms</TabsTrigger>
+                    <TabsTrigger value="templates">Form Templates</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="custom" className="space-y-4 mt-4">
+                    <div className="flex items-center justify-between flex-wrap gap-4">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Custom Forms</h3>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Forms you have created and saved. Edit, share, or manage links below. Send one of your saved dynamic forms to a patient using a secure link.</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">Auto synced</span>
+                        <span className="h-5 border-l border-gray-300 dark:border-gray-600" />
+                        <Button
+                          size="sm"
+                          variant={savedViewMode === "grid" ? "default" : "outline"}
+                          onClick={() => setSavedViewMode("grid")}
+                          className="px-3"
+                        >
+                          Grid
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={savedViewMode === "list" ? "default" : "outline"}
+                          onClick={() => setSavedViewMode("list")}
+                          className="px-3"
+                        >
+                          List
+                        </Button>
+                      </div>
+                    </div>
                 {formsLoading ? (
                   <p className="text-sm text-gray-500 dark:text-gray-400">Loading saved forms…</p>
                 ) : savedForms.length === 0 ? (
-                  <p className="text-sm text-gray-500 dark:text-gray-400">No forms saved yet. Create one above to start sharing.</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">No forms saved yet. Create one above or use a template below to start sharing.</p>
+                ) : savedViewMode === "list" ? (
+                  <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-[#0b0c16]">
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[880px] text-sm text-left border-collapse">
+                        <thead className="bg-gray-50 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+                          <tr>
+                            <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Form ID</th>
+                            <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Form Name</th>
+                            <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Created At</th>
+                            <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Updated At</th>
+                            <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Status</th>
+                            <th className="px-3 py-2.5 text-center font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs w-10"></th>
+                            <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Created By</th>
+                            <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Share / View / Links</th>
+                            <th className="px-3 py-2.5 text-center font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs w-12">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                          {savedFormsToDisplay.map((form) => {
+                            const creatorId =
+                              form.createdBy ??
+                              (form as any).metadata?.createdBy ??
+                              (form as any).metadata?.created_by ??
+                              (form as any).metadata?.userId;
+                            const creator = creatorId ? creatorsById.get(Number(creatorId)) : undefined;
+                            return (
+                              <tr key={form.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                                <td className="px-3 py-2.5 text-gray-700 dark:text-gray-300 font-mono text-xs">{form.id}</td>
+                                <td className="px-3 py-2.5 font-semibold text-gray-900 dark:text-gray-100">{form.title}</td>
+                                <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{form.createdAt ? new Date(form.createdAt).toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{form.updatedAt ? new Date(form.updatedAt).toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2.5">
+                                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 border-0 text-xs capitalize">{(form.status || "saved").toLowerCase()}</Badge>
+                                </td>
+                                <td className="px-3 py-2.5 text-center">
+                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-gray-500 hover:text-gray-700" onClick={() => loadFormIntoBuilder(form)} title="Edit">
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                </td>
+                                <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{creator ? creator.name : "—"}</td>
+                                <td className="px-3 py-2.5">
+                                  <div className="flex items-center gap-1">
+                                    <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => openFormShareDialog(form)} title="Share" disabled={patientsLoading}>
+                                      <Share2 className="h-4 w-4" />
+                                    </Button>
+                                    <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => handleViewFormResponses(form)} title="View responses">
+                                      <Eye className="h-4 w-4" />
+                                    </Button>
+                                    <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => openShareLinksDialog(form)} title="Links">
+                                      <Link className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 text-center">
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                        <MoreVertical className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem onClick={() => loadFormIntoBuilder(form)}>
+                                        <Edit className="h-4 w-4 mr-2" />
+                                        Edit
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleViewFormResponses(form)}>
+                                        <Eye className="h-4 w-4 mr-2" />
+                                        View responses
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => openShareLinksDialog(form)}>
+                                        <Link className="h-4 w-4 mr-2" />
+                                        Links
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        className="text-red-600 dark:text-red-400 focus:text-red-600"
+                                        onClick={() => {
+                                          setFormToDelete(form);
+                                          setShowDeleteFormDialog(true);
+                                        }}
+                                        disabled={deleteFormMutation.isPending}
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 ) : (
                   <div className="space-y-3 max-h-[770px] overflow-y-auto pr-2">
                     {savedFormsToDisplay.map((form) => {
@@ -6392,7 +6595,6 @@ const formIds = useMemo(
                               >
                                 Edit
                               </Button>
-                              {/* Hide "Open Form" button if form has been shared with patients or user is admin/doctor/nurse */}
                               {(!formSharesMap[form.id] || formSharesMap[form.id].length === 0) && user?.role === "patient" && (
                               <Button
                                 size="sm"
@@ -6417,7 +6619,180 @@ const formIds = useMemo(
                     })}
                   </div>
                 )}
+                  </TabsContent>
+                  <TabsContent value="templates" className="space-y-4 mt-4">
+                    <div className="flex items-center justify-between flex-wrap gap-4">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Form Templates</h3>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Pre-built templates. Use a template to load it into the builder—edit and save as a new Custom Form. Original templates are never modified. Search by name or category.</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant={templateViewMode === "grid" ? "default" : "outline"}
+                          onClick={() => setTemplateViewMode("grid")}
+                          className="px-3"
+                        >
+                          Grid
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={templateViewMode === "list" ? "default" : "outline"}
+                          onClick={() => setTemplateViewMode("list")}
+                          className="px-3"
+                        >
+                          List
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Input
+                        placeholder="Search templates by name or category..."
+                        value={templateSearchQuery}
+                        onChange={(e) => setTemplateSearchQuery(e.target.value)}
+                        className="pl-9 max-w-md"
+                      />
+                    </div>
+                    {filteredFormTemplates.length === 0 ? (
+                      <p className="text-sm text-gray-500 dark:text-gray-400 py-6 text-center">No templates match your search. Try a different name or category.</p>
+                    ) : templateViewMode === "list" ? (
+                  <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
+                    {templatesByCategory.map(({ category, templates }) => (
+                      <div key={category}>
+                        <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                          {category} ({templates.length})
+                        </h4>
+                        <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-[#0b0c16]">
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[700px] text-sm text-left border-collapse">
+                              <thead className="bg-gray-50 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+                                <tr>
+                                  <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Template Name</th>
+                                  <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Category</th>
+                                  <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Description</th>
+                                  <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs w-20">Sections</th>
+                                  <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs w-16">Fields</th>
+                                  <th className="px-3 py-2.5 text-center font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs w-32">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                {templates.map((template) => {
+                                  const fieldCount = template.sections.reduce((acc, s) => acc + s.fields.length, 0);
+                                  return (
+                                    <tr key={template.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                                      <td className="px-3 py-2.5 font-semibold text-gray-900 dark:text-gray-100">{template.title}</td>
+                                      <td className="px-3 py-2.5">
+                                        <Badge variant="secondary" className="text-[10px] font-normal bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200 border-0">{template.category}</Badge>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs max-w-[240px] truncate" title={template.description}>{template.description}</td>
+                                      <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{template.sections.length}</td>
+                                      <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{fieldCount}</td>
+                                      <td className="px-3 py-2.5">
+                                        <div className="flex items-center justify-center gap-1">
+                                          <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => setTemplatePreview(template)}>
+                                            <Eye className="h-3.5 w-3.5 mr-1" />
+                                            Preview
+                                          </Button>
+                                          <Button size="sm" className="h-8 px-2 text-xs bg-[#4A7DFF] hover:bg-[#2563eb] text-white" onClick={() => loadTemplateIntoBuilder(template)}>
+                                            <FileText className="h-3.5 w-3.5 mr-1" />
+                                            Use Template
+                                          </Button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
+                    {templatesByCategory.map(({ category, templates }) => (
+                      <div key={category}>
+                        <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                          {category} ({templates.length})
+                        </h4>
+                        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                          {templates.map((template) => (
+                            <div
+                              key={template.id}
+                              className="flex flex-col justify-between gap-3 p-4 border rounded-lg bg-white dark:bg-[#0b0c16] border-gray-200 dark:border-gray-800"
+                            >
+                              <div className="space-y-1">
+                                <Badge variant="secondary" className="text-[10px] font-normal bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200 border-0">{template.category}</Badge>
+                                <p className="font-semibold text-gray-800 dark:text-gray-100">{template.title}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-3">{template.description}</p>
+                                <p className="text-[11px] text-gray-400 dark:text-gray-500">{template.sections.length} section(s), {template.sections.reduce((acc, s) => acc + s.fields.length, 0)} field(s)</p>
+                              </div>
+                              <div className="flex flex-wrap gap-2 pt-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1 min-w-[100px]"
+                                  onClick={() => setTemplatePreview(template)}
+                                >
+                                  <Eye className="h-3.5 w-3.5 mr-1.5" />
+                                  Preview
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="flex-1 min-w-[100px] bg-[#4A7DFF] hover:bg-[#2563eb] text-white"
+                                  onClick={() => loadTemplateIntoBuilder(template)}
+                                >
+                                  <FileText className="h-3.5 w-3.5 mr-1.5" />
+                                  Use Template
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                  </TabsContent>
+                </Tabs>
               </TabsContent>
+
+              <Dialog open={!!templatePreview} onOpenChange={(open) => !open && setTemplatePreview(null)}>
+                <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto dark:bg-slate-800 dark:border-gray-700">
+                  <DialogHeader>
+                    <DialogTitle>{templatePreview?.title}</DialogTitle>
+                    <DialogDescription>{templatePreview?.description}</DialogDescription>
+                  </DialogHeader>
+                  {templatePreview && (
+                    <div className="space-y-4 pt-2">
+                      {templatePreview.sections.map((section, idx) => (
+                        <div key={section.id} className="border border-gray-200 dark:border-gray-600 rounded-lg p-3">
+                          <p className="font-medium text-sm text-gray-800 dark:text-gray-200 mb-2">
+                            Section {idx + 1}: {section.title}
+                          </p>
+                          <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                            {section.fields.map((field) => (
+                              <li key={field.id}>
+                                {field.label}
+                                {field.required && <span className="text-red-500 ml-1">*</span>}
+                                <span className="text-gray-400 dark:text-gray-500"> ({field.type}{field.options?.length ? `: ${field.options.join(", ")}` : ""})</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                      <div className="flex justify-end gap-2 pt-2">
+                        <Button variant="outline" size="sm" onClick={() => setTemplatePreview(null)}>Close</Button>
+                        <Button size="sm" className="bg-[#4A7DFF] hover:bg-[#2563eb]" onClick={() => templatePreview && loadTemplateIntoBuilder(templatePreview)}>
+                          Use Template
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </DialogContent>
+              </Dialog>
             </>
           )}
 
@@ -7021,7 +7396,7 @@ const formIds = useMemo(
             >
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <p className="text-sm font-semibold text-gray-600 dark:text-gray-300">Filled Forms</p>
+                  <p className="text-sm font-semibold text-gray-600 dark:text-gray-300">Filled Forms(responses)</p>
                   <p className="text-xs text-gray-500 dark:text-gray-500">
                     Completed forms stored as PDF documents for quick reference.
                   </p>
@@ -7159,109 +7534,82 @@ const formIds = useMemo(
                   ))}
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {filteredFilledForms.map((doc: any) => {
-                    const creatorInfo = resolveFormCreator(doc);
-                    return (
-                      <div
-                      key={doc.id}
-                      className="border border-gray-200 dark:border-gray-800 rounded-[18px] bg-white dark:bg-[#0b0c16] shadow-sm overflow-hidden"
-                    >
-                      <div className="flex flex-col gap-4 p-5 md:flex-row md:items-start md:justify-between">
-                        <div className="flex-1 space-y-1">
-                          <p className="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                            Form response
-                          </p>
-                          <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                            {doc.name || "Untitled form"}
-                            {doc.metadata?.responseId ? ` response ${doc.metadata.responseId}` : ""}
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            Patient:{" "}
-                            {(() => {
-                              const patientName =
-                                doc.patientName ||
-                                doc.metadata?.patientName ||
-                                [
-                                  doc.metadata?.patient?.firstName,
-                                  doc.metadata?.patient?.lastName,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" ")
-                                  .trim() ||
-                                "Unknown Patient";
-                              return patientName;
-                            })()}
-                          </p>
-                          {(() => {
-                            const patientEmail =
-                              doc.metadata?.patientEmail ||
-                              doc.patientEmail ||
-                              doc.metadata?.patient?.email;
-                            return patientEmail ? (
-                              <p className="text-xs text-gray-500 dark:text-gray-400">
-                                {patientEmail}
-                              </p>
-                            ) : null;
-                          })()}
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            Form ID: {doc.metadata?.formId ?? "—"} • Response #
-                            {doc.metadata?.responseId ?? "—"}
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            Created {new Date(doc.createdAt).toLocaleString()}
-                          </p>
-                          {creatorInfo && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                              Created by {creatorInfo.name}
-                              {creatorInfo.email ? ` (${creatorInfo.email})` : ""}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-3 w-full max-w-sm">
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => loadFilledForm(doc)}
-                            >
-                              View
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => downloadFilledForm(doc)}
-                            >
-                              Download
-                            </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => openDeleteFilledFormDialog(doc)}
-                            className="text-rose-500 hover:bg-rose-50/70 dark:text-rose-400 dark:hover:bg-rose-500/10"
-                            title="Delete PDF"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                          </div>
-                          {doc.insurance && (
-                            <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3">
-                              <p className="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                                Insurance
-                              </p>
-                              <p className="text-sm text-gray-800 dark:text-gray-200">
-                                {doc.insurance.provider}
-                              </p>
-                              <p className="text-xs text-gray-400">
-                                Claim: {doc.insurance.claimNumber}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-[#0b0c16]">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[900px] text-sm text-left border-collapse">
+                      <thead className="bg-gray-50 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+                        <tr>
+                          <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Form ID</th>
+                          <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Patient Name</th>
+                          <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Form Name</th>
+                          <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Created At</th>
+                          <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Updated At</th>
+                          <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Status</th>
+                          <th className="px-3 py-2.5 text-center font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs w-10"></th>
+                          <th className="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">Created By</th>
+                          <th className="px-3 py-2.5 text-center font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs w-12">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                        {filteredFilledForms.map((doc: any) => {
+                          const creatorInfo = resolveFormCreator(doc);
+                          const patientName =
+                            doc.patientName ||
+                            doc.metadata?.patientName ||
+                            [doc.metadata?.patient?.firstName, doc.metadata?.patient?.lastName]
+                              .filter(Boolean)
+                              .join(" ")
+                              .trim() ||
+                            "Unknown Patient";
+                          const formIdDisplay = doc.metadata?.formId ?? doc.metadata?.responseId ?? doc.id ?? "—";
+                          return (
+                            <tr key={doc.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                              <td className="px-3 py-2.5 text-gray-700 dark:text-gray-300 font-mono text-xs">{String(formIdDisplay)}</td>
+                              <td className="px-3 py-2.5 font-semibold text-gray-900 dark:text-gray-100">{patientName}</td>
+                              <td className="px-3 py-2.5 text-gray-700 dark:text-gray-300">{doc.name || "Untitled form"}</td>
+                              <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{doc.createdAt ? new Date(doc.createdAt).toLocaleString() : "—"}</td>
+                              <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{doc.updatedAt ? new Date(doc.updatedAt).toLocaleString() : "—"}</td>
+                              <td className="px-3 py-2.5">
+                                <Badge className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 border-0 text-xs">Completed</Badge>
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-gray-500 hover:text-gray-700" onClick={() => loadFilledForm(doc)} title="View">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </td>
+                              <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-xs">{creatorInfo ? creatorInfo.name : "—"}</td>
+                              <td className="px-3 py-2.5 text-center">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                      <MoreVertical className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => loadFilledForm(doc)}>
+                                      <Eye className="h-4 w-4 mr-2" />
+                                      View
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => downloadFilledForm(doc)}>
+                                      <Download className="h-4 w-4 mr-2" />
+                                      Download
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-red-600 dark:text-red-400 focus:text-red-600"
+                                      onClick={() => handleDeleteFilledFormClick(doc)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </TabsContent>
@@ -7343,6 +7691,19 @@ const formIds = useMemo(
             >
               {deleteFilledFormMutation.isPending ? "Deleting..." : "Delete PDF"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={showFilledFormFileMissingDialog} onOpenChange={setShowFilledFormFileMissingDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>File not found</DialogTitle>
+            <DialogDescription>
+              The file does not exist on the server. It may have been deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setShowFilledFormFileMissingDialog(false)}>OK</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -435,6 +435,7 @@ export default function MessagingPage() {
   const [campaignToDelete, setCampaignToDelete] = useState<any>(null);
   const [showDeleteTemplate, setShowDeleteTemplate] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<any>(null);
+  const [deleteConversationDialog, setDeleteConversationDialog] = useState<{ open: boolean; conversationId: string | null; participantName: string }>({ open: false, conversationId: null, participantName: "" });
   const [showNoRecipientsDialog, setShowNoRecipientsDialog] = useState(false);
   const [showUnfavoriteDialog, setShowUnfavoriteDialog] = useState(false);
   const [unfavoritedConversationName, setUnfavoritedConversationName] = useState<string>("");
@@ -4201,6 +4202,34 @@ export default function MessagingPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Delete conversation confirmation modal */}
+      <Dialog open={deleteConversationDialog.open} onOpenChange={(open) => !open && setDeleteConversationDialog({ open: false, conversationId: null, participantName: "" })}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete conversation</DialogTitle>
+            <DialogDescription>
+              Delete conversation with {deleteConversationDialog.participantName || "this user"} ? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConversationDialog({ open: false, conversationId: null, participantName: "" })}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deleteConversationDialog.conversationId) {
+                  handleDeleteConversation(deleteConversationDialog.conversationId);
+                  setDeleteConversationDialog({ open: false, conversationId: null, participantName: "" });
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Messaging Content */}
       <div className="flex-1 min-h-0 overflow-hidden p-4 md:p-6 max-w-full">
       <Tabs value={activeMessagingTab} onValueChange={setActiveMessagingTab} className="w-full h-full flex flex-col min-h-0 min-w-0">
@@ -4278,6 +4307,32 @@ export default function MessagingPage() {
                             }}
                           >
                                 <div className="flex items-start gap-3">
+                                  {/* Kebab menu - in front of name and time */}
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 p-0 flex-shrink-0 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                                        onClick={(e) => e.stopPropagation()}
+                                        title="Actions"
+                                      >
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+                                      <DropdownMenuItem
+                                        className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+                                        onSelect={(e) => {
+                                          e.preventDefault();
+                                          setDeleteConversationDialog({ open: true, conversationId: conversation.id, participantName });
+                                        }}
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete conversation
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                   {/* Avatar */}
                               <div className="relative flex-shrink-0">
                                     <Avatar className="h-10 w-10">
@@ -4294,22 +4349,11 @@ export default function MessagingPage() {
                                   
                                   {/* Content */}
                               <div className="flex-1 min-w-0">
-                                    {/* Name and Delete Button */}
+                                    {/* Name */}
                                     <div className="flex items-start justify-between mb-1">
                                       <h4 className="font-semibold text-base text-gray-900 dark:text-gray-100 truncate">
                                         {participantName}
                                     </h4>
-                                      <button
-                                        className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-600 flex-shrink-0 ml-2 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                          if (window.confirm(`Delete conversation with ${participantName}? This action cannot be undone.`)) {
-                                        handleDeleteConversation(conversation.id);
-                                      }
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                      </button>
                                 </div>
                                     
                                     {/* Role Badge and Date */}
@@ -4515,13 +4559,196 @@ export default function MessagingPage() {
                               
                               {/* Message Container */}
                               <div className={`flex flex-col min-w-0 max-w-[70%] ${isSentByCurrentUser ? 'items-end' : 'items-start'}`}>
-                                {/* Sender Name and Timestamp - only for received messages */}
-                                {!isSentByCurrentUser && (
-                                  <div className="flex items-center gap-2 mb-1 px-1">
+                                {/* Sender Name, Timestamp and Kebab - same row for received; kebab-only row for sent */}
+                                {!isSentByCurrentUser ? (
+                                  <div className="flex items-center gap-2 mb-1 px-1 w-full">
                                     <span className="font-medium text-xs text-gray-600 dark:text-gray-400">{message.senderName}</span>
                                     <span className="text-xs text-gray-400 dark:text-gray-500">
-                                    {formatTimestampNoConversion(message.timestamp)}
-                                  </span>
+                                      {formatTimestampNoConversion(message.timestamp)}
+                                    </span>
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button 
+                                          variant="ghost" 
+                                          size="sm" 
+                                          className="h-6 w-6 p-0 ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-500"
+                                        >
+                                          <MoreVertical className="h-3 w-3" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="start">
+                                        <DropdownMenuItem 
+                                          onSelect={(e) => {
+                                            e.preventDefault();
+                                            setNewMessage(prev => ({
+                                              ...prev,
+                                              content: message.content,
+                                              subject: `Forwarded: ${message.subject || 'Message'}`,
+                                              priority: message.priority || "normal"
+                                            }));
+                                            setValidationErrors({});
+                                            setShowNewMessage(true);
+                                          }}
+                                        >
+                                          <Forward className="mr-2 h-4 w-4" />
+                                          Forward
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={async () => {
+                                          const messagePreview = message.content.length > 50 
+                                            ? `${message.content.substring(0, 50)}...` 
+                                            : message.content;
+                                          setTaggedMessageContent(messagePreview);
+                                          setTaggedMessageId(message.id);
+                                          try {
+                                            const existingTags = message.tags?.map((t: any) => t.id) || [];
+                                            setSelectedTags(existingTags);
+                                            try {
+                                              const response = await apiRequest('GET', `/api/messaging/messages/${message.id}/tags`);
+                                              if (response.ok) {
+                                                const serverTags = await response.json();
+                                                setSelectedTags(serverTags.map((t: any) => t.id));
+                                              }
+                                            } catch (fetchError) {
+                                              console.warn('Could not fetch tags from server, using cached tags');
+                                            }
+                                          } catch (error) {
+                                            console.error('Error loading tags:', error);
+                                            setSelectedTags([]);
+                                          }
+                                          setShowTagDialog(true);
+                                        }}>
+                                          <Tag className="mr-2 h-4 w-4" />
+                                          Tag
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem 
+                                          onClick={async () => {
+                                            try {
+                                              const token = localStorage.getItem('auth_token');
+                                              const response = await fetch(`/api/messaging/messages/${message.id}`, {
+                                                method: 'DELETE',
+                                                headers: {
+                                                  'Authorization': `Bearer ${token}`,
+                                                  'X-Tenant-Subdomain': localStorage.getItem('user_subdomain') || 'demo',
+                                                  'Content-Type': 'application/json'
+                                                },
+                                                credentials: 'include'
+                                              });
+                                              if (!response.ok) {
+                                                if (response.status === 404) {
+                                                  toast({ title: "Message Already Deleted", description: "This message has already been deleted" });
+                                                  if (selectedConversation && fetchMessages) await fetchMessages(selectedConversation);
+                                                  return;
+                                                }
+                                                throw new Error(`${response.status}: ${response.statusText}`);
+                                              }
+                                              if (selectedConversation && fetchMessages) await fetchMessages(selectedConversation);
+                                              toast({ title: "Message Deleted", description: "Message has been deleted successfully", duration: 3000 });
+                                            } catch (error) {
+                                              console.error('Delete error:', error);
+                                              toast({ title: "Error", description: "Failed to delete message", variant: "destructive" });
+                                            }
+                                          }}
+                                          className="text-red-600 dark:text-red-400"
+                                        >
+                                          <Trash2 className="mr-2 h-4 w-4" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                ) : (
+                                  <div className="mb-1 self-end">
+                                    <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button 
+                                        variant="ghost" 
+                                        size="sm" 
+                                        className={`h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity ${
+                                          isSentByCurrentUser ? 'text-blue-400 hover:text-blue-300' : 'text-gray-400 hover:text-gray-500'
+                                        }`}
+                                      >
+                                        <MoreVertical className="h-3 w-3" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align={isSentByCurrentUser ? "end" : "start"}>
+                                      <DropdownMenuItem 
+                                        onSelect={(e) => {
+                                          e.preventDefault();
+                                          setNewMessage(prev => ({
+                                            ...prev,
+                                            content: message.content,
+                                            subject: `Forwarded: ${message.subject || 'Message'}`,
+                                            priority: message.priority || "normal"
+                                          }));
+                                          setValidationErrors({});
+                                          setShowNewMessage(true);
+                                        }}
+                                      >
+                                        <Forward className="mr-2 h-4 w-4" />
+                                        Forward
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={async () => {
+                                        const messagePreview = message.content.length > 50 
+                                          ? `${message.content.substring(0, 50)}...` 
+                                          : message.content;
+                                        setTaggedMessageContent(messagePreview);
+                                        setTaggedMessageId(message.id);
+                                        try {
+                                          const existingTags = message.tags?.map((t: any) => t.id) || [];
+                                          setSelectedTags(existingTags);
+                                          try {
+                                            const response = await apiRequest('GET', `/api/messaging/messages/${message.id}/tags`);
+                                            if (response.ok) {
+                                              const serverTags = await response.json();
+                                              setSelectedTags(serverTags.map((t: any) => t.id));
+                                            }
+                                          } catch (fetchError) {
+                                            console.warn('Could not fetch tags from server, using cached tags');
+                                          }
+                                        } catch (error) {
+                                          console.error('Error loading tags:', error);
+                                          setSelectedTags([]);
+                                        }
+                                        setShowTagDialog(true);
+                                      }}>
+                                        <Tag className="mr-2 h-4 w-4" />
+                                        Tag
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem 
+                                        onClick={async () => {
+                                          try {
+                                            const token = localStorage.getItem('auth_token');
+                                            const response = await fetch(`/api/messaging/messages/${message.id}`, {
+                                              method: 'DELETE',
+                                              headers: {
+                                                'Authorization': `Bearer ${token}`,
+                                                'X-Tenant-Subdomain': localStorage.getItem('user_subdomain') || 'demo',
+                                                'Content-Type': 'application/json'
+                                              },
+                                              credentials: 'include'
+                                            });
+                                            if (!response.ok) {
+                                              if (response.status === 404) {
+                                                toast({ title: "Message Already Deleted", description: "This message has already been deleted" });
+                                                if (selectedConversation && fetchMessages) await fetchMessages(selectedConversation);
+                                                return;
+                                              }
+                                              throw new Error(`${response.status}: ${response.statusText}`);
+                                            }
+                                            if (selectedConversation && fetchMessages) await fetchMessages(selectedConversation);
+                                            toast({ title: "Message Deleted", description: "Message has been deleted successfully", duration: 3000 });
+                                          } catch (error) {
+                                            console.error('Delete error:', error);
+                                            toast({ title: "Error", description: "Failed to delete message", variant: "destructive" });
+                                          }
+                                        }}
+                                        className="text-red-600 dark:text-red-400"
+                                      >
+                                        <Trash2 className="mr-2 h-4 w-4" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
                                 )}
                                 
@@ -4643,150 +4870,6 @@ export default function MessagingPage() {
                                       })}
                                     </div>
                                   )}
-                                </div>
-                                
-                                {/* Dropdown Menu - positioned relative to message bubble */}
-                                <div className={`mt-1 ${isSentByCurrentUser ? 'self-end' : 'self-start'}`}>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                      <Button 
-                                        variant="ghost" 
-                                        size="sm" 
-                                        className={`h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity ${
-                                          isSentByCurrentUser ? 'text-blue-400 hover:text-blue-300' : 'text-gray-400 hover:text-gray-500'
-                                        }`}
-                                      >
-                                        <MoreVertical className="h-3 w-3" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align={isSentByCurrentUser ? "end" : "start"}>
-                                    <DropdownMenuItem 
-                                      onSelect={(e) => {
-                                        e.preventDefault();
-                                        // Open new message dialog with pre-filled content
-                                        setNewMessage(prev => ({
-                                          ...prev,
-                                          content: message.content,
-                                          subject: `Forwarded: ${message.subject || 'Message'}`,
-                                          priority: message.priority || "normal"
-                                        }));
-                                        setValidationErrors({});
-                                        setShowNewMessage(true);
-                                      }}
-                                    >
-                                      <Forward className="mr-2 h-4 w-4" />
-                                      Forward
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={async () => {
-                                      // Show modal popup with message content
-                                      const messagePreview = message.content.length > 50 
-                                        ? `${message.content.substring(0, 50)}...` 
-                                        : message.content;
-                                      setTaggedMessageContent(messagePreview);
-                                      setTaggedMessageId(message.id);
-                                      
-                                      // Load existing tags for this message
-                                      try {
-                                        const existingTags = message.tags?.map((t: any) => t.id) || [];
-                                        setSelectedTags(existingTags);
-                                        
-                                        // Also try to fetch from server to ensure we have latest
-                                        try {
-                                          const response = await apiRequest('GET', `/api/messaging/messages/${message.id}/tags`);
-                                          if (response.ok) {
-                                            const serverTags = await response.json();
-                                            setSelectedTags(serverTags.map((t: any) => t.id));
-                                          }
-                                        } catch (fetchError) {
-                                          // If fetch fails, use tags from message object
-                                          console.warn('Could not fetch tags from server, using cached tags');
-                                        }
-                                      } catch (error) {
-                                        console.error('Error loading tags:', error);
-                                        setSelectedTags([]);
-                                      }
-                                      
-                                      setShowTagDialog(true);
-                                    }}>
-                                      <Tag className="mr-2 h-4 w-4" />
-                                      Tag
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem 
-                                      onClick={async () => {
-                                        try {
-                                          console.log('🗑️ DELETING MESSAGE:', message.id);
-                                          
-                                          const token = localStorage.getItem('auth_token');
-                                          const response = await fetch(`/api/messaging/messages/${message.id}`, {
-                                            method: 'DELETE',
-                                            headers: {
-                                              'Authorization': `Bearer ${token}`,
-                                              'X-Tenant-Subdomain': localStorage.getItem('user_subdomain') || 'demo',
-                                              'Content-Type': 'application/json'
-                                            },
-                                            credentials: 'include'
-                                          });
-                                          
-                                          if (!response.ok) {
-                                            if (response.status === 404) {
-                                              console.log('🗑️ Message already deleted or not found');
-                                              toast({ 
-                                                title: "Message Already Deleted", 
-                                                description: "This message has already been deleted" 
-                                              });
-                                              // Still trigger UI refresh to clean up any stale UI state
-                                              if (selectedConversation && fetchMessages) {
-                                                await fetchMessages(selectedConversation);
-                                              }
-                                              return;
-                                            }
-                                            throw new Error(`${response.status}: ${response.statusText}`);
-                                          }
-                                          
-                                          console.log('🗑️ DELETE SUCCESS - updating UI immediately');
-                                          
-                                          // Get current messages BEFORE clearing cache
-                                          const currentMessages = messages as any[] || [];
-                                          const updatedMessages = currentMessages.filter(msg => msg.id !== message.id);
-                                          
-                                          console.log('🗑️ MESSAGES BEFORE DELETE:', currentMessages.length);
-                                          console.log('🗑️ MESSAGES AFTER DELETE:', updatedMessages.length);
-                                          
-                                          // CRITICAL FIX: Force immediate UI update using direct fetch bypass
-                                          console.log('🗑️ FORCE RE-RENDER: Triggering direct fetch after delete');
-                                          
-                                          // Use direct fetch approach to bypass React Query cache completely
-                                          if (selectedConversation && fetchMessages) {
-                                            console.log('🗑️ Using direct fetch for immediate UI update');
-                                            await fetchMessages(selectedConversation);
-                                          }
-                                          
-                                          // Also force refetch conversations 
-                                          // await refetchConversations();
-                                          
-                                          console.log('🗑️ REFETCH COMPLETED - deleted message should disappear immediately');
-                                          
-                                          toast({
-                                            title: "Message Deleted",
-                                            description: "Message has been deleted successfully",
-                                            duration: 3000,
-                                          });
-                                        } catch (error) {
-                                          console.error('Delete error:', error);
-                                          toast({ 
-                                            title: "Error", 
-                                            description: "Failed to delete message", 
-                                            variant: "destructive" 
-                                          });
-                                        }
-                                      }}
-                                      className="text-red-600 dark:text-red-400"
-                                    >
-                                      <Trash2 className="mr-2 h-4 w-4" />
-                                      Delete
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
                                 </div>
                               </div>
                             </div>

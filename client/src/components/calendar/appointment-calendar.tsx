@@ -12,7 +12,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Check, ChevronsUpDown, AlertTriangle, CreditCard, Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
-import { Calendar, Clock, MapPin, User, Users, Video, Stethoscope, FileText, Plus, Save, X, Mic, Square, Edit, Trash2, Receipt, ExternalLink } from "lucide-react";
+import { Calendar, Clock, MapPin, User, Users, Video, Stethoscope, FileText, Plus, Save, X, Mic, Square, Edit, Trash2, Receipt, ExternalLink, PoundSterling } from "lucide-react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isToday, startOfWeek, endOfWeek } from "date-fns";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -127,6 +127,49 @@ function FullConsultationWrapper({ patientId, show, onOpenChange }: { patientId:
       onOpenChange={onOpenChange}
       patient={patient || undefined}
     />
+  );
+}
+
+// Fetch and display invoice for one appointment (admin only, used in list cards under "Appointments for ...")
+function AppointmentCardInvoice({ appointmentId }: { appointmentId: string | null }) {
+  const { data: invoice, isLoading } = useQuery({
+    queryKey: ["/api/invoices/by-service", "appointments", appointmentId],
+    enabled: !!appointmentId,
+    retry: false,
+    queryFn: async () => {
+      if (!appointmentId) return null;
+      try {
+        const params = new URLSearchParams({ serviceType: "appointments", appointmentId });
+        const response = await apiRequest("GET", `/api/invoices/by-service?${params.toString()}`);
+        const data = await response.json();
+        return data;
+      } catch (err: any) {
+        if (err?.message?.includes("404") || err?.message?.includes("not found")) return null;
+        throw err;
+      }
+    },
+  });
+
+  if (!appointmentId || isLoading) return null;
+  if (!invoice) return null;
+
+  const statusLabel = String(invoice.status ?? "—").toLowerCase();
+  const statusBadgeClass =
+    statusLabel === "overdue"
+      ? "absolute top-1.5 right-2 bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 border-0 text-xs font-medium"
+      : statusLabel === "unpaid"
+        ? "absolute top-1.5 right-2 bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 border-0 text-xs font-medium"
+        : "absolute top-1.5 right-2 bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 border-0 text-xs font-medium";
+  return (
+    <>
+      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 flex items-center gap-1">
+        <PoundSterling className="h-3 w-3 text-green-600" />
+        Invoice No.: {invoice.invoiceNumber ?? `#${invoice.id}`}
+      </p>
+      <Badge className={statusBadgeClass}>
+        {statusLabel}
+      </Badge>
+    </>
   );
 }
 
@@ -2097,6 +2140,11 @@ Medical License: [License Number]
                             {appointment.duration || 30} minutes
                           </span>
                         </div>
+                        {user?.role === "admin" && (
+                          <AppointmentCardInvoice
+                            appointmentId={appointment.appointmentId ?? (appointment as any).appointment_id ?? null}
+                          />
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">

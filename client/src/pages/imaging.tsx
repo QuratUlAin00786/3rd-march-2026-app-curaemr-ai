@@ -5397,49 +5397,27 @@ export default function ImagingPage() {
                     </div>
 
                     <div className="flex items-center gap-2 justify-center flex-wrap">
-                      {/* Imaging Results tab: single kebab dropdown for all actions */}
-                      {activeTab === "imaging-results" && user?.role !== 'patient' && (
-                        <DropdownMenu open={openActionsStudyId === study.id} onOpenChange={(open) => setOpenActionsStudyId(open ? study.id : null)}>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 w-8 p-0 border-gray-200 text-gray-600 hover:bg-gray-50"
-                              data-testid={`button-actions-kebab-card-${study.id}`}
-                              title="Actions"
-                            >
-                              <MoreVertical className="h-4 w-4" />
+                      {/* Imaging Results tab, grid view: show all action icons (no kebab) */}
+                      {activeTab === "imaging-results" && user?.role !== 'patient' && viewMode === "grid" && (
+                        <>
+                          <Button variant="outline" size="sm" onClick={() => { setSelectedStudyDetails(study); setShowDetailsDialog(true); }} className="h-8 w-8 p-0 border-gray-200 text-gray-600 hover:bg-gray-50" data-testid={`button-details-card-${study.id}`} title="View Details">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => viewPDFReportInDialog(study)} className="h-8 w-8 p-0 border-gray-200 text-gray-600 hover:bg-gray-50" data-testid={`button-view-pdf-card-${study.id}`} title="View PDF Report">
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => handleViewStudy(study, true)} className="h-8 w-8 p-0 border-gray-200 text-gray-600 hover:bg-gray-50" data-testid={`button-edit-card-${study.id}`} title="Edit">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => handleShareStudy(study, 'report')} className="h-8 w-8 p-0 border-gray-200 text-gray-600 hover:bg-gray-50" data-testid={`button-share-card-${study.id}`} title="Share Report">
+                            <Share2 className="h-4 w-4" />
+                          </Button>
+                          {canDelete('medical_imaging') && (
+                            <Button variant="outline" size="sm" onClick={() => { setStudyToDelete(study); setShowDeleteDialog(true); }} className="h-8 w-8 p-0 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300" data-testid={`button-delete-card-${study.id}`} title="Delete">
+                              <Trash2 className="h-4 w-4" />
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="min-w-[10rem]" onClick={() => setOpenActionsStudyId(null)}>
-                            <DropdownMenuItem onClick={() => { setSelectedStudyDetails(study); setShowDetailsDialog(true); }} data-testid={`menuitem-details-card-${study.id}`}>
-                              <Eye className="h-4 w-4 mr-2" />
-                              View Details
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => viewPDFReportInDialog(study)} data-testid={`menuitem-view-pdf-card-${study.id}`}>
-                              <FileText className="h-4 w-4 mr-2" />
-                              View PDF Report
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleViewStudy(study, true)} data-testid={`menuitem-edit-card-${study.id}`}>
-                              <Edit className="h-4 w-4 mr-2" />
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleShareStudy(study, 'report')} data-testid={`menuitem-share-card-${study.id}`}>
-                              <Share2 className="h-4 w-4 mr-2" />
-                              Share Report
-                            </DropdownMenuItem>
-                            {canDelete('medical_imaging') && (
-                              <DropdownMenuItem
-                                onClick={() => { setStudyToDelete(study); setShowDeleteDialog(true); }}
-                                className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
-                                data-testid={`menuitem-delete-card-${study.id}`}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                          )}
+                        </>
                       )}
 
                       {/* Non-Imaging-Results: Show blue Eye icon for Order Study tab, regular Eye and Edit for others */}
