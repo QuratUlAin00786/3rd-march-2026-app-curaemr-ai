@@ -978,11 +978,11 @@ export default function Inventory() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
       <Header title="Comprehensive Inventory Management" subtitle="Complete healthcare inventory system with Item Master, Stock Tracking, Purchase Orders, Goods Receipt & Alerts" />
       
-      <div className="w-full px-4 lg:px-6 py-6">
-        <div className="flex flex-wrap justify-end gap-3 mb-6">
+      <div className="w-full px-3 sm:px-4 lg:px-5 py-4">
+        <div className="flex flex-wrap justify-end gap-2 sm:gap-3 mb-4">
               {canCreate('inventory') && (
                 <Button onClick={() => setShowAddDialog(true)}>
                   <Plus className="h-4 w-4 mr-2" />

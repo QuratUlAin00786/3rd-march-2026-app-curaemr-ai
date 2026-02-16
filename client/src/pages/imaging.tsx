@@ -19,6 +19,8 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -32,6 +34,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Popover,
   PopoverContent,
@@ -310,6 +318,7 @@ export default function ImagingPage() {
   const [shareSuccessEmail, setShareSuccessEmail] = useState("");
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [selectedStudyDetails, setSelectedStudyDetails] = useState<any>(null);
+  const [openActionsStudyId, setOpenActionsStudyId] = useState<string | null>(null);
   const [modalityFilter, setModalityFilter] = useState<string>("all");
   const [selectedStudyId, setSelectedStudyId] = useState<string | null>(null);
   const [shareFormData, setShareFormData] = useState<{
@@ -363,6 +372,11 @@ export default function ImagingPage() {
 
   // Editing status state for dropdown
   const [editingStatus, setEditingStatus] = useState<string>("");
+
+  // Edit status dialog (popup to avoid overlapping)
+  const [editStatusDialog, setEditStatusDialog] = useState<{ studyId: string; status: string } | null>(null);
+  const [editStatusDraft, setEditStatusDraft] = useState<string>("");
+  const [statusUpdateSuccessModal, setStatusUpdateSuccessModal] = useState<string | null>(null);
 
   // Editing priority state for dropdown
   const [editingPriority, setEditingPriority] = useState<string>("");
@@ -468,6 +482,7 @@ export default function ImagingPage() {
   const [showSignatureDetailsDialog, setShowSignatureDetailsDialog] = useState(false);
   const [selectedSignatureData, setSelectedSignatureData] = useState<any>(null);
   const [showSummaryDialog, setShowSummaryDialog] = useState(false);
+  const [showSummarySuccessModal, setShowSummarySuccessModal] = useState(false);
   const [eSignStudy, setESignStudy] = useState<any>(null);
   const [invoiceFormData, setInvoiceFormData] = useState({
     paymentMethod: "",
@@ -947,9 +962,10 @@ export default function ImagingPage() {
       // Skip showing error for doctors/admins with permission issues - they should have access
       if ((isDoctor() || isAdmin()) && isPermissionError) {
         console.log('Permission error suppressed for doctor/admin role');
+        if (variables.fieldName === "status") setEditStatusDialog(null);
         return;
       }
-      
+      if (variables.fieldName === "status") setEditStatusDialog(null);
       toast({
         title: "Error updating record",
         description: errorMessage,
@@ -962,9 +978,33 @@ export default function ImagingPage() {
         ...prev,
         [variables.fieldName]: false,
       }));
+      if (variables.fieldName === "status") {
+        setEditStatusDialog(null);
+      }
 
-      // Force refresh medical images data immediately
-      await refetchImages();
+      const medicalImagesQueryKey = ["/api/medical-images", user?.role === "patient" ? "patient-filtered" : "all"];
+
+      // Update cache immediately so the list shows the new status without waiting for refetch
+      if (variables.fieldName === "status" || variables.fieldName === "priority" || variables.fieldName === "scheduledAt" || variables.fieldName === "performedAt") {
+        queryClient.setQueryData(medicalImagesQueryKey, (old: any[] | undefined) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((img: any) => {
+            if (img.id == null || String(img.id) !== String(variables.studyId)) return img;
+            if (variables.fieldName === "status") return { ...img, status: variables.value };
+            if (variables.fieldName === "priority") return { ...img, priority: variables.value };
+            if (variables.fieldName === "scheduledAt") return { ...img, scheduledAt: variables.value || null };
+            if (variables.fieldName === "performedAt") return { ...img, performedAt: variables.value || null };
+            return img;
+          });
+        });
+      }
+
+      // Refetch to confirm and keep cache in sync with server
+      await queryClient.refetchQueries({ queryKey: medicalImagesQueryKey });
+
+      if (variables.fieldName === "status") {
+        setStatusUpdateSuccessModal(variables.value);
+      }
 
       // Invalidate all related queries to refresh data across the app
       await queryClient.invalidateQueries({
@@ -982,30 +1022,29 @@ export default function ImagingPage() {
         });
       }
 
-      // Create appropriate success message based on field type
-      let title = "Record Updated";
-      let description = "";
+      // Toast for non-status updates (status shows modal instead)
+      if (variables.fieldName !== "status") {
+        let title = "Record Updated";
+        let description = "";
 
-      if (variables.fieldName === "scheduledAt") {
-        title = "Scheduled Date Updated";
-        description = "Scheduled date has been successfully updated.";
-      } else if (variables.fieldName === "performedAt") {
-        title = "Performed Date Updated";
-        description = "Performed date has been successfully updated.";
-      } else if (variables.fieldName === "status") {
-        title = "Status Updated";
-        description = "Status has been successfully updated.";
-      } else if (variables.fieldName === "priority") {
-        title = "Priority Updated";
-        description = "Priority has been successfully updated.";
-      } else {
-        description = `${variables.fieldName.charAt(0).toUpperCase() + variables.fieldName.slice(1)} has been successfully updated.`;
+        if (variables.fieldName === "scheduledAt") {
+          title = "Scheduled Date Updated";
+          description = "Scheduled date has been successfully updated.";
+        } else if (variables.fieldName === "performedAt") {
+          title = "Performed Date Updated";
+          description = "Performed date has been successfully updated.";
+        } else if (variables.fieldName === "priority") {
+          title = "Priority Updated";
+          description = "Priority has been successfully updated.";
+        } else {
+          description = `${variables.fieldName.charAt(0).toUpperCase() + variables.fieldName.slice(1)} has been successfully updated.`;
+        }
+
+        toast({
+          title,
+          description,
+        });
       }
-
-      toast({
-        title,
-        description,
-      });
     },
     onSettled: (data, error, variables) => {
       // Clear saving state
@@ -1612,7 +1651,7 @@ export default function ImagingPage() {
       const result = await response.json();
       console.log('📷 CLIENT: Medical imaging order created successfully:', result);
 
-      // Store order data for invoice
+      // Store order data for invoice (or for summary when unpaid)
       setUploadedImageData({
         ...uploadFormData,
         selectedPatient,
@@ -1621,7 +1660,26 @@ export default function ImagingPage() {
         uploadResult: result,
       });
 
-      // Close upload dialog and open invoice dialog
+      // For admin/doctor/nurse: skip Create New Invoice, show Summary with Pay status unpaid (like lab-results)
+      if (user?.role === 'admin' || user?.role === 'doctor' || user?.role === 'nurse') {
+        setShowUploadDialog(false);
+        setSummaryData({
+          ...uploadFormData,
+          selectedPatient,
+          uploadedFiles: [],
+          totalSizeMB: '0',
+          uploadResult: result,
+          paymentStatus: 'unpaid',
+        });
+        setShowSummaryDialog(true);
+        toast({
+          title: "Order Created",
+          description: "Imaging order created successfully. Pay status: Unpaid.",
+        });
+        return;
+      }
+
+      // Close upload dialog and open invoice dialog (other roles)
       setShowUploadDialog(false);
       
       // Fetch pricing from imaging_pricing table based on selected study type
@@ -3781,7 +3839,8 @@ export default function ImagingPage() {
                             className={`hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${activeTab === "imaging-results" ? "cursor-pointer" : ""}`}
                             data-testid={`row-imaging-${study.id}`}
                             onClick={activeTab === "imaging-results" ? (e) => {
-                              if ((e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("a") || (e.target as HTMLElement).closest('input')) return;
+                              const el = e.target as HTMLElement;
+                              if (el.closest("button") || el.closest("a") || el.closest('input') || el.closest("[data-actions-cell]")) return;
                               setSelectedStudyId(study.id);
                               openPreviewFromRadiologyImages(Number(study.id));
                             } : undefined}
@@ -4376,63 +4435,18 @@ export default function ImagingPage() {
                               </Badge>
                             </td>
                             <td className="px-1 py-1.5 text-[11px] min-w-0">
-                              {selectedStudyId === study.id && editModes.status ? (
-                                <div className="flex flex-col gap-1 w-full min-w-0">
-                                  <Select
-                                    value={editingStatus}
-                                    onValueChange={setEditingStatus}
-                                  >
-                                    <SelectTrigger className="w-full h-6 text-[10px]">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="ordered">Ordered</SelectItem>
-                                      <SelectItem value="scheduled">Scheduled</SelectItem>
-                                      <SelectItem value="in_progress">In Progress</SelectItem>
-                                      <SelectItem value="completed">Completed</SelectItem>
-                                      <SelectItem value="final">Final</SelectItem>
-                                      <SelectItem value="preliminary">Preliminary</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                  <div className="flex items-center gap-1 justify-center">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleFieldSave("status")}
-                                      disabled={saving.status}
-                                      className="h-5 w-5 p-0 flex-shrink-0"
-                                      title="Save"
-                                      data-testid="button-save-status"
-                                    >
-                                      <Check className="h-2.5 w-2.5" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleFieldCancel("status")}
-                                      disabled={saving.status}
-                                      className="h-5 w-5 p-0 flex-shrink-0"
-                                      title="Cancel"
-                                      data-testid="button-cancel-status"
-                                    >
-                                      <X className="h-2.5 w-2.5" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <Badge className={`${getStatusColor(study.status)} text-[10px] px-1 py-0.5 flex-shrink`}>
-                                  {study.status}
-                                </Badge>
-                              )}
+                              <Badge className={`${getStatusColor(study.status)} text-[10px] px-1 py-0.5 flex-shrink`}>
+                                {study.status}
+                              </Badge>
                             </td>
                             <td className="px-1 py-1.5 text-[11px] min-w-0 w-[1.5rem] shrink-0 text-center">
-                              {selectedStudyId !== study.id && user?.role !== 'patient' && activeTab !== "order-study" && (
+                              {user?.role !== 'patient' && activeTab !== "order-study" && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => {
-                                    setSelectedStudyId(study.id);
-                                    handleFieldEdit("status");
+                                    setEditStatusDialog({ studyId: study.id, status: study.status });
+                                    setEditStatusDraft(study.status);
                                   }}
                                   className="h-4 w-4 p-0 flex-shrink-0 hover:bg-gray-100 dark:hover:bg-gray-800 inline-flex items-center justify-center"
                                   title="Edit Status"
@@ -4483,149 +4497,98 @@ export default function ImagingPage() {
                                 )}
                               </div>
                             </td>
-                            <td className="px-1 py-1.5 text-[11px] min-w-0">
+                            <td className="px-1 py-1.5 text-[11px] min-w-0" data-actions-cell>
                               <div className="flex items-center gap-0.5 justify-center flex-shrink-0 flex-wrap">
-                                {user?.role !== 'patient' && (
+                                {activeTab === "imaging-results" && user?.role !== 'patient' ? (
+                                  <DropdownMenu open={openActionsStudyId === study.id} onOpenChange={(open) => setOpenActionsStudyId(open ? study.id : null)}>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-5 w-5 p-0"
+                                        data-testid={`button-actions-kebab-${study.id}`}
+                                        title="Actions"
+                                      >
+                                        <MoreVertical className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" side="left" className="min-w-[10rem]" onClick={() => setOpenActionsStudyId(null)}>
+                                      <DropdownMenuItem onClick={() => { setSelectedStudyDetails(study); setShowDetailsDialog(true); }} data-testid={`menuitem-details-${study.id}`}>
+                                        <Eye className="h-4 w-4 mr-2" />
+                                        View Details
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => viewPDFReportInDialog(study)} data-testid={`menuitem-view-pdf-${study.id}`}>
+                                        <FileText className="h-4 w-4 mr-2" />
+                                        View PDF Report
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleViewStudy(study, true)} data-testid={`menuitem-edit-${study.id}`}>
+                                        <Edit className="h-4 w-4 mr-2" />
+                                        Edit
+                                      </DropdownMenuItem>
+                                      {canDelete('medical_imaging') && (
+                                        <DropdownMenuItem
+                                          onClick={() => { setStudyToDelete(study); setShowDeleteDialog(true); }}
+                                          className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
+                                          data-testid={`menuitem-delete-${study.id}`}
+                                        >
+                                          <Trash2 className="h-4 w-4 mr-2" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                ) : user?.role !== 'patient' && (
                                   <>
                                     {activeTab === "order-study" ? (
                                       <>
-                                        {/* Save icon - always show, function handles signature check */}
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => handleGenerateImagePrescription(study.id)}
-                                            className="h-5 w-5 p-0"
-                                            data-testid={`button-save-prescription-${study.id}`}
-                                            title="Save/Generate Prescription"
-                                          >
-                                            <Save className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
-                                          </Button>
-                                        {/* E-Sign icon for Order Study tab */}
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => handleESignClick(study.id)}
-                                          className="h-5 w-5 p-0"
-                                          data-testid={`button-esign-${study.id}`}
-                                          title="Electronic Signature"
-                                        >
+                                        <Button variant="ghost" size="sm" onClick={() => handleGenerateImagePrescription(study.id)} className="h-5 w-5 p-0" data-testid={`button-save-prescription-${study.id}`} title="Save/Generate Prescription">
+                                          <Save className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
+                                        </Button>
+                                        <Button variant="ghost" size="sm" onClick={() => handleESignClick(study.id)} className="h-5 w-5 p-0" data-testid={`button-esign-${study.id}`} title="Electronic Signature">
                                           <PenTool className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                         </Button>
                                       </>
                                     ) : (
                                       <>
-                                        {/* Hide Eye icon in Generate Report tab - it's in View/Download column */}
                                         {activeTab !== 'generate-report' && (
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => {
-                                            if (activeTab === 'imaging-results') {
-                                              // For Imaging Results tab, open PDF in list view dialog
-                                              viewPDFReportInDialog(study);
-                                            } else {
-                                              // For other tabs, use the regular view study handler
-                                              handleViewStudy(study);
-                                            }
-                                          }}
-                                            className="h-5 w-5 p-0"
-                                          data-testid={`button-view-${study.id}`}
-                                          title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}
-                                        >
+                                        <Button variant="ghost" size="sm" onClick={() => activeTab === 'imaging-results' ? viewPDFReportInDialog(study) : handleViewStudy(study)} className="h-5 w-5 p-0" data-testid={`button-view-${study.id}`} title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}>
                                             <Eye className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                         </Button>
                                         )}
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => handleViewStudy(study, activeTab === "imaging-results")}
-                                          className="h-5 w-5 p-0"
-                                          data-testid={`button-edit-${study.id}`}
-                                          title={activeTab === "imaging-results" ? "Edit Study / Edit Generated Report" : "Edit Study"}
-                                        >
+                                        <Button variant="ghost" size="sm" onClick={() => handleViewStudy(study, activeTab === "imaging-results")} className="h-5 w-5 p-0" data-testid={`button-edit-${study.id}`} title={activeTab === "imaging-results" ? "Edit Study / Edit Generated Report" : "Edit Study"}>
                                           <Edit className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                         </Button>
                                       </>
                                     )}
-                                    {/* Save icon - only in Generate Report tab */}
                                     {activeTab === 'generate-report' && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleGenerateReport(study.id)}
-                                        className="h-5 w-5 p-0"
-                                        data-testid={`button-save-report-${study.id}`}
-                                        title="Save/Generate Report"
-                                      >
+                                      <Button variant="ghost" size="sm" onClick={() => handleGenerateReport(study.id)} className="h-5 w-5 p-0" data-testid={`button-save-report-${study.id}`} title="Save/Generate Report">
                                         <Save className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
                                       </Button>
                                     )}
-                                    {/* E-Sign icon - hide from Generate Report, Imaging Results, and Order Study tabs (Order Study has its own e-sign icon) */}
                                     {activeTab !== 'generate-report' && activeTab !== 'imaging-results' && activeTab !== 'order-study' && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleESignClick(study.id)}
-                                        className="h-5 w-5 p-0"
-                                        data-testid={`button-esign-${study.id}`}
-                                        title="Electronic Signature"
-                                      >
+                                      <Button variant="ghost" size="sm" onClick={() => handleESignClick(study.id)} className="h-5 w-5 p-0" data-testid={`button-esign-${study.id}`} title="Electronic Signature">
                                         <PenTool className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                       </Button>
                                     )}
                                     {canDelete('medical_imaging') && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                          setStudyToDelete(study);
-                                          setShowDeleteDialog(true);
-                                        }}
-                                        className="h-5 w-5 p-0"
-                                        data-testid={`button-delete-${study.id}`}
-                                      >
+                                      <Button variant="ghost" size="sm" onClick={() => { setStudyToDelete(study); setShowDeleteDialog(true); }} className="h-5 w-5 p-0" data-testid={`button-delete-${study.id}`}>
                                         <Trash2 className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
                                       </Button>
                                     )}
                                     {activeTab === "imaging-results" && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                          setSelectedStudyDetails(study);
-                                          setShowDetailsDialog(true);
-                                        }}
-                                        className="h-5 w-5 p-0"
-                                        data-testid={`button-details-${study.id}`}
-                                        title="View Details"
-                                      >
+                                      <Button variant="ghost" size="sm" onClick={() => { setSelectedStudyDetails(study); setShowDetailsDialog(true); }} className="h-5 w-5 p-0" data-testid={`button-details-${study.id}`} title="View Details">
                                         <MoreVertical className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                       </Button>
                                     )}
                                   </>
                                 )}
-                                {/* Share icon hidden for Imaging Results tab, Download icon for other tabs */}
-                                {activeTab === "imaging-results" ? null : activeTab !== "order-study" ? (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDownloadStudy(study.id)}
-                                    className="h-5 w-5 p-0"
-                                    data-testid={`button-download-${study.id}`}
-                                  >
+                                {activeTab === "imaging-results" ? null : activeTab !== "order-study" && user?.role !== 'patient' ? (
+                                  <Button variant="ghost" size="sm" onClick={() => handleDownloadStudy(study.id)} className="h-5 w-5 p-0" data-testid={`button-download-${study.id}`}>
                                     <Download className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                   </Button>
                                 ) : null}
-                                {/* Blue save icon - hidden as requested */}
                                 {false && activeTab === "order-study" && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleGenerateImagePrescription(study.id)}
-                                    className="h-5 w-5 p-0"
-                                    data-testid={`button-image-prescription-${study.id}`}
-                                    title="Generate Image Prescription"
-                                  >
+                                  <Button variant="ghost" size="sm" onClick={() => handleGenerateImagePrescription(study.id)} className="h-5 w-5 p-0" data-testid={`button-image-prescription-${study.id}`} title="Generate Image Prescription">
                                     <Save className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
                                   </Button>
                                 )}
@@ -4671,76 +4634,26 @@ export default function ImagingPage() {
                             {study.patientName}
                           </h5>
                         </div>
-                        {/* Status Badge - Editable */}
-                        {selectedStudyId === study.id && editModes.status ? (
-                          <div className="flex items-center gap-2">
-                            <Select
-                              value={editingStatus}
-                              onValueChange={setEditingStatus}
-                            >
-                              <SelectTrigger className="w-32 h-8">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="ordered">Ordered</SelectItem>
-                                <SelectItem value="scheduled">
-                                  Scheduled
-                                </SelectItem>
-                                <SelectItem value="in_progress">
-                                  In Progress
-                                </SelectItem>
-                                <SelectItem value="completed">
-                                  Completed
-                                </SelectItem>
-                                <SelectItem value="final">Final</SelectItem>
-                                <SelectItem value="preliminary">
-                                  Preliminary
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
+                        {/* Status Badge - Editable via popup */}
+                        <div className="flex items-center gap-2">
+                          <Badge className={getStatusColor(study.status)}>
+                            {study.status}
+                          </Badge>
+                          {user?.role !== 'patient' && activeTab !== "order-study" && (
                             <Button
-                              variant="outline"
+                              variant="ghost"
                               size="sm"
-                              onClick={() => handleFieldSave("status")}
-                              disabled={saving.status}
-                              className="h-8 px-2 text-xs"
-                              data-testid="button-save-status-header"
+                              onClick={() => {
+                                setEditStatusDialog({ studyId: study.id, status: study.status });
+                                setEditStatusDraft(study.status);
+                              }}
+                              className="h-6 w-6 p-0 hover:bg-gray-100 dark:hover:bg-slate-600"
+                              data-testid="button-edit-status-header"
                             >
-                              {saving.status ? "..." : "Save"}
+                              <Edit className="h-3 w-3 text-gray-400" />
                             </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleFieldCancel("status")}
-                              disabled={saving.status}
-                              className="h-8 px-2 text-xs"
-                              data-testid="button-cancel-status-header"
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <Badge className={getStatusColor(study.status)}>
-                              {study.status}
-                            </Badge>
-                            {/* Hide Status Edit icon for patient role and Order Study tab */}
-                            {user?.role !== 'patient' && activeTab !== "order-study" && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedStudyId(study.id);
-                                  handleFieldEdit("status");
-                                }}
-                                className="h-6 w-6 p-0 hover:bg-gray-100 dark:hover:bg-slate-600"
-                                data-testid="button-edit-status-header"
-                              >
-                                <Edit className="h-3 w-3 text-gray-400" />
-                              </Button>
-                            )}
-                          </div>
-                        )}
+                          )}
+                        </div>
                         {/* Priority Badge - Editable */}
                         {selectedStudyId === study.id && editModes.priority ? (
                           <div className="flex items-center gap-2">
@@ -5438,65 +5351,71 @@ export default function ImagingPage() {
                     </div>
 
                     <div className="flex items-center gap-2 justify-center flex-wrap">
-                      {/* Show blue Eye icon for Order Study tab, regular Eye and Edit for others */}
-                      {user?.role !== 'patient' && (
+                      {/* Imaging Results tab: single kebab dropdown for all actions */}
+                      {activeTab === "imaging-results" && user?.role !== 'patient' && (
+                        <DropdownMenu open={openActionsStudyId === study.id} onOpenChange={(open) => setOpenActionsStudyId(open ? study.id : null)}>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 w-8 p-0 border-gray-200 text-gray-600 hover:bg-gray-50"
+                              data-testid={`button-actions-kebab-card-${study.id}`}
+                              title="Actions"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[10rem]" onClick={() => setOpenActionsStudyId(null)}>
+                            <DropdownMenuItem onClick={() => { setSelectedStudyDetails(study); setShowDetailsDialog(true); }} data-testid={`menuitem-details-card-${study.id}`}>
+                              <Eye className="h-4 w-4 mr-2" />
+                              View Details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => viewPDFReportInDialog(study)} data-testid={`menuitem-view-pdf-card-${study.id}`}>
+                              <FileText className="h-4 w-4 mr-2" />
+                              View PDF Report
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleViewStudy(study, true)} data-testid={`menuitem-edit-card-${study.id}`}>
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleShareStudy(study, 'report')} data-testid={`menuitem-share-card-${study.id}`}>
+                              <Share2 className="h-4 w-4 mr-2" />
+                              Share Report
+                            </DropdownMenuItem>
+                            {canDelete('medical_imaging') && (
+                              <DropdownMenuItem
+                                onClick={() => { setStudyToDelete(study); setShowDeleteDialog(true); }}
+                                className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
+                                data-testid={`menuitem-delete-card-${study.id}`}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+
+                      {/* Non-Imaging-Results: Show blue Eye icon for Order Study tab, regular Eye and Edit for others */}
+                      {activeTab !== "imaging-results" && user?.role !== 'patient' && (
                         <>
                           {activeTab === "order-study" ? (
                             <>
-                              {/* Save icon - always show, function handles signature check */}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleGenerateImagePrescription(study.id)}
-                                className="border-green-200 text-green-600 hover:bg-green-50 hover:border-green-300"
-                                data-testid={`button-save-prescription-card-${study.id}`}
-                                title="Save/Generate Prescription"
-                              >
+                              <Button variant="outline" size="sm" onClick={() => handleGenerateImagePrescription(study.id)} className="border-green-200 text-green-600 hover:bg-green-50 hover:border-green-300" data-testid={`button-save-prescription-card-${study.id}`} title="Save/Generate Prescription">
                                 <Save className="h-4 w-4" />
                               </Button>
-                              {/* E-Sign icon for Order Study tab */}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleESignClick(study.id)}
-                                className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
-                                data-testid={`button-esign-card-${study.id}`}
-                                title="Electronic Signature"
-                              >
+                              <Button variant="outline" size="sm" onClick={() => handleESignClick(study.id)} className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300" data-testid={`button-esign-card-${study.id}`} title="Electronic Signature">
                                 <PenTool className="h-4 w-4" />
                               </Button>
                             </>
                           ) : (
                             <>
-                              {/* Hide Eye icon in Generate Report tab - it's in View/Download column */}
                               {activeTab !== 'generate-report' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (activeTab === 'imaging-results') {
-                                      // For Imaging Results tab, open PDF in list view dialog
-                                      viewPDFReportInDialog(study);
-                                    } else {
-                                      // For other tabs, use the regular view study handler
-                                      handleViewStudy(study);
-                                    }
-                                  }}
-                                  className={activeTab === 'imaging-results' ? "border-gray-200 text-gray-600 hover:bg-gray-50" : ""}
-                                  data-testid={`button-view-card-${study.id}`}
-                                  title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}
-                                >
+                                <Button variant="outline" size="sm" onClick={() => activeTab === 'imaging-results' ? viewPDFReportInDialog(study) : handleViewStudy(study)} className={activeTab === 'imaging-results' ? "border-gray-200 text-gray-600 hover:bg-gray-50" : ""} data-testid={`button-view-card-${study.id}`} title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}>
                                   <Eye className={`h-4 w-4 ${activeTab === 'imaging-results' ? "text-gray-600 dark:text-gray-400" : ""}`} />
                                 </Button>
                               )}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleViewStudy(study, activeTab === "imaging-results")}
-                                className={activeTab === 'imaging-results' ? "border-gray-200 text-gray-600 hover:bg-gray-50" : ""}
-                                data-testid={`button-edit-card-${study.id}`}
-                                title={activeTab === "imaging-results" ? "Edit Study / Edit Generated Report" : "Edit Study"}
-                              >
+                              <Button variant="outline" size="sm" onClick={() => handleViewStudy(study, activeTab === "imaging-results")} className={activeTab === 'imaging-results' ? "border-gray-200 text-gray-600 hover:bg-gray-50" : ""} data-testid={`button-edit-card-${study.id}`} title={activeTab === "imaging-results" ? "Edit Study / Edit Generated Report" : "Edit Study"}>
                                 <Edit className={`h-4 w-4 ${activeTab === 'imaging-results' ? "text-gray-600 dark:text-gray-400" : ""}`} />
                               </Button>
                             </>
@@ -5506,65 +5425,27 @@ export default function ImagingPage() {
 
                       {/* Save icon - only in Generate Report tab */}
                       {user?.role !== 'patient' && activeTab === 'generate-report' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleGenerateReport(study.id)}
-                          className="border-yellow-200 text-yellow-600 hover:bg-yellow-50 hover:border-yellow-300"
-                          data-testid={`button-save-report-card-${study.id}`}
-                          title="Save/Generate Report"
-                        >
+                        <Button variant="outline" size="sm" onClick={() => handleGenerateReport(study.id)} className="border-yellow-200 text-yellow-600 hover:bg-yellow-50 hover:border-yellow-300" data-testid={`button-save-report-card-${study.id}`} title="Save/Generate Report">
                           <Save className="h-4 w-4" />
                         </Button>
                       )}
 
-                      {/* E-Sign icon - hide from Generate Report, Imaging Results, and Order Study tabs (Order Study has its own e-sign icon) */}
+                      {/* E-Sign icon - hide from Generate Report, Imaging Results, and Order Study tabs */}
                       {user?.role !== 'patient' && activeTab !== 'generate-report' && activeTab !== 'imaging-results' && activeTab !== 'order-study' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleESignClick(study.id)}
-                          className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
-                          data-testid={`button-esign-card-${study.id}`}
-                          title="Electronic Signature"
-                        >
+                        <Button variant="outline" size="sm" onClick={() => handleESignClick(study.id)} className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300" data-testid={`button-esign-card-${study.id}`} title="Electronic Signature">
                           <PenTool className="h-4 w-4" />
-                        </Button>
-                      )}
-
-                      {/* MoreVertical icon (Details) - for imaging-results tab */}
-                      {user?.role !== 'patient' && activeTab === "imaging-results" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedStudyDetails(study);
-                            setShowDetailsDialog(true);
-                          }}
-                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
-                          data-testid={`button-details-card-${study.id}`}
-                          title="View Details"
-                        >
-                          <MoreVertical className="h-4 w-4" />
                         </Button>
                       )}
 
                       {/* Download icon - hidden for Imaging Results tab and Order Study tab */}
                       {user?.role !== 'patient' && activeTab !== "imaging-results" && activeTab !== "order-study" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleDownloadStudy(study.id)}
-                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
-                          data-testid={`button-download-card-${study.id}`}
-                          title="Download Study"
-                        >
+                        <Button variant="outline" size="sm" onClick={() => handleDownloadStudy(study.id)} className="border-gray-200 text-gray-600 hover:bg-gray-50" data-testid={`button-download-card-${study.id}`} title="Download Study">
                           <Download className="h-4 w-4" />
                         </Button>
                       )}
 
-                      {/* PDF Report Download and View Icons - Hide Eye icon for Generate Report tab */}
-                      {study.reportFileName && activeTab !== 'generate-report' && (
+                      {/* PDF Report Download and View Icons - Hide for Imaging Results (in dropdown); show for other tabs when report exists */}
+                      {study.reportFileName && activeTab !== 'generate-report' && activeTab !== 'imaging-results' && (
                         <>
                           <Button
                             variant="outline"
@@ -5658,16 +5539,9 @@ export default function ImagingPage() {
                         </Button>
                       )}
                       
-                      {/* Share icon (Share2) - only in Imaging Results tab */}
-                      {user?.role !== 'patient' && activeTab === 'imaging-results' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleShareStudy(study, 'report')}
-                          title="Share Imaging Report"
-                          data-testid="button-share-report-card"
-                          className="border-gray-200 text-gray-600 hover:bg-gray-50"
-                        >
+                      {/* Share icon (Share2) - only in Imaging Results tab when not using kebab dropdown (handled in dropdown above) */}
+                      {false && user?.role !== 'patient' && activeTab === 'imaging-results' && (
+                        <Button variant="outline" size="sm" onClick={() => handleShareStudy(study, 'report')} title="Share Imaging Report" data-testid="button-share-report-card" className="border-gray-200 text-gray-600 hover:bg-gray-50">
                           <Share2 className="h-4 w-4" />
                         </Button>
                       )}
@@ -5685,8 +5559,8 @@ export default function ImagingPage() {
                         </Button>
                       )}
                       
-                      {/* Hide Delete icon for patient role */}
-                      {user?.role !== 'patient' && canDelete('medical_imaging') && (
+                      {/* Delete icon - hidden for Imaging Results tab (in kebab dropdown) */}
+                      {user?.role !== 'patient' && canDelete('medical_imaging') && activeTab !== 'imaging-results' && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -5694,11 +5568,11 @@ export default function ImagingPage() {
                             setStudyToDelete(study);
                             setShowDeleteDialog(true);
                           }}
-                          className={`border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 ${activeTab === 'imaging-results' ? "h-5 w-5 p-0" : ""}`}
+                          className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
                           data-testid={`button-delete-card-${study.id}`}
                           title="Delete Study"
                         >
-                          <Trash2 className={`h-4 w-4 ${activeTab === 'imaging-results' ? "h-2.5 w-2.5" : ""}`} />
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       )}
                     </div>
@@ -8836,12 +8710,12 @@ export default function ImagingPage() {
 
       {/* Summary Dialog */}
       <Dialog open={showSummaryDialog} onOpenChange={setShowSummaryDialog}>
-        <DialogContent className="max-w-2xl h-[750px]">
+        <DialogContent className="max-w-2xl h-[440px] flex flex-col">
           <DialogHeader>
             <DialogTitle>Summary</DialogTitle>
           </DialogHeader>
           {summaryData && (
-            <div className="space-y-4 max-h-[700px] h-[700px] overflow-y-auto pr-2">
+            <div className="space-y-4 flex-1 min-h-0 overflow-y-auto pr-2">
               <div className="border rounded-lg p-4">
                 <h5 className="font-semibold mb-3">Imaging Details</h5>
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -8859,11 +8733,18 @@ export default function ImagingPage() {
                   </div>
                   <div>
                     <span className="text-gray-600">Images Uploaded:</span>
-                    <p className="font-medium">{summaryData.uploadedFiles?.length} ({summaryData.totalSizeMB} MB)</p>
+                    <p className="font-medium">{summaryData.uploadedFiles?.length ?? 0} ({summaryData.totalSizeMB ?? '0'} MB)</p>
                   </div>
                 </div>
               </div>
 
+              {summaryData.paymentStatus === 'unpaid' ? (
+                <div className="border rounded-lg p-4 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800">
+                  <h5 className="font-semibold mb-2">Payment Status</h5>
+                  <p className="text-amber-800 dark:text-amber-200 font-medium">Unpaid</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">No invoice created. Payment can be collected later.</p>
+                </div>
+              ) : (
               <div className="border rounded-lg p-4">
                 <h5 className="font-semibold mb-3">Invoice Details</h5>
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -8923,8 +8804,23 @@ export default function ImagingPage() {
                   )}
                 </div>
               </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-4">
+                {summaryData.paymentStatus === 'unpaid' ? (
+                  <Button
+                    onClick={() => {
+                      setSummaryData(null);
+                      setShowSummaryDialog(false);
+                      refetchImages();
+                      setShowSummarySuccessModal(true);
+                    }}
+                    className="bg-medical-blue hover:bg-blue-700"
+                  >
+                    Create Image
+                  </Button>
+                ) : (
+                  <>
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -9107,9 +9003,34 @@ export default function ImagingPage() {
                 >
                   Confirm
                 </Button>
+                  </>
+                )}
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Summary success popup (green tick) */}
+      <Dialog open={showSummarySuccessModal} onOpenChange={setShowSummarySuccessModal}>
+        <DialogContent className="max-w-sm">
+          <div className="flex flex-col items-center gap-4 py-4">
+            <div className="rounded-full bg-green-100 dark:bg-green-900/30 p-4">
+              <CheckCircle className="h-12 w-12 text-green-600 dark:text-green-400" />
+            </div>
+            <div className="text-center space-y-1">
+              <DialogTitle className="text-lg font-semibold">Success</DialogTitle>
+              <p className="text-sm text-muted-foreground">
+                Imaging order created successfully.
+              </p>
+            </div>
+            <Button
+              onClick={() => setShowSummarySuccessModal(false)}
+              className="w-full bg-green-600 hover:bg-green-700"
+            >
+              OK
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -9892,6 +9813,73 @@ export default function ImagingPage() {
               className="bg-medical-blue hover:bg-blue-700"
             >
               Ready to Sign
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Status Dialog - Imaging Results tab */}
+      <Dialog open={!!editStatusDialog} onOpenChange={(open) => !open && setEditStatusDialog(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit Status</DialogTitle>
+            <DialogDescription>Change the status for this imaging study.</DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="edit-imaging-status-select" className="text-sm font-medium">Status</Label>
+            <Select value={editStatusDraft} onValueChange={setEditStatusDraft}>
+              <SelectTrigger id="edit-imaging-status-select" className="mt-2 w-full">
+                <SelectValue placeholder="Select status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ordered">Ordered</SelectItem>
+                <SelectItem value="scheduled">Scheduled</SelectItem>
+                <SelectItem value="in_progress">In Progress</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="final">Final</SelectItem>
+                <SelectItem value="preliminary">Preliminary</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditStatusDialog(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (editStatusDialog) {
+                  updateDateMutation.mutate({
+                    studyId: editStatusDialog.studyId,
+                    fieldName: "status",
+                    value: editStatusDraft,
+                  });
+                }
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Status updated success modal */}
+      <Dialog open={!!statusUpdateSuccessModal} onOpenChange={(open) => !open && setStatusUpdateSuccessModal(null)}>
+        <DialogContent className="max-w-sm">
+          <div className="flex flex-col items-center gap-4 py-4">
+            <div className="rounded-full bg-green-100 dark:bg-green-900/30 p-4">
+              <CheckCircle className="h-12 w-12 text-green-600 dark:text-green-400" />
+            </div>
+            <div className="text-center space-y-1">
+              <DialogTitle className="text-lg font-semibold">Status updated</DialogTitle>
+              <p className="text-sm text-muted-foreground capitalize">
+                {statusUpdateSuccessModal?.replace(/_/g, " ")}
+              </p>
+            </div>
+            <Button
+              onClick={() => setStatusUpdateSuccessModal(null)}
+              className="w-full bg-green-600 hover:bg-green-700"
+            >
+              OK
             </Button>
           </div>
         </DialogContent>

@@ -3510,16 +3510,31 @@ The Cura EMR Team`,
     }
   });
 
+  app.get("/api/gdpr/data-requests", requireRole(["admin", "patient"]), async (req: TenantRequest, res) => {
+    try {
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setFullYear(startDate.getFullYear() - 1);
+      const requests = await storage.getGdprDataRequestsByPeriod(req.tenant!.id, startDate, endDate);
+      res.json(requests);
+    } catch (error) {
+      console.error("GDPR data requests list error:", error);
+      res.status(500).json({ error: "Failed to fetch data requests" });
+    }
+  });
+
   app.post("/api/gdpr/data-request", requireRole(["admin", "patient"]), async (req: TenantRequest, res) => {
     try {
       // Calculate due date (30 days as per GDPR) before validation
       const dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + 30);
       
+      const body = req.body as Record<string, unknown>;
       const requestData = insertGdprDataRequestSchema.parse({
-        ...req.body,
+        ...body,
         organizationId: req.tenant!.id,
-        dueDate
+        dueDate,
+        requestReason: body.requestReason ?? body.description ?? null,
       });
       
       const dataRequest = await gdprComplianceService.submitDataRequest(requestData);
@@ -28262,13 +28277,13 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     }
   });
 
-  // Get doctor-specific invoices with table joins
-  app.get("/api/billing/doctor-invoices", requireRole(["doctor"]), async (req: TenantRequest, res) => {
+  // Get doctor/nurse-specific invoices with table joins (nurse can create invoices; both see their own)
+  app.get("/api/billing/doctor-invoices", requireRole(["doctor", "nurse"]), async (req: TenantRequest, res) => {
     try {
       const doctorUserId = req.user!.id;
       const organizationId = req.tenant!.id;
       
-      console.log(`🩺 Fetching doctor-specific invoices for doctor ID: ${doctorUserId}, organization: ${organizationId}`);
+      console.log(`🩺 Fetching doctor/nurse-specific invoices for user ID: ${doctorUserId}, organization: ${organizationId}`);
       
       // Get the doctor's full name
       const doctor = await db
@@ -28331,11 +28346,19 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         invoice.serviceId && doctorAppointments.some(apt => apt.appointmentId === invoice.serviceId)
       );
       
-      // Overall: All unique invoices that match this doctor
+      // Invoices created by or attributed to this user (doctor_id on invoice)
+      const invDoctorId = (inv: { id: number; doctorId?: number | null; doctor_id?: number | null }) =>
+        inv.doctorId ?? (inv as any).doctor_id ?? null;
+      const invoicesByDoctorId = allInvoices.filter(invoice =>
+        invDoctorId(invoice) === doctorUserId
+      );
+      
+      // Overall: All unique invoices that match this doctor/nurse (by service or by doctor_id)
       const allMatchingIds = new Set([
         ...labInvoices.map(i => i.id),
         ...imagingInvoices.map(i => i.id),
-        ...appointmentInvoices.map(i => i.id)
+        ...appointmentInvoices.map(i => i.id),
+        ...invoicesByDoctorId.map(i => i.id)
       ]);
       
       const overallInvoices = allInvoices.filter(invoice => allMatchingIds.has(invoice.id));

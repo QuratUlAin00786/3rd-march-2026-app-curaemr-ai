@@ -1247,8 +1247,8 @@ export default function AIAgentPage() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
-      <div className="mb-6">
+    <div className="container mx-auto px-3 sm:px-4 py-4 max-w-4xl page-zoom-90">
+      <div className="mb-4">
         <div className="flex items-center gap-3 mb-2">
           <div className="p-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg">
             <Sparkles className="h-6 w-6 text-white" />

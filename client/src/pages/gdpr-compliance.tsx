@@ -64,6 +64,13 @@ interface ComplianceMetrics {
 export default function GDPRCompliance() {
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedPatient, setSelectedPatient] = useState<number | null>(null);
+  const [consentViewPatientId, setConsentViewPatientId] = useState<number | null>(null);
+  const [reportPreviewType, setReportPreviewType] = useState<'monthly' | 'quarterly' | 'annual' | null>(null);
+  const [reportPreviewContent, setReportPreviewContent] = useState<string | null>(null);
+  const [reportPreviewLoading, setReportPreviewLoading] = useState(false);
+  const [erasurePatientId, setErasurePatientId] = useState<number | null>(null);
+  const [erasureReason, setErasureReason] = useState("");
+  const [successModal, setSuccessModal] = useState<{ open: boolean; title: string; description: string }>({ open: false, title: "", description: "" });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -127,12 +134,10 @@ export default function GDPRCompliance() {
   const submitDataRequestMutation = useMutation({
     mutationFn: (data: DataRequestForm) => apiRequest("POST", "/api/gdpr/data-request", data),
     onSuccess: () => {
-      toast({
-        title: "Data Request Submitted",
-        description: "GDPR data request has been successfully submitted.",
-      });
+      setSuccessModal({ open: true, title: "Data Request Submitted", description: "GDPR data request has been successfully submitted." });
       dataRequestForm.reset();
       queryClient.invalidateQueries({ queryKey: ["/api/gdpr"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/gdpr/data-requests"] });
     },
     onError: (error) => {
       toast({
@@ -155,7 +160,7 @@ export default function GDPRCompliance() {
     },
   });
 
-  // Consent status query
+  // Consent status query (for Consent Management tab)
   const { data: consentStatuses = [] } = useQuery<ConsentStatus[]>({
     queryKey: ["/api/gdpr/consent-status", selectedPatient],
     queryFn: async () => {
@@ -163,6 +168,26 @@ export default function GDPRCompliance() {
       return response.json();
     },
     enabled: !!selectedPatient,
+  });
+
+  // Consent status for "View Consent" popup (Patient Data tab)
+  const { data: consentViewStatuses = [], isLoading: consentViewLoading } = useQuery<ConsentStatus[]>({
+    queryKey: ["/api/gdpr/consent-status", consentViewPatientId],
+    queryFn: async () => {
+      if (!consentViewPatientId) return [];
+      const response = await apiRequest("GET", `/api/gdpr/patient/${consentViewPatientId}/consent-status`);
+      return response.json();
+    },
+    enabled: !!consentViewPatientId,
+  });
+
+  // Data requests list (so new Request Erasure / data requests display after submit)
+  const { data: dataRequestsList = [], isLoading: dataRequestsLoading } = useQuery<any[]>({
+    queryKey: ["/api/gdpr/data-requests"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/gdpr/data-requests");
+      return response.json();
+    },
   });
 
   const getStatusBadge = (status: string) => {
@@ -244,6 +269,44 @@ export default function GDPRCompliance() {
     }
   };
 
+  const openReportPreview = async (reportType: 'monthly' | 'quarterly' | 'annual') => {
+    setReportPreviewLoading(true);
+    setReportPreviewType(reportType);
+    setReportPreviewContent(null);
+    try {
+      const reportData = await apiRequest("GET", `/api/gdpr/reports/${reportType}`);
+      const csvContent = generateCSVReport(reportData, reportType);
+      setReportPreviewContent(csvContent);
+    } catch (error) {
+      toast({
+        title: "Report Generation Failed",
+        description: `Failed to load ${reportType} report.`,
+        variant: "destructive",
+      });
+      setReportPreviewType(null);
+    } finally {
+      setReportPreviewLoading(false);
+    }
+  };
+
+  const downloadReportPreview = () => {
+    if (!reportPreviewContent || !reportPreviewType) return;
+    const dataBlob = new Blob([reportPreviewContent], { type: "text/csv" });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `gdpr-${reportPreviewType}-report-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setSuccessModal({
+      open: true,
+      title: "Report Downloaded",
+      description: `${reportPreviewType.charAt(0).toUpperCase() + reportPreviewType.slice(1)} GDPR report has been downloaded.`,
+    });
+  };
+
   const generateCSVReport = (data: any, reportType: string): string => {
     const headers = [
       'Date',
@@ -277,7 +340,7 @@ export default function GDPRCompliance() {
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto p-4 space-y-4 page-zoom-90">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">GDPR Compliance</h1>
@@ -690,6 +753,42 @@ export default function GDPRCompliance() {
               </Form>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent data requests</CardTitle>
+              <CardDescription>Data subject requests including erasure; new entries appear after submission.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {dataRequestsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading requests...</p>
+              ) : !dataRequestsList.length ? (
+                <p className="text-sm text-muted-foreground">No data requests yet. Submit a request above or use Request Erasure in Patient Data.</p>
+              ) : (
+                <div className="space-y-3 max-h-[400px] overflow-auto">
+                  {dataRequestsList.map((req: any) => (
+                    <div key={req.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium capitalize">{req.requestType?.replace(/_/g, " ")}</span>
+                          <Badge variant={req.status === "completed" ? "default" : req.status === "rejected" ? "destructive" : "secondary"}>
+                            {req.status}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          Patient: {patients.find((p: any) => p.id === req.patientId) ? `${(patients.find((p: any) => p.id === req.patientId) as any).firstName} ${(patients.find((p: any) => p.id === req.patientId) as any).lastName}` : `ID ${req.patientId}`}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Requested: {req.requestedAt ? new Date(req.requestedAt).toLocaleString() : "—"} · Due: {req.dueDate ? new Date(req.dueDate).toLocaleDateString() : "—"}
+                        </p>
+                        {req.requestReason && <p className="text-xs text-muted-foreground">{req.requestReason}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="patient-data" className="space-y-6">
@@ -721,42 +820,172 @@ export default function GDPRCompliance() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setSelectedPatient(patient.id)}
+                        onClick={() => setConsentViewPatientId(patient.id)}
                       >
                         <Eye className="h-4 w-4 mr-1" />
                         View Consent
                       </Button>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
-                            <UserX className="h-4 w-4 mr-1" />
-                            Request Erasure
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Request Data Erasure</DialogTitle>
-                            <DialogDescription>
-                              This will initiate the right to be forgotten process for this patient. Medical records may be retained as required by law.
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="space-y-4">
-                            <Textarea placeholder="Reason for data erasure request" />
-                            <div className="flex justify-end space-x-2">
-                              <Button variant="outline">Cancel</Button>
-                              <Button variant="destructive">
-                                Request Erasure
-                              </Button>
-                            </div>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700"
+                        onClick={() => {
+                          setErasurePatientId(patient.id);
+                          setErasureReason("");
+                        }}
+                      >
+                        <UserX className="h-4 w-4 mr-1" />
+                        Request Erasure
+                      </Button>
                     </div>
                   </div>
                 ))}
               </div>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent data requests</CardTitle>
+              <CardDescription>Erasure and other data requests; new entries appear here after you submit.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {dataRequestsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading requests...</p>
+              ) : !dataRequestsList.length ? (
+                <p className="text-sm text-muted-foreground">No data requests yet. Use Request Erasure above to add one.</p>
+              ) : (
+                <div className="space-y-3 max-h-[300px] overflow-auto">
+                  {dataRequestsList.map((req: any) => (
+                    <div key={req.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium capitalize">{req.requestType?.replace(/_/g, " ")}</span>
+                          <Badge variant={req.status === "completed" ? "default" : req.status === "rejected" ? "destructive" : "secondary"}>{req.status}</Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          Patient: {patients.find((p: any) => p.id === req.patientId) ? `${(patients.find((p: any) => p.id === req.patientId) as any).firstName} ${(patients.find((p: any) => p.id === req.patientId) as any).lastName}` : `ID ${req.patientId}`}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Requested: {req.requestedAt ? new Date(req.requestedAt).toLocaleString() : "—"}
+                        </p>
+                        {(req.requestReason || (req as any).description) && <p className="text-xs text-muted-foreground truncate max-w-md">{(req.requestReason || (req as any).description)}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* View Consent popup */}
+          <Dialog open={!!consentViewPatientId} onOpenChange={(open) => !open && setConsentViewPatientId(null)}>
+            <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Patient Consent</DialogTitle>
+                <DialogDescription>
+                  {consentViewPatientId && (() => {
+                    const p = patients.find((x: any) => x.id === consentViewPatientId);
+                    return p ? `${p.firstName} ${p.lastName} (${p.email})` : "Patient consent records";
+                  })()}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 pt-2">
+                {consentViewLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading consent...</p>
+                ) : !Array.isArray(consentViewStatuses) || consentViewStatuses.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No consent records found for this patient.</p>
+                ) : (
+                  consentViewStatuses.map((consent) => (
+                    <div key={consent.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium capitalize">{consent.consentType.replace(/_/g, " ")}</span>
+                          {getStatusBadge(consent.status)}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{consent.purpose}</p>
+                        {consent.legalBasis && (
+                          <p className="text-xs text-muted-foreground">Legal basis: {consent.legalBasis}</p>
+                        )}
+                        {consent.grantedAt && (
+                          <p className="text-xs text-muted-foreground">
+                            Granted: {new Date(consent.grantedAt).toLocaleDateString()}
+                          </p>
+                        )}
+                        {consent.withdrawnAt && (
+                          <p className="text-xs text-muted-foreground">
+                            Withdrawn: {new Date(consent.withdrawnAt).toLocaleDateString()}
+                          </p>
+                        )}
+                        {consent.expiresAt && (
+                          <p className="text-xs text-muted-foreground">
+                            Expires: {new Date(consent.expiresAt).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Request Data Erasure popup */}
+          <Dialog open={!!erasurePatientId} onOpenChange={(open) => !open && (setErasurePatientId(null), setErasureReason(""))}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Request Data Erasure</DialogTitle>
+                <DialogDescription>
+                  This will initiate the right to be forgotten process for this patient. Medical records may be retained as required by law.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Reason for data erasure request *</label>
+                  <Textarea
+                    placeholder="Enter reason for data erasure request"
+                    value={erasureReason}
+                    onChange={(e) => setErasureReason(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setErasurePatientId(null);
+                      setErasureReason("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={!erasureReason.trim() || submitDataRequestMutation.isPending}
+                    onClick={async () => {
+                      if (!erasurePatientId || !erasureReason.trim()) return;
+                      const patient = patients.find((p: any) => p.id === erasurePatientId);
+                      try {
+                        await submitDataRequestMutation.mutateAsync({
+                          patientId: erasurePatientId,
+                          requestType: "erasure",
+                          description: erasureReason.trim(),
+                          contactMethod: "email",
+                          contactDetails: patient?.email || "N/A",
+                        });
+                        setErasurePatientId(null);
+                        setErasureReason("");
+                      } catch {
+                        // Error toast handled by mutation onError
+                      }
+                    }}
+                  >
+                    {submitDataRequestMutation.isPending ? "Submitting..." : "Request Erasure"}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="reports" className="space-y-6">
@@ -770,7 +999,7 @@ export default function GDPRCompliance() {
                 <Button 
                   variant="outline" 
                   className="h-24 flex-col space-y-2"
-                  onClick={() => generateReport('monthly')}
+                  onClick={() => openReportPreview('monthly')}
                 >
                   <FileText className="h-6 w-6" />
                   <span>Monthly Report</span>
@@ -779,7 +1008,7 @@ export default function GDPRCompliance() {
                 <Button 
                   variant="outline" 
                   className="h-24 flex-col space-y-2"
-                  onClick={() => generateReport('quarterly')}
+                  onClick={() => openReportPreview('quarterly')}
                 >
                   <BarChart3 className="h-6 w-6" />
                   <span>Quarterly Report</span>
@@ -788,13 +1017,63 @@ export default function GDPRCompliance() {
                 <Button 
                   variant="outline" 
                   className="h-24 flex-col space-y-2"
-                  onClick={() => generateReport('annual')}
+                  onClick={() => openReportPreview('annual')}
                 >
                   <Users className="h-6 w-6" />
                   <span>Annual Report</span>
                   <span className="text-xs text-muted-foreground">Last 12 months</span>
                 </Button>
               </div>
+
+              {/* Report preview dialog: view then download */}
+              <Dialog open={!!reportPreviewType} onOpenChange={(open) => !open && (setReportPreviewType(null), setReportPreviewContent(null))}>
+                <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {reportPreviewType === 'monthly' && 'Monthly Report'}
+                      {reportPreviewType === 'quarterly' && 'Quarterly Report'}
+                      {reportPreviewType === 'annual' && 'Annual Report'}
+                    </DialogTitle>
+                    <DialogDescription>
+                      {reportPreviewType === 'monthly' && 'GDPR compliance report for the last 30 days.'}
+                      {reportPreviewType === 'quarterly' && 'GDPR compliance report for the last 3 months.'}
+                      {reportPreviewType === 'annual' && 'GDPR compliance report for the last 12 months.'}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="flex-1 min-h-0 max-h-[500px] overflow-auto border rounded-md bg-muted/30 p-4">
+                    {reportPreviewLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading report...</p>
+                    ) : reportPreviewContent ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <tbody>
+                            {reportPreviewContent.split('\n').map((row, i) => (
+                              <tr key={i}>
+                                {row.split(',').map((cell, j) => (
+                                  i === 0 ? (
+                                    <th key={j} className="border border-border px-3 py-2 text-left font-medium bg-muted/50">{cell}</th>
+                                  ) : (
+                                    <td key={j} className="border border-border px-3 py-2">{cell}</td>
+                                  )
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex justify-end gap-2 pt-4 border-t">
+                    <Button variant="outline" onClick={() => { setReportPreviewType(null); setReportPreviewContent(null); }}>
+                      Close
+                    </Button>
+                    <Button onClick={downloadReportPreview} disabled={!reportPreviewContent || reportPreviewLoading}>
+                      <Download className="h-4 w-4 mr-2" />
+                      Download
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
               
               {metrics && (
                 <div className="mt-6 p-4 border rounded-lg">
@@ -825,6 +1104,28 @@ export default function GDPRCompliance() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Success modal with green tick (Patient Data & Reports) */}
+      <Dialog open={successModal.open} onOpenChange={(open) => !open && setSuccessModal((s) => ({ ...s, open: false }))}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center justify-center mb-4">
+              <div className="h-16 w-16 rounded-full bg-green-100 dark:bg-green-900/20 flex items-center justify-center">
+                <CheckCircle className="h-10 w-10 text-green-600 dark:text-green-500" />
+              </div>
+            </div>
+            <DialogTitle className="text-center text-xl">{successModal.title}</DialogTitle>
+          </DialogHeader>
+          <div className="text-center py-4">
+            <p className="text-muted-foreground">{successModal.description}</p>
+          </div>
+          <div className="flex justify-center">
+            <Button onClick={() => setSuccessModal((s) => ({ ...s, open: false }))} className="w-full sm:w-auto">
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

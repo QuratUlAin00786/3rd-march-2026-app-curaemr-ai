@@ -3048,12 +3048,12 @@ export default function UserManagement() {
   }, {} as Record<string, number>);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
       <Header title="User Management" subtitle="Manage system users and their permissions" />
       
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+      <div className="w-full px-4 sm:px-5 lg:px-6 py-5">
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-6">
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">

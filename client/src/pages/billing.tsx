@@ -197,11 +197,12 @@ const formatCurrency = (amount: number) => {
   }).format(amount);
 };
 
-function PricingManagementDashboard() {
+function PricingManagementDashboard(props?: { scopeToCurrentUser?: { displayName: string; role: string; userId?: number } }) {
+  const scopeToCurrentUser = props?.scopeToCurrentUser;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { canCreate, canEdit, canDelete } = useRolePermissions();
-  const [pricingTab, setPricingTab] = useState("doctors");
+  const [pricingTab, setPricingTab] = useState(scopeToCurrentUser ? "doctors" : "doctors");
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
@@ -351,6 +352,8 @@ function PricingManagementDashboard() {
   const [editingTreatment, setEditingTreatment] = useState<any>(null);
   const [bulkTreatmentSelections, setBulkTreatmentSelections] = useState<Record<string, { selected: boolean; price: string }>>({});
   const [bulkDefaultPrice, setBulkDefaultPrice] = useState("");
+  const [showBulkTreatmentSuccessModal, setShowBulkTreatmentSuccessModal] = useState(false);
+  const [bulkTreatmentSuccessMessage, setBulkTreatmentSuccessMessage] = useState("");
 
   const closeTreatmentsInfoModal = () => {
     setShowTreatmentsInfoModal(false);
@@ -676,12 +679,15 @@ function PricingManagementDashboard() {
     return pathMap[tab] || tab;
   };
 
-  const { data: doctorsFeesData = [], isLoading: loadingDoctors } = useQuery<any[], Error>({
+  const { data: doctorsFeesData = [], isLoading: loadingDoctors, refetch: refetchDoctorsFees } = useQuery<any[], Error>({
     queryKey: ["/api/pricing/doctors-fees"],
     queryFn: () => fetchResource("/api/pricing/doctors-fees"),
-    enabled: pricingTab === "doctors"
+    enabled: pricingTab === "doctors" || !!scopeToCurrentUser
   });
   const doctorsFees: any[] = doctorsFeesData ?? [];
+  const displayDoctorsFees = scopeToCurrentUser
+    ? doctorsFees.filter((f: any) => String(f.doctorName || "").trim().toLowerCase() === scopeToCurrentUser.displayName.trim().toLowerCase())
+    : doctorsFees;
 
   const { data: labTestsData = [], isLoading: loadingLabs, refetch: refetchLabTests } = useQuery<any[], Error>({
     queryKey: ["/api/pricing/lab-tests"],
@@ -710,12 +716,15 @@ function PricingManagementDashboard() {
   });
   const imaging: any[] = imagingData ?? [];
 
-  const { data: treatmentsData = [], isLoading: loadingTreatments } = useQuery<any[], Error>({
+  const { data: treatmentsData = [], isLoading: loadingTreatments, refetch: refetchTreatments } = useQuery<any[], Error>({
     queryKey: ["/api/pricing/treatments"],
     queryFn: () => fetchResource("/api/pricing/treatments"),
-    enabled: pricingTab === "treatments"
+    enabled: pricingTab === "treatments" || !!scopeToCurrentUser
   });
   const treatments: any[] = treatmentsData ?? [];
+  const displayTreatments = scopeToCurrentUser
+    ? treatments.filter((t: any) => String(t.doctorName || "").trim().toLowerCase() === scopeToCurrentUser.displayName.trim().toLowerCase())
+    : treatments;
   const { data: treatmentsInfoList = [], isLoading: loadingTreatmentsInfo } = useQuery<any[], Error>({
     queryKey: ["/api/treatments-info"],
     queryFn: () => fetchResource("/api/treatments-info"),
@@ -1041,9 +1050,9 @@ function PricingManagementDashboard() {
       name: "",
       basePrice: "",
       colorCode: "#000000",
-      doctorRole: "",
-      doctorName: "",
-      doctorId: null,
+      doctorRole: scopeToCurrentUser?.role ?? "",
+      doctorName: scopeToCurrentUser?.displayName ?? "",
+      doctorId: scopeToCurrentUser?.userId ?? null,
       treatmentInfoId: ""
     });
     setTreatmentError("");
@@ -1174,10 +1183,34 @@ function PricingManagementDashboard() {
     setTreatmentError("");
     setIsSavingTreatment(true);
     try {
-      let done = 0;
+      const doctorIdNorm = treatmentForm.doctorId ?? null;
+      const doctorNameNorm = String(treatmentForm.doctorName ?? "").trim().toLowerCase();
+      const doctorRoleNorm = String(treatmentForm.doctorRole ?? "").trim().toLowerCase();
+
+      const { data: freshTreatments = [] } = (await refetchTreatments()) as { data?: any[] };
+      const treatmentsToCheck: any[] = Array.isArray(freshTreatments) ? freshTreatments : [];
+
+      const isSameDoctor = (t: any) => {
+        if (doctorIdNorm != null && t.doctorId != null) return Number(t.doctorId) === Number(doctorIdNorm);
+        return (
+          String(t.doctorName ?? "").trim().toLowerCase() === doctorNameNorm &&
+          String(t.doctorRole ?? "").trim().toLowerCase() === doctorRoleNorm
+        );
+      };
+      const existingNamesForDoctor = new Set(
+        treatmentsToCheck.filter(isSameDoctor).map((t: any) => String(t.name ?? "").trim().toLowerCase())
+      );
+
+      let addedCount = 0;
+      let skippedCount = 0;
       for (const [infoId, { price }] of selected) {
         const info = treatmentsInfoList.find((i: any) => String(i.id) === infoId);
         if (!info) continue;
+        const nameKey = String(info.name ?? "").trim().toLowerCase();
+        if (existingNamesForDoctor.has(nameKey)) {
+          skippedCount += 1;
+          continue;
+        }
         const payload: any = {
           name: info.name?.trim() || "",
           basePrice: price.trim(),
@@ -1188,13 +1221,19 @@ function PricingManagementDashboard() {
           currency: "GBP",
         };
         await apiRequest("POST", "/api/pricing/treatments", payload);
-        done += 1;
+        addedCount += 1;
+        existingNamesForDoctor.add(nameKey);
       }
       await queryClient.invalidateQueries({ queryKey: ["/api/pricing/treatments"] });
       await queryClient.refetchQueries({ queryKey: ["/api/pricing/treatments"] });
       setShowAddTreatmentDialog(false);
       setBulkTreatmentSelections({});
-      toast({ title: "Success", description: `Added ${done} treatment(s).` });
+      const msg =
+        skippedCount > 0
+          ? `Added ${addedCount} treatment(s). ${skippedCount} already existed and were skipped (no duplicates).`
+          : `Added ${addedCount} treatment(s).`;
+      setBulkTreatmentSuccessMessage(msg);
+      setShowBulkTreatmentSuccessModal(true);
     } catch (error: any) {
       setTreatmentError(error?.message || "Failed to add some treatments.");
       toast({ title: "Error", description: error?.message || "Failed to add treatments.", variant: "destructive" });
@@ -1578,38 +1617,47 @@ function PricingManagementDashboard() {
     setIsAddingDefaultFees(true);
     try {
       const apiPath = getApiPath(pricingTab);
-      
-      // Check for existing fees for this specific doctor/role combination
-      const existingFeesForDoctor = doctorsFees.filter((fee: any) => 
-        fee.doctorName?.toLowerCase() === formData.doctorName.toLowerCase() &&
-        fee.doctorRole?.toLowerCase() === formData.doctorRole.toLowerCase()
+      const doctorNameNorm = String(formData.doctorName || "").trim().toLowerCase();
+      const doctorRoleNorm = String(formData.doctorRole || "").trim().toLowerCase();
+
+      // Refetch latest doctors-fees so we never add duplicates (e.g. nurse/doctor with stale cache)
+      const { data: freshFees = [] } = (await refetchDoctorsFees()) as { data?: any[] };
+      const feesToCheck: any[] = Array.isArray(freshFees) ? freshFees : [];
+
+      // Check for existing fees for this specific doctor/role combination (normalize with trim)
+      const existingFeesForDoctor = feesToCheck.filter((fee: any) =>
+        String(fee.doctorName ?? "").trim().toLowerCase() === doctorNameNorm &&
+        String(fee.doctorRole ?? "").trim().toLowerCase() === doctorRoleNorm
       );
-      
-      // Get service names that already exist for this doctor/role
-      const existingServiceNames = existingFeesForDoctor.map((fee: any) => fee.serviceName.toLowerCase());
-      
-      // Filter out services that already exist for this doctor/role
-      const newFees = DEFAULT_DOCTOR_FEES.filter(fee => 
-        !existingServiceNames.includes(fee.serviceName.toLowerCase())
+
+      // Get service names that already exist for this doctor/role — do not add duplicates
+      const existingServiceNames = existingFeesForDoctor.map((fee: any) =>
+        String(fee.serviceName ?? "").trim().toLowerCase()
       );
-      
+
+      // Only consider default fees that do not already exist
+      const newFees = DEFAULT_DOCTOR_FEES.filter(fee =>
+        !existingServiceNames.includes(String(fee.serviceName ?? "").trim().toLowerCase())
+      );
+
       if (newFees.length === 0) {
         setDefaultFeesSuccessMessage({
           title: "All Default Fees Already Exist",
-          description: `All default doctor fees already exist for ${formData.doctorName} (${formData.doctorRole}).`
+          description: `All default doctor fees already exist for ${formData.doctorName} (${formData.doctorRole}). No duplicates were added.`
         });
         setShowDefaultFeesSuccessModal(true);
         setIsAddingDefaultFees(false);
         return;
       }
-      
-      // Add only new fees for this doctor/role
+
+      // Add only new fees for this doctor/role (no duplicates)
       let addedCount = 0;
       let skippedCount = 0;
-      
+
       for (const fee of DEFAULT_DOCTOR_FEES) {
-        const exists = existingServiceNames.includes(fee.serviceName.toLowerCase());
-        
+        const serviceKey = String(fee.serviceName ?? "").trim().toLowerCase();
+        const exists = existingServiceNames.includes(serviceKey);
+
         if (!exists) {
           const payload = {
             serviceName: fee.serviceName,
@@ -1623,18 +1671,19 @@ function PricingManagementDashboard() {
             currency: "GBP",
             version: 1
           };
-          
+
           await apiRequest('POST', `/api/pricing/${apiPath}`, payload);
           addedCount++;
+          existingServiceNames.push(serviceKey);
         } else {
           skippedCount++;
         }
       }
-      
-      queryClient.invalidateQueries({ queryKey: [`/api/pricing/${apiPath}`] });
+
+      queryClient.invalidateQueries({ queryKey: ["/api/pricing/doctors-fees"] });
       setDefaultFeesSuccessMessage({
         title: "Default Doctor Fees Added",
-        description: `${addedCount} default fee(s) added successfully for ${formData.doctorName} (${formData.doctorRole}). ${skippedCount > 0 ? `${skippedCount} fee(s) already existed and were skipped.` : ''}`
+        description: `${addedCount} default fee(s) added successfully for ${formData.doctorName} (${formData.doctorRole}). ${skippedCount > 0 ? `${skippedCount} fee(s) already existed and were skipped (no duplicates).` : ""}`
       });
       setShowDefaultFeesSuccessModal(true);
       setIsAddingDefaultFees(false);
@@ -1937,7 +1986,8 @@ function PricingManagementDashboard() {
     setFormData({
       isActive: true,
       currency: "GBP",
-      version: 1
+      version: 1,
+      ...(pricingTab === "doctors" && scopeToCurrentUser ? { doctorName: scopeToCurrentUser.displayName, doctorRole: scopeToCurrentUser.role } : {})
     });
     
     // Close all dropdowns
@@ -1985,10 +2035,14 @@ function PricingManagementDashboard() {
 
   return (
   <Tabs value={pricingTab} onValueChange={setPricingTab} className="w-full">
-    <TabsList className="grid w-full grid-cols-5">
-        <TabsTrigger value="doctors" data-testid="tab-doctors-pricing">Doctors Fees</TabsTrigger>
+    <TabsList className={scopeToCurrentUser ? "grid w-full grid-cols-3" : "grid w-full grid-cols-5"}>
+        <TabsTrigger value="doctors" data-testid="tab-doctors-pricing">{scopeToCurrentUser ? "My Fees" : "Doctors Fees"}</TabsTrigger>
+        {!scopeToCurrentUser && (
+          <>
         <TabsTrigger value="lab-tests" data-testid="tab-lab-tests-pricing">Lab Tests</TabsTrigger>
         <TabsTrigger value="imaging" data-testid="tab-imaging-pricing">Imaging</TabsTrigger>
+          </>
+        )}
         <TabsTrigger value="treatments" data-testid="tab-treatments-pricing">Treatments</TabsTrigger>
       <TabsTrigger value="all-treatments" data-testid="tab-all-treatments">Add Treatments</TabsTrigger>
       </TabsList>
@@ -2042,12 +2096,12 @@ function PricingManagementDashboard() {
         
         {loadingDoctors ? (
           <div className="text-center py-8">Loading...</div>
-        ) : doctorsFees.length === 0 ? (
+        ) : displayDoctorsFees.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <p>No doctor fees configured yet. Click "Add Doctor Fee" to get started.</p>
+            <p>{scopeToCurrentUser ? "You have no fee entries yet. Add doctor fees in the Add Treatments tab or ask admin to assign fees for you." : "No doctor fees configured yet. Click \"Add Doctor Fee\" to get started."}</p>
           </div>
         ) : (() => {
-          const filteredFees = doctorsFees.filter((fee: any) => {
+          const filteredFees = displayDoctorsFees.filter((fee: any) => {
             const matchServiceName = !doctorFeeServiceFilter || 
               fee.serviceName?.toLowerCase().includes(doctorFeeServiceFilter.toLowerCase());
             const matchDoctorName = !doctorFeeDoctorFilter || 
@@ -2412,13 +2466,13 @@ function PricingManagementDashboard() {
 
         {loadingTreatments ? (
           <div className="text-center py-8">Loading...</div>
-        ) : treatments.length === 0 ? (
+        ) : displayTreatments.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <p>No treatments configured yet. Click "Add Treatments" to get started.</p>
+            <p>{scopeToCurrentUser ? "You have no treatments yet. Use Add Treatments to add your own." : "No treatments configured yet. Click \"Add Treatments\" to get started."}</p>
           </div>
         ) : (() => {
           // Group treatments by role, then by doctor/nurse name within each role
-          const groupedByRoleAndName = treatments.reduce((acc: any, treatment: any) => {
+          const groupedByRoleAndName = displayTreatments.reduce((acc: any, treatment: any) => {
             const role = treatment.doctorRole || 'Unknown';
             const doctorName = treatment.doctorName || 'Unknown';
             
@@ -2685,24 +2739,28 @@ function PricingManagementDashboard() {
                       id="bulkDoctorRole"
                       value={formData.doctorRole || ""}
                       onChange={(e) => {
+                        if (scopeToCurrentUser) return;
                         setFormData({ ...formData, doctorRole: e.target.value, doctorName: "", doctorId: null });
                         setShowRoleSuggestions(true);
                         setDoctorRoleError(""); // Clear error on change
                       }}
                       onFocus={() => {
+                        if (scopeToCurrentUser) return;
                         if (skipRoleSuggestionFocus) {
                           setSkipRoleSuggestionFocus(false);
                           return;
                         }
                         setShowRoleSuggestions(true);
                       }}
-                      onClick={() => setShowRoleSuggestions(true)}
+                      onClick={() => !scopeToCurrentUser && setShowRoleSuggestions(true)}
                       placeholder="Select role"
                       autoComplete="off"
                       required
+                      readOnly={!!scopeToCurrentUser}
+                      className={scopeToCurrentUser ? "bg-muted cursor-not-allowed" : ""}
                       data-testid="input-bulk-role"
                     />
-                    {showRoleSuggestions && (
+                    {!scopeToCurrentUser && showRoleSuggestions && (
                       <div className="role-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
                         {roles
                           .filter((role: any) => 
@@ -2748,11 +2806,13 @@ function PricingManagementDashboard() {
                       id="bulkDoctorName"
                       value={formData.doctorName || ""}
                       onChange={(e) => {
+                        if (scopeToCurrentUser) return;
                         setFormData({ ...formData, doctorName: e.target.value });
                         setShowDoctorSuggestions(true);
                         setDoctorNameError(""); // Clear error on change
                       }}
                       onFocus={() => {
+                        if (scopeToCurrentUser) return;
                         if (!formData.doctorRole) {
                           return;
                         }
@@ -2762,9 +2822,11 @@ function PricingManagementDashboard() {
                       autoComplete="off"
                       required
                       disabled={!formData.doctorRole}
+                      readOnly={!!scopeToCurrentUser}
+                      className={scopeToCurrentUser ? "bg-muted cursor-not-allowed" : ""}
                       data-testid="input-bulk-name"
                     />
-                    {showDoctorSuggestions && (
+                    {!scopeToCurrentUser && showDoctorSuggestions && (
                       <div className="doctor-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
                         {filteredUsers
                           .filter((user: any) => {
@@ -3789,6 +3851,30 @@ function PricingManagementDashboard() {
         </DialogContent>
       </Dialog>
 
+      {/* Add Selected Treatments Success Modal */}
+      <Dialog open={showBulkTreatmentSuccessModal} onOpenChange={setShowBulkTreatmentSuccessModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center justify-center mb-4">
+              <div className="h-16 w-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center">
+                <CheckCircle className="h-10 w-10 text-green-600 dark:text-green-500" />
+              </div>
+            </div>
+            <DialogTitle className="text-center text-xl">Success</DialogTitle>
+          </DialogHeader>
+          <div className="text-center py-4">
+            <p className="text-muted-foreground">
+              {bulkTreatmentSuccessMessage}
+            </p>
+          </div>
+          <DialogFooter className="sm:justify-center">
+            <Button onClick={() => setShowBulkTreatmentSuccessModal(false)} className="w-full sm:w-auto">
+              OK
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Duplicate Service Names Dialog */}
       <Dialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
         <DialogContent>
@@ -3847,15 +3933,18 @@ function PricingManagementDashboard() {
                     id="treatmentRole"
                     value={treatmentForm.doctorRole}
                     onChange={(e) => {
+                      if (scopeToCurrentUser) return;
                       setTreatmentForm({ ...treatmentForm, doctorRole: e.target.value, doctorName: "", doctorId: null });
                       setShowTreatmentRoleSuggestions(true);
                     }}
-                    onClick={() => setShowTreatmentRoleSuggestions(true)}
-                    onMouseDown={() => setShowTreatmentRoleSuggestions(true)}
+                    onClick={() => !scopeToCurrentUser && setShowTreatmentRoleSuggestions(true)}
+                    onMouseDown={() => !scopeToCurrentUser && setShowTreatmentRoleSuggestions(true)}
                     placeholder="Select role"
                     autoComplete="off"
+                    readOnly={!!scopeToCurrentUser}
+                    className={scopeToCurrentUser ? "bg-muted cursor-not-allowed" : ""}
                   />
-                  {showTreatmentRoleSuggestions && (
+                  {!scopeToCurrentUser && showTreatmentRoleSuggestions && (
                     <div className="treatment-role-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
                       {roles
                         .filter((role: any) =>
@@ -3875,13 +3964,19 @@ function PricingManagementDashboard() {
                   <Input
                     id="treatmentDoctorName"
                     value={treatmentForm.doctorName}
-                    onChange={(e) => { setTreatmentForm({ ...treatmentForm, doctorName: e.target.value, doctorId: null }); setShowTreatmentDoctorSuggestions(true); }}
-                    onFocus={() => { if (treatmentForm.doctorRole) setShowTreatmentDoctorSuggestions(true); }}
+                    onChange={(e) => {
+                      if (scopeToCurrentUser) return;
+                      setTreatmentForm({ ...treatmentForm, doctorName: e.target.value, doctorId: null });
+                      setShowTreatmentDoctorSuggestions(true);
+                    }}
+                    onFocus={() => { if (!scopeToCurrentUser && treatmentForm.doctorRole) setShowTreatmentDoctorSuggestions(true); }}
                     placeholder={treatmentForm.doctorRole ? "Type to search..." : "Select role first"}
                     autoComplete="off"
                     disabled={!treatmentForm.doctorRole}
+                    readOnly={!!scopeToCurrentUser}
+                    className={scopeToCurrentUser ? "bg-muted cursor-not-allowed" : ""}
                   />
-                  {showTreatmentDoctorSuggestions && (
+                  {!scopeToCurrentUser && showTreatmentDoctorSuggestions && (
                     <div className="treatment-doctor-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
                       {users.filter((u: any) => (!treatmentForm.doctorRole || u.role === treatmentForm.doctorRole) && (!treatmentForm.doctorName || `${u.firstName} ${u.lastName}`.toLowerCase().includes(treatmentForm.doctorName.toLowerCase())) && u.role !== 'patient').map((u: any) => (
                         <div key={u.id} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { setTreatmentForm({ ...treatmentForm, doctorName: `${u.firstName} ${u.lastName}`, doctorId: u.id, doctorRole: u.role }); setShowTreatmentDoctorSuggestions(false); }}>
@@ -3926,13 +4021,19 @@ function PricingManagementDashboard() {
                   <Input
                     id="bulk-treatmentRole"
                     value={treatmentForm.doctorRole}
-                    onChange={(e) => { setTreatmentForm({ ...treatmentForm, doctorRole: e.target.value, doctorName: "", doctorId: null }); setShowTreatmentRoleSuggestions(true); }}
-                    onClick={() => setShowTreatmentRoleSuggestions(true)}
-                    onMouseDown={() => setShowTreatmentRoleSuggestions(true)}
+                    onChange={(e) => {
+                      if (scopeToCurrentUser) return;
+                      setTreatmentForm({ ...treatmentForm, doctorRole: e.target.value, doctorName: "", doctorId: null });
+                      setShowTreatmentRoleSuggestions(true);
+                    }}
+                    onClick={() => !scopeToCurrentUser && setShowTreatmentRoleSuggestions(true)}
+                    onMouseDown={() => !scopeToCurrentUser && setShowTreatmentRoleSuggestions(true)}
                     placeholder="Select role"
                     autoComplete="off"
+                    readOnly={!!scopeToCurrentUser}
+                    className={scopeToCurrentUser ? "bg-muted cursor-not-allowed" : ""}
                   />
-                  {showTreatmentRoleSuggestions && (
+                  {!scopeToCurrentUser && showTreatmentRoleSuggestions && (
                     <div className="treatment-role-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
                       {roles.filter((role: any) => role.name !== 'patient' && role.name !== 'admin' && (!treatmentForm.doctorRole || role.displayName.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()) || role.name.toLowerCase().includes(treatmentForm.doctorRole.toLowerCase()))).map((role: any, index: number) => (
                         <div key={index} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { setTreatmentForm({ ...treatmentForm, doctorRole: role.name, doctorName: "", doctorId: null }); setShowTreatmentRoleSuggestions(false); }}><div className="font-medium text-sm">{role.displayName}</div></div>
@@ -3945,13 +4046,19 @@ function PricingManagementDashboard() {
                   <Input
                     id="bulk-treatmentDoctorName"
                     value={treatmentForm.doctorName}
-                    onChange={(e) => { setTreatmentForm({ ...treatmentForm, doctorName: e.target.value, doctorId: null }); setShowTreatmentDoctorSuggestions(true); }}
-                    onFocus={() => { if (treatmentForm.doctorRole) setShowTreatmentDoctorSuggestions(true); }}
+                    onChange={(e) => {
+                      if (scopeToCurrentUser) return;
+                      setTreatmentForm({ ...treatmentForm, doctorName: e.target.value, doctorId: null });
+                      setShowTreatmentDoctorSuggestions(true);
+                    }}
+                    onFocus={() => { if (!scopeToCurrentUser && treatmentForm.doctorRole) setShowTreatmentDoctorSuggestions(true); }}
                     placeholder={treatmentForm.doctorRole ? "Type to search..." : "Select role first"}
                     autoComplete="off"
                     disabled={!treatmentForm.doctorRole}
+                    readOnly={!!scopeToCurrentUser}
+                    className={scopeToCurrentUser ? "bg-muted cursor-not-allowed" : ""}
                   />
-                  {showTreatmentDoctorSuggestions && (
+                  {!scopeToCurrentUser && showTreatmentDoctorSuggestions && (
                     <div className="treatment-doctor-suggestions absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-auto top-full">
                       {users.filter((u: any) => (!treatmentForm.doctorRole || u.role === treatmentForm.doctorRole) && (!treatmentForm.doctorName || `${u.firstName} ${u.lastName}`.toLowerCase().includes(treatmentForm.doctorName.toLowerCase())) && u.role !== 'patient').map((u: any) => (
                         <div key={u.id} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { setTreatmentForm({ ...treatmentForm, doctorName: `${u.firstName} ${u.lastName}`, doctorId: u.id, doctorRole: u.role }); setShowTreatmentDoctorSuggestions(false); }}>
@@ -6162,21 +6269,22 @@ export default function BillingPage() {
       if (!response.ok) throw new Error('Failed to fetch doctor invoices');
       return response.json();
     },
-    enabled: user?.role === 'doctor',
+    enabled: user?.role === 'doctor' || user?.role === 'nurse',
   });
 
-  // Doctor invoice category tab state
-  const [doctorInvoiceTab, setDoctorInvoiceTab] = useState<'overall' | 'appointments' | 'labResults' | 'imaging'>('overall');
+  // Doctor/nurse invoice category tab state
+  const [doctorInvoiceTab, setDoctorInvoiceTab] = useState<'overall' | 'appointments' | 'labResults' | 'imaging' | 'fees'>('overall');
 
-  // Get the appropriate invoices based on user role
-  const displayInvoices = user?.role === 'doctor' && doctorInvoices 
-    ? (doctorInvoiceTab === 'overall' ? doctorInvoices.overall :
+  // Get the appropriate invoices based on user role (doctor/nurse use categorized tabs)
+  const displayInvoices = (user?.role === 'doctor' || user?.role === 'nurse') && doctorInvoices 
+    ? (doctorInvoiceTab === 'fees' ? [] :
+       doctorInvoiceTab === 'overall' ? doctorInvoices.overall :
        doctorInvoiceTab === 'appointments' ? doctorInvoices.appointments :
        doctorInvoiceTab === 'labResults' ? doctorInvoices.labResults :
        doctorInvoices.imaging)
     : invoices;
 
-  const isLoadingInvoices = user?.role === 'doctor' ? doctorInvoicesLoading : invoicesLoading;
+  const isLoadingInvoices = (user?.role === 'doctor' || user?.role === 'nurse') ? doctorInvoicesLoading : invoicesLoading;
 
   // Track which invoices have been checked/updated to avoid repeated updates
   const processedOverdueInvoicesRef = React.useRef<Set<number>>(new Set());
@@ -7061,8 +7169,8 @@ export default function BillingPage() {
       }
     }
     
-    // For doctors: Universal search across all invoice fields
-    if (user?.role === 'doctor' && universalSearch) {
+    // For doctors/nurses: Universal search across all invoice fields
+    if ((user?.role === 'doctor' || user?.role === 'nurse') && universalSearch) {
       const searchLower = universalSearch.toLowerCase();
       const matchesUniversalSearch = 
         invoice.patientName?.toLowerCase().includes(searchLower) ||
@@ -7812,14 +7920,14 @@ export default function BillingPage() {
   }
 
   return (
-    <>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       <Header 
         title="Billing & Payments" 
         subtitle="Manage invoices, payments, and insurance claims"
       />
       
-      <div className="flex-1 overflow-auto p-6">
-        <div className="space-y-6">
+      <div className="flex-1 overflow-auto p-4 sm:p-5">
+        <div className="space-y-5">
             {/* Quick Stats - Admin Only */}
             {isAdmin && (
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -8040,7 +8148,7 @@ export default function BillingPage() {
                             </div>
                           )}
 
-                          {(serviceDateFrom || invoiceIdFilter !== "all" || (user?.role === 'doctor' && (insuranceProviderFilter !== 'all' || paymentMethodFilter !== 'all' || universalSearch))) && (
+                          {(serviceDateFrom || invoiceIdFilter !== "all" || ((user?.role === 'doctor' || user?.role === 'nurse') && (insuranceProviderFilter !== 'all' || paymentMethodFilter !== 'all' || universalSearch))) && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -8048,7 +8156,7 @@ export default function BillingPage() {
                               onClick={() => {
                                 setServiceDateFrom("");
                                 setInvoiceIdFilter("all");
-                                if (user?.role === 'doctor') {
+                                if (user?.role === 'doctor' || user?.role === 'nurse') {
                                   setInsuranceProviderFilter('all');
                                   setPaymentMethodFilter('all');
                                   setUniversalSearch('');
@@ -8076,12 +8184,12 @@ export default function BillingPage() {
                   </CardContent>
                 </Card>
 
-                {/* Doctor-specific category tabs (for non-admin doctors) */}
-                {user?.role === 'doctor' && (
+                {/* Doctor/nurse category tabs (Overall, Appointments, Lab Results, Imaging, Fees) */}
+                {(user?.role === 'doctor' || user?.role === 'nurse') && (
                   <Card>
                     <CardContent className="p-4">
                       <Tabs value={doctorInvoiceTab} onValueChange={(value) => setDoctorInvoiceTab(value as any)} className="w-full">
-                        <TabsList className="grid w-full grid-cols-4 gap-1">
+                        <TabsList className="grid w-full grid-cols-5 gap-1">
                           <TabsTrigger value="overall" data-testid="tab-doctor-overall">
                             Overall
                             {doctorInvoices && (
@@ -8114,15 +8222,24 @@ export default function BillingPage() {
                               </Badge>
                             )}
                           </TabsTrigger>
+                          <TabsTrigger value="fees" data-testid="tab-doctor-fees">
+                            Fees
+                          </TabsTrigger>
                         </TabsList>
                       </Tabs>
                     </CardContent>
                   </Card>
                 )}
 
-                {/* Invoices List */}
-                {isListView ? (
-                  /* List View - Table Format */
+                {/* Fees tab content for doctor/nurse: own treatments, fees, add treatments */}
+                {(user?.role === 'doctor' || user?.role === 'nurse') && doctorInvoiceTab === 'fees' ? (
+                  <Card>
+                    <CardContent className="p-4">
+                      <PricingManagementDashboard scopeToCurrentUser={{ displayName: `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim(), role: user?.role ?? '', userId: user?.id }} />
+                    </CardContent>
+                  </Card>
+                ) : isListView ? (
+                /* Invoices List - List View - Table Format */
                     <Card className="w-full max-w-full overflow-hidden">
                       <CardContent className="p-0 w-full max-w-full overflow-hidden">
                         <div className="overflow-hidden w-full max-w-full">
@@ -8785,12 +8902,12 @@ export default function BillingPage() {
                     </CardContent>
                   </Card>
 
-                  {/* Doctor-specific category tabs */}
-                  {user?.role === 'doctor' && (
+                  {/* Doctor/nurse category tabs */}
+                  {(user?.role === 'doctor' || user?.role === 'nurse') && (
                     <Card>
                       <CardContent className="p-4">
                         <Tabs value={doctorInvoiceTab} onValueChange={(value) => setDoctorInvoiceTab(value as any)} className="w-full">
-                          <TabsList className="grid w-full grid-cols-4 gap-1">
+                          <TabsList className="grid w-full grid-cols-5 gap-1">
                             <TabsTrigger value="overall" data-testid="tab-doctor-overall">
                               Overall
                               {doctorInvoices && (
@@ -8823,14 +8940,23 @@ export default function BillingPage() {
                                 </Badge>
                               )}
                             </TabsTrigger>
+                            <TabsTrigger value="fees" data-testid="tab-doctor-fees">
+                              Fees
+                            </TabsTrigger>
                           </TabsList>
                         </Tabs>
                       </CardContent>
                     </Card>
                   )}
 
-                  {/* Invoices List */}
-                  {isListView ? (
+                  {/* Fees tab content for doctor/nurse */}
+                  {(user?.role === 'doctor' || user?.role === 'nurse') && doctorInvoiceTab === 'fees' ? (
+                    <Card>
+                      <CardContent className="p-4">
+                        <PricingManagementDashboard scopeToCurrentUser={{ displayName: `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim(), role: user?.role ?? '', userId: user?.id }} />
+                      </CardContent>
+                    </Card>
+                  ) : isListView ? (
                     /* List View - Table Format */
                     <Card>
                       <CardContent className="p-0">
@@ -11751,7 +11877,7 @@ export default function BillingPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }
 

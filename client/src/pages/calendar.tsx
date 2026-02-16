@@ -2298,14 +2298,14 @@ const getAppointmentTypeLabel = (appointment: any): string => {
   };
 
   return (
-    <>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       <Header 
         title="Appointments" 
         subtitle="Schedule and manage patient appointments efficiently."
       />
       
-      <div className="flex-1 overflow-auto p-6">
-        <div className="mb-6">
+      <div className="flex-1 overflow-auto p-4 sm:p-5">
+        <div className="mb-5">
           <div className="flex justify-between items-center mb-4">
          
           
@@ -5779,6 +5779,6 @@ const getAppointmentTypeLabel = (appointment: any): string => {
           </DialogContent>
         </Dialog>
       </div>
-    </>
+    </div>
   );
 }

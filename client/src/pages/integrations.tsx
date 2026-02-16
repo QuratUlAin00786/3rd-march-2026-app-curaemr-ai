@@ -220,9 +220,9 @@ export default function IntegrationsPage() {
   }
 
   return (
-    <div className="flex-1 overflow-auto p-6">
+    <div className="flex-1 overflow-auto p-4 page-zoom-90">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-4">
           <Button
             variant="ghost"

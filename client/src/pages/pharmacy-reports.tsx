@@ -138,7 +138,7 @@ export default function PharmacyReports() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-4 page-zoom-90">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-pharmacy-reports-title">Pharmacy Reports</h1>

@@ -756,3 +756,20 @@ button[data-testid="delete-customer-button"] {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+
+/* Page zoom: 90% appearance at 100% browser zoom - add class to page root */
+.page-zoom-90 { font-size: 0.9rem; }
+.page-zoom-90 input, .page-zoom-90 textarea, .page-zoom-90 [role="combobox"] { font-size: 1em; }
+.page-zoom-90 button { font-size: 0.9375em; }
+.page-zoom-90 .text-scale-xs { font-size: 0.75em; }
+.page-zoom-90 .text-scale-sm { font-size: 0.875em; }
+.page-zoom-90 .text-scale-base { font-size: 1em; }
+.page-zoom-90 .text-scale-lg { font-size: 1.125em; }
+.page-zoom-90 .text-scale-xl { font-size: 1.25em; }
+.page-zoom-90 .text-xs { font-size: 0.75em !important; }
+.page-zoom-90 .text-sm { font-size: 0.875em !important; }
+.page-zoom-90 .text-base { font-size: 1em !important; }
+.page-zoom-90 .text-lg { font-size: 1.125em !important; }
+.page-zoom-90 .text-xl { font-size: 1.25em !important; }
+.page-zoom-90 .text-2xl { font-size: 1.5em !important; }
+.page-zoom-90 .text-3xl { font-size: 1.875em !important; }

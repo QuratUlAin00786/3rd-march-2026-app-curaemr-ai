@@ -600,10 +600,10 @@ export default function LabTechnicianDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background page-zoom-90">
       <Header />
       
-      <div className="container mx-auto p-6 space-y-6">
+      <div className="container mx-auto p-4 space-y-4">
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>

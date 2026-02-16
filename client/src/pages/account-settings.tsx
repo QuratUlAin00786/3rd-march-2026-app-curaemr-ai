@@ -132,14 +132,14 @@ export default function AccountSettings() {
   };
 
   return (
-    <>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       <Header 
         title="Account Settings" 
         subtitle="Manage your account information, security, and preferences."
       />
       
-      <div className="flex-1 overflow-auto px-6 py-4">
-          <Tabs defaultValue="profile" className="space-y-6">
+      <div className="flex-1 overflow-auto px-3 sm:px-4 py-4">
+          <Tabs defaultValue="profile" className="space-y-4">
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="profile" data-testid="tab-profile">
                 <User className="h-4 w-4 mr-2" />
@@ -515,6 +515,6 @@ export default function AccountSettings() {
             </TabsContent>
           </Tabs>
       </div>
-    </>
+    </div>
   );
 }

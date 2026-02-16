@@ -962,13 +962,13 @@ export default function ShiftsPage() {
   const isAdmin = user?.role === 'admin' || user?.role === 'administrator';
 
   return (
-    <>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       <Header 
         title="Shifts Management" 
         subtitle="Manage staff shifts, schedules, and availability efficiently."
       />
       
-      <div className="p-6">
+      <div className="p-4 flex-1 overflow-auto">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2 mb-6">
           <TabsTrigger value="default-shifts" className="flex items-center gap-2">
@@ -2367,6 +2367,6 @@ export default function ShiftsPage() {
         </DialogContent>
       </Dialog>
       </div>
-    </>
+    </div>
   );
 }

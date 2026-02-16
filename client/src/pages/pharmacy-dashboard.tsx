@@ -589,7 +589,7 @@ export default function PharmacyDashboard() {
 
   if (dashboardLoading || shiftLoading) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="p-4 space-y-4 page-zoom-90">
         <Skeleton className="h-8 w-64" />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => (
@@ -601,7 +601,7 @@ export default function PharmacyDashboard() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-4 page-zoom-90">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-pharmacy-dashboard-title">Pharmacy Dashboard</h1>

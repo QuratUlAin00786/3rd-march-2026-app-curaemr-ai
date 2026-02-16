@@ -6242,9 +6242,9 @@ const formIds = useMemo(
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-100 dark:bg-[hsl(var(--cura-midnight))]">
+    <div className="h-screen flex flex-col bg-gray-100 dark:bg-[hsl(var(--cura-midnight))] forms-page-ui page-zoom-90">
       {/* Page Header - Like Dashboard */}
-      <div className="flex items-center justify-between mr-6 bg-white dark:bg-[hsl(var(--cura-midnight))] px-2 py-1 rounded border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between mr-5 bg-white dark:bg-[hsl(var(--cura-midnight))] px-2 py-1 rounded border-b border-gray-200 dark:border-gray-700">
         <Header
           title="Forms"
           subtitle="Create and manage medical forms, letters, and documents"
@@ -6257,54 +6257,40 @@ const formIds = useMemo(
 
       {/* Scrollable Content Wrapper */}
       <div className="flex-1 overflow-y-auto">
-        <div className="px-6 py-6 space-y-6 bg-gray-50 dark:bg-[#090b13] border-b border-dashed border-gray-200 dark:border-gray-800">
+        <div className="px-5 py-5 space-y-5 bg-gray-50 dark:bg-[#090b13] border-b border-dashed border-gray-200 dark:border-gray-800">
           <Tabs
             value={activeFormsTab}
             onValueChange={(value) => setActiveFormsTab(value as FormsTab)}
             defaultValue="dynamic"
-            className="space-y-6"
+            className="w-full space-y-5"
           >
-          <div className="rounded-2xl border border-gray-200 bg-white/80 p-1 shadow-sm dark:border-gray-800 dark:bg-white/5">
-            <TabsList className="grid grid-cols-5 gap-2 text-xs font-semibold text-slate-600 dark:text-slate-100">
-            {!userIsPatient && (
-              <>
-                <TabsTrigger
-                  value="dynamic"
-                  className="rounded-xl px-3 py-2 text-[12px] transition-colors text-slate-800 dark:text-slate-200 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-white/10 data-[state=active]:text-slate-900 dark:data-[state=active]:text-white"
-                >
-                  Dynamic Form Builder
-                </TabsTrigger>
-                <TabsTrigger
-                  value="saved"
-                  className="rounded-xl px-3 py-2 text-[12px] transition-colors text-slate-800 dark:text-slate-200 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-white/10 data-[state=active]:text-slate-900 dark:data-[state=active]:text-white"
-                >
-                  Saved Forms
-                </TabsTrigger>
-              </>
-            )}
-            <TabsTrigger
-              value="filled"
-              className="rounded-xl px-3 py-2 text-[12px] transition-colors text-slate-800 dark:text-slate-200 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-white/10 data-[state=active]:text-slate-900 dark:data-[state=active]:text-white"
-            >
-              Filled Forms
-            </TabsTrigger>
-            {/* Document Editor tab hidden */}
-            {false && !userIsPatient && (
-              <TabsTrigger
-                value="editor"
-                className="rounded-xl px-3 py-2 text-[12px] transition-colors text-slate-800 dark:text-slate-200 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-white/10 data-[state=active]:text-slate-900 dark:data-[state=active]:text-white"
-              >
-                Document Editor
+            <TabsList className={`grid w-full mb-4 ${userIsPatient ? 'grid-cols-1' : 'grid-cols-3'}`}>
+              {!userIsPatient && (
+                <>
+                  <TabsTrigger value="dynamic">
+                    Dynamic Form Builder
+                  </TabsTrigger>
+                  <TabsTrigger value="saved">
+                    Saved Forms
+                  </TabsTrigger>
+                </>
+              )}
+              <TabsTrigger value="filled">
+                Filled Forms
               </TabsTrigger>
-            )}
-          </TabsList>
-          </div>
+              {/* Document Editor tab hidden */}
+              {false && !userIsPatient && (
+                <TabsTrigger value="editor">
+                  Document Editor
+                </TabsTrigger>
+              )}
+            </TabsList>
 
           {!userIsPatient && (
             <>
               <TabsContent
                 value="dynamic"
-                className="space-y-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
+                className="space-y-5 rounded-3xl border border-gray-200 bg-white p-5 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
               >
               <div className="space-y-2">
                 <p className="text-sm font-semibold text-gray-600 dark:text-gray-300">Dynamic Form Builder</p>
@@ -6319,7 +6305,7 @@ const formIds = useMemo(
               </TabsContent>
               <TabsContent
                 value="saved"
-                className="space-y-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
+                className="space-y-5 rounded-3xl border border-gray-200 bg-white p-5 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
               >
                 <div className="flex items-center justify-between">
                   <div>
@@ -6439,7 +6425,7 @@ const formIds = useMemo(
           {false && !userIsPatient && (
             <TabsContent
               value="editor"
-              className="space-y-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
+              className="space-y-5 rounded-3xl border border-gray-200 bg-white p-5 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
             >
               {/* Top Header - Professional Medical Theme */}
               <div className="px-6 py-4 flex-shrink-0 bg-white dark:bg-[hsl(var(--cura-midnight))] border-b-2 border-gray-200 dark:border-[hsl(var(--cura-steel))]">
@@ -7031,7 +7017,7 @@ const formIds = useMemo(
 
             <TabsContent
               value="filled"
-              className="space-y-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
+              className="space-y-5 rounded-3xl border border-gray-200 bg-white p-5 shadow-lg shadow-black/10 dark:border-gray-800 dark:bg-[#05070f] dark:text-slate-100"
             >
               <div className="flex items-center justify-between mb-4">
                 <div>

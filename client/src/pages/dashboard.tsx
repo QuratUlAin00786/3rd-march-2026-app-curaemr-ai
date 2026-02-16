@@ -127,9 +127,9 @@ export default function Dashboard() {
   }
 
   return (
-    <div>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       {/* Top row: Header + Theme Toggle */}
-      <div className="flex items-center justify-between mr-6 bg-white px-2 py-1 rounded">
+      <div className="flex items-center justify-between mr-5 bg-white px-2 py-1 rounded">
         <Header
           title="Dashboard"
           subtitle={
@@ -148,7 +148,7 @@ export default function Dashboard() {
       </div>
 
       {/* Dashboard Content */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 sm:p-5">
         <RoleBasedDashboard />
       </div>
     </div>

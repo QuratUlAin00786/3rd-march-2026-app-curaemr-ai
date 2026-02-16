@@ -489,14 +489,14 @@ export default function Patients() {
 
   // Default patients list view
   return (
-    <>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       <Header 
         title="Patients" 
         subtitle="Manage patient records and medical information."
       />
       
-      <div className="flex-1 overflow-auto p-6">
-        <div className="flex items-center justify-between mb-6">
+      <div className="flex-1 overflow-auto p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-5">
           <div>
             <div className="flex items-center gap-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Patients</h3>
@@ -584,6 +584,6 @@ export default function Patients() {
           </div>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }

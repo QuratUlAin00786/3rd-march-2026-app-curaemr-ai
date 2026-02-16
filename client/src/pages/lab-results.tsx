@@ -799,6 +799,9 @@ export default function LabResultsPage() {
   const [orderRoleSearchOpen, setOrderRoleSearchOpen] = useState(false);
   const [orderNameSearchOpen, setOrderNameSearchOpen] = useState(false);
   const [editingStatusId, setEditingStatusId] = useState<number | null>(null);
+  const [editStatusDialog, setEditStatusDialog] = useState<{ id: number; status: string } | null>(null);
+  const [editStatusDraft, setEditStatusDraft] = useState<string>("");
+  const [statusUpdateSuccessModal, setStatusUpdateSuccessModal] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">("list");
   const [activeTab, setActiveTab] = useState<"request" | "generate" | "generated">("request");
   const [showTestResults, setShowTestResults] = useState(false);
@@ -1218,13 +1221,10 @@ export default function LabResultsPage() {
       const updatedData = await response.json();
       return { updateData, updatedData };
     },
-    onSuccess: (result) => {
-      toast({
-        title: "Success",
-        description: "Lab result updated successfully",
-      });
+    onSuccess: (result, variables) => {
       setIsEditMode(false);
       setEditingStatusId(null);
+      setEditStatusDialog(null);
       
       // Update selectedResult with the new data
       if (selectedResult && result.updateData.id === selectedResult.id) {
@@ -1235,24 +1235,37 @@ export default function LabResultsPage() {
       }
       
       queryClient.invalidateQueries({ queryKey: ["/api/lab-results"] });
+      
+      // Show status-update success modal when status was updated from the edit dialog
+      if (variables?.data?.status != null) {
+        setStatusUpdateSuccessModal(variables.data.status);
+      } else {
+        toast({
+          title: "Success",
+          description: "Lab result updated successfully",
+        });
+      }
     },
     onError: (error: any) => {
-      if (error.status === 403) {
-        // Skip showing permission error for doctors/admins - they should have access
-        if (isDoctor() || isAdmin()) {
-          console.log('Permission error suppressed for doctor/admin role');
-          setEditingStatusId(null);
-          return;
-        }
+if (error.status === 403) {
+          // Skip showing permission error for doctors/admins - they should have access
+          if (isDoctor() || isAdmin()) {
+            console.log('Permission error suppressed for doctor/admin role');
+            setEditingStatusId(null);
+            setEditStatusDialog(null);
+            return;
+          }
         setPermissionErrorMessage(error.data?.error || "Insufficient permissions");
         setShowPermissionErrorDialog(true);
         setEditingStatusId(null);
+        setEditStatusDialog(null);
       } else {
         toast({
           title: "Error",
           description: error.message || "Failed to update lab result",
           variant: "destructive",
         });
+        setEditStatusDialog(null);
       }
     },
   });
@@ -1781,8 +1794,8 @@ Report generated from Cura EMR System`;
               body {
                 font-family: 'Arial', sans-serif;
                 margin: 0;
-                padding: 20px;
-                line-height: 1.5;
+                padding: 0;
+                line-height: 1.4;
                 color: #333;
                 background: white;
                 font-size: 14px;
@@ -1791,20 +1804,20 @@ Report generated from Cura EMR System`;
                 max-width: 800px;
                 margin: 0 auto;
                 background: white;
-                padding: 20px;
+                padding: 8px;
               }
               
               .print-header {
                 text-align: center;
-                margin-bottom: 40px;
-                padding-bottom: 20px;
+                margin-bottom: 12px;
+                padding-bottom: 8px;
                 border-bottom: 2px solid #333;
               }
               .print-header h1 {
                 font-size: 28px;
                 font-weight: bold;
                 color: #333;
-                margin-bottom: 8px;
+                margin-bottom: 4px;
                 letter-spacing: 1px;
               }
               .print-header h2 {
@@ -1816,9 +1829,9 @@ Report generated from Cura EMR System`;
 
               .header {
                 text-align: center;
-                margin-bottom: 30px;
+                margin-bottom: 12px;
                 border-bottom: 2px solid #333;
-                padding-bottom: 20px;
+                padding-bottom: 8px;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
@@ -1834,12 +1847,12 @@ Report generated from Cura EMR System`;
                 color: white;
                 font-weight: bold;
                 font-size: 24px;
-                margin-bottom: 15px;
+                margin-bottom: 8px;
               }
               .header h1 {
                 font-size: 24px;
                 font-weight: bold;
-                margin-bottom: 5px;
+                margin-bottom: 4px;
                 color: #333;
               }
               .header p {
@@ -1848,24 +1861,24 @@ Report generated from Cura EMR System`;
               }
 
               .info-section {
-                margin-bottom: 30px;
+                margin-bottom: 12px;
               }
               .section-title {
                 font-size: 18px;
                 font-weight: bold;
-                margin-bottom: 15px;
+                margin-bottom: 8px;
                 color: #333;
                 border-bottom: 1px solid #ddd;
-                padding-bottom: 5px;
+                padding-bottom: 4px;
               }
               .info-grid {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
-                gap: 30px;
-                margin-bottom: 20px;
+                gap: 12px;
+                margin-bottom: 10px;
               }
               .info-item {
-                margin-bottom: 8px;
+                margin-bottom: 4px;
                 display: flex;
                 align-items: center;
               }
@@ -1879,32 +1892,32 @@ Report generated from Cura EMR System`;
               }
 
               .lab-prescription-section {
-                margin: 30px 0;
-                padding: 20px;
-                border-radius: 8px;
+                margin: 12px 0;
+                padding: 10px;
+                border-radius: 6px;
                 background: #f0f8ff;
               }
               .lab-prescription-title {
                 font-size: 20px;
                 font-weight: bold;
-                margin-bottom: 20px;
+                margin-bottom: 10px;
                 color: #333;
                 text-align: center;
               }
               .test-details {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
-                gap: 20px;
+                gap: 12px;
               }
               .test-item {
-                margin-bottom: 15px;
+                margin-bottom: 8px;
               }
               .test-label {
                 font-size: 12px;
                 font-weight: bold;
                 color: #666;
                 text-transform: uppercase;
-                margin-bottom: 5px;
+                margin-bottom: 3px;
               }
               .test-value {
                 font-size: 16px;
@@ -1913,25 +1926,25 @@ Report generated from Cura EMR System`;
               }
 
               .test-results {
-                margin-top: 30px;
+                margin-top: 12px;
               }
               .results-title {
                 font-size: 16px;
                 font-weight: bold;
-                margin-bottom: 15px;
+                margin-bottom: 8px;
                 color: #333;
               }
               .result-item {
-                margin-bottom: 10px;
-                padding: 10px;
+                margin-bottom: 6px;
+                padding: 6px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
                 background: white;
               }
 
               .notes-section {
-                margin-top: 30px;
-                padding: 15px;
+                margin-top: 12px;
+                padding: 8px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
                 background: #fffbeb;
@@ -1940,7 +1953,7 @@ Report generated from Cura EMR System`;
           </head>
           <body>
             <div class="prescription-content">
-              <div style="display: grid; grid-template-columns: auto 1fr auto; align-items: center; border-bottom: 1px solid #ccc; padding: 1rem 0; position: relative;">
+              <div style="display: grid; grid-template-columns: auto 1fr auto; align-items: center; border-bottom: 1px solid #ccc; padding: 4px 0; position: relative;">
                 ${clinicHeader?.logoBase64 && clinicHeader?.logoPosition === 'left' ? `
                   <div style="grid-column: 1 / 2; display: flex; align-items: center;">
                     <img src="${clinicHeader.logoBase64}" alt="Clinic Logo" style="max-width: 80px; max-height: 80px;" />
@@ -1967,25 +1980,25 @@ Report generated from Cura EMR System`;
                 ` : '<div></div>'}
               </div>
 
-              <div style="margin-top: 1.5rem; margin-bottom: 1.5rem;">
-                <div style="margin-bottom: 1.5rem;">
-                  <h5 style="font-size: 16px; font-weight: bold; margin-bottom: 0.5rem;">PATIENT INFORMATION</h5>
-                  <div style="margin-bottom: 0.4rem;">
+              <div style="margin-top: 8px; margin-bottom: 8px;">
+                <div style="margin-bottom: 8px;">
+                  <h5 style="font-size: 16px; font-weight: bold; margin-bottom: 4px;">PATIENT INFORMATION</h5>
+                  <div style="margin-bottom: 2px;">
                     <strong>Name:</strong>
                     <span style="margin-left: 0.5rem;">${getPatientName(resultToUse.patientId)}</span>
                   </div>
-                  <div style="margin-bottom: 0.4rem;">
+                  <div style="margin-bottom: 2px;">
                     <strong>DOB:</strong>
                     <span style="margin-left: 0.5rem;">N/A</span>
                   </div>
-                  <div style="margin-bottom: 0.4rem;">
+                  <div style="margin-bottom: 2px;">
                     <strong>Study Date:</strong>
                     <span style="margin-left: 0.5rem;">${format(new Date(resultToUse.orderedAt || new Date()), "dd/MM/yyyy")}</span>
                   </div>
                 </div>
 
-                <div style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
-                  <h5 style="font-size: 9px; font-weight: bold; margin-bottom: 0.5rem;">DOCTOR DETAILS</h5>
+                <div style="margin-top: 4px; margin-bottom: 8px;">
+                  <h5 style="font-size: 9px; font-weight: bold; margin-bottom: 4px;">DOCTOR DETAILS</h5>
                   <div style="font-size: 9px; margin-bottom: 0.3rem; line-height: 1.4;">
                     <strong>Name:</strong>
                     <span style="margin-left: 0.5rem;">${resultToUse.doctorName || "Doctor"}</span>
@@ -2011,7 +2024,7 @@ Report generated from Cura EMR System`;
                 </div>
               </div>
 
-              <div class="lab-prescription-section" style="background-color:#FAF8F8 !important;">
+              <div class="lab-prescription-section" style="background-color:#FAF8F8 !important; margin: 8px 0; padding: 8px;">
                 <h2 class="lab-prescription-title">Laboratory Test Prescription</h2>
                 
                 <div class="test-details">
@@ -2025,7 +2038,7 @@ Report generated from Cura EMR System`;
                   </div>
                   <div class="test-item">
                     <div class="test-label">ORDERED DATE</div>
-                    <div class="test-value">${format(new Date(resultToUse.orderedAt), "MMM dd, yyyy HH:mm")}</div>
+                    <div class="test-value">${format(new Date(resultToUse.orderedAt || new Date()), "MMM dd, yyyy HH:mm")}</div>
                   </div>
                   <div class="test-item">
                     <div class="test-label">STATUS</div>
@@ -2053,16 +2066,16 @@ Report generated from Cura EMR System`;
               ` : ""}
 
               ${resultToUse.criticalValues ? `
-                <div style="margin-top: 20px; padding: 15px; background: #fef2f2; border: 2px solid #dc2626; border-radius: 8px;">
+                <div style="margin-top: 10px; padding: 8px; background: #fef2f2; border: 2px solid #dc2626; border-radius: 6px;">
                   <strong style="color: #dc2626;">⚠️ CRITICAL VALUES DETECTED</strong><br>
                   <span style="color: #991b1b;">This lab result contains critical values that require immediate attention.</span>
                 </div>
               ` : ""}
 
-              <div style="margin-top: 50px; text-align: center; border-top: 1px solid #ddd; padding-top: 20px;">
-                <div style="margin-bottom: 30px;">
+              <div style="margin-top: 16px; text-align: center; border-top: 1px solid #ddd; padding-top: 10px;">
+                <div style="margin-bottom: 12px;">
                   ${(resultToUse.signature?.doctorSignature && String(resultToUse.signature.doctorSignature).trim() !== "") ? `
-                    <div style="margin-bottom: 15px;">
+                    <div style="margin-bottom: 8px;">
                       <img src="${resultToUse.signature.doctorSignature}" alt="E-Signature" style="height: 80px; max-width: 250px; margin: 0 auto; display: block;" />
                     </div>
                   ` : ""}
@@ -2071,7 +2084,7 @@ Report generated from Cura EMR System`;
                   ${resultToUse.mainSpecialty ? `<div style="font-size: 12px; color: #666;">${resultToUse.mainSpecialty}</div>` : ""}
                 </div>
                 ${clinicFooter?.footerText ? `
-                <div style="font-size: 12px; color: #666; margin-top: 1rem;">
+                <div style="font-size: 12px; color: #666; margin-top: 6px;">
                   ${clinicFooter.footerText}
                 </div>
                 ` : `
@@ -2085,23 +2098,34 @@ Report generated from Cura EMR System`;
         </html>
       `;
 
-      // Create a temporary container
+      // Extract body content only: setting full document as innerHTML can leave
+      // .prescription-content unfindable; use body fragment so the element exists.
+      const bodyMatch = printHTML.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+      const bodyContent = bodyMatch ? bodyMatch[1].trim() : printHTML;
+
       const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = printHTML;
+      tempDiv.innerHTML = bodyContent;
       tempDiv.style.position = 'absolute';
       tempDiv.style.left = '-9999px';
       tempDiv.style.width = '800px';
       document.body.appendChild(tempDiv);
 
+      const targetEl = tempDiv.querySelector('.prescription-content');
+      if (!targetEl) {
+        document.body.removeChild(tempDiv);
+        throw new Error("PDF content element not found");
+      }
+
       // Wait for images to load
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 300));
 
       // Capture the content as canvas
-      const canvas = await html2canvas(tempDiv.querySelector('.prescription-content')!, {
+      const canvas = await html2canvas(targetEl as HTMLElement, {
         scale: 2,
         useCORS: true,
         logging: false,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        allowTaint: true,
       });
 
       // Remove temporary element
@@ -2525,7 +2549,7 @@ Report generated from Cura EMR System`;
                 ${selectedResult.mainSpecialty ? `<div style="font-size: 12px; color: #666;">${selectedResult.mainSpecialty}</div>` : ""}
               </div>
                 ${clinicFooter?.footerText ? `
-                <div style="font-size: 12px; color: #666; margin-top: 1rem;">
+                <div style="font-size: 12px; color: #666; margin-top: 6px;">
                   ${clinicFooter.footerText}
                 </div>
                 ` : `
@@ -3376,7 +3400,7 @@ Report generated from Cura EMR System`;
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '7%' }}>Sample</th>
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '7%' }}>Report</th>
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '6%' }}>T.Status</th>
-                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '7%' }}>Status</th>
+                            <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '7%', minWidth: '7rem' }}>Status</th>
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase" style={{ width: '8%' }}>Actions</th>
                           </tr>
                         </thead>
@@ -3443,7 +3467,7 @@ Report generated from Cura EMR System`;
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Sample</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Report</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>T.Status</th>
-                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '6%', minWidth: '5.5rem' }}>Status</th>
+                          <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '6%', minWidth: '7rem' }}>Status</th>
                           <th className="px-1 py-1.5 text-center text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '2%', minWidth: '1.5rem' }}>.</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Pay</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '4%' }}>Signed</th>
@@ -3724,41 +3748,20 @@ Report generated from Cura EMR System`;
                                 {result.criticalValues ? "Critical" : "Normal"}
                               </Badge>
                             </td>
-                            <td className="px-1 py-1.5 text-[11px] min-w-0">
-                              {editingStatusId === result.id ? (
-                                <Select
-                                  value={result.status}
-                                  onValueChange={(newStatus) => {
-                                    updateLabResultMutation.mutate({
-                                      id: result.id,
-                                      data: { status: newStatus },
-                                    });
-                                    setEditingStatusId(null);
-                                  }}
-                                >
-                                  <SelectTrigger className="w-20 h-6 text-[11px]">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="pending">pending</SelectItem>
-                                    <SelectItem value="collected">collected</SelectItem>
-                                    <SelectItem value="processing">processing</SelectItem>
-                                    <SelectItem value="completed">completed</SelectItem>
-                                    <SelectItem value="cancelled">cancelled</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              ) : (
-                                <Badge className={`${getStatusColor(result.status)} text-[10px] px-1 py-0 shrink-0`}>
-                                  {result.status}
-                                </Badge>
-                              )}
+                            <td className="px-1 py-1.5 text-[11px] min-w-0 overflow-hidden" style={{ maxWidth: '7rem' }}>
+                              <Badge className={`${getStatusColor(result.status)} text-[10px] px-1 py-0 shrink-0`}>
+                                {result.status}
+                              </Badge>
                             </td>
                             <td className="px-1 py-1.5 text-[11px] min-w-0 w-[1.5rem] shrink-0 text-center">
-                              {editingStatusId !== result.id && user?.role !== 'patient' && (
+                              {user?.role !== 'patient' && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => setEditingStatusId(result.id)}
+                                  onClick={() => {
+                                    setEditStatusDialog({ id: result.id, status: result.status });
+                                    setEditStatusDraft(result.status);
+                                  }}
                                   className="h-[18px] w-[18px] min-w-[18px] p-0 shrink-0 inline-flex items-center justify-center"
                                   data-testid={`button-edit-status-${result.id}`}
                                 >
@@ -4143,53 +4146,22 @@ Report generated from Cura EMR System`;
                         {getPatientName(result.patientId)}
                       </h3>
                       <div className="flex items-center gap-2">
-                        {editingStatusId === result.id ? (
-                          <Select
-                            value={result.status}
-                            onValueChange={(newStatus) => {
-                              updateLabResultMutation.mutate({
-                                id: result.id,
-                                data: { status: newStatus },
-                              });
-                              setEditingStatusId(null);
+                        <Badge className={getStatusColor(result.status)}>
+                          {result.status}
+                        </Badge>
+                        {user?.role !== 'patient' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setEditStatusDialog({ id: result.id, status: result.status });
+                              setEditStatusDraft(result.status);
                             }}
+                            className="h-[18px] w-[18px] min-w-[18px] p-0 shrink-0 inline-flex items-center justify-center"
+                            data-testid="button-edit-status-list"
                           >
-                            <SelectTrigger className="w-32">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="pending">pending</SelectItem>
-                              <SelectItem value="collected">
-                                collected
-                              </SelectItem>
-                              <SelectItem value="processing">
-                                processing
-                              </SelectItem>
-                              <SelectItem value="completed">
-                                completed
-                              </SelectItem>
-                              <SelectItem value="cancelled">
-                                cancelled
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <>
-                            <Badge className={getStatusColor(result.status)}>
-                              {result.status}
-                            </Badge>
-                            {user?.role !== 'patient' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setEditingStatusId(result.id)}
-                                className="h-[18px] w-[18px] min-w-[18px] p-0 shrink-0 inline-flex items-center justify-center"
-                                data-testid="button-edit-status-list"
-                              >
-                                <Edit className="w-[9px] h-[9px] shrink-0" style={{ width: 9, height: 9 }} />
-                              </Button>
-                            )}
-                          </>
+                            <Edit className="w-[9px] h-[9px] shrink-0" style={{ width: 9, height: 9 }} />
+                          </Button>
                         )}
                       </div>
                       {result.criticalValues && (
@@ -5362,8 +5334,8 @@ Report generated from Cura EMR System`;
                       return patient ? `${patient.firstName} ${patient.lastName}` : '';
                     })();
 
-                  // For nurses, create invoice with status "unpaid" instead of processing payment
-                  if (user?.role === 'nurse') {
+                  // For admin/doctor/nurse, create invoice with status "unpaid" instead of opening payment modal
+                  if (user?.role === 'admin' || user?.role === 'nurse' || user?.role === 'doctor') {
                     try {
                       const patient = patients.find((p: any) => p.id === pendingOrderData?.patientId);
                       const invoicePayload = {
@@ -5417,8 +5389,8 @@ Report generated from Cura EMR System`;
                       }
 
                       toast({
-                        title: "Invoice Created",
-                        description: "Invoice created successfully with unpaid status.",
+                        title: "Lab result created",
+                        description: "Invoice created with unpaid status. Pay later.",
                       });
 
                       setShowSummaryDialog(false);
@@ -6702,7 +6674,7 @@ Report generated from Cura EMR System`;
                 Print
               </Button>
               <Button
-                onClick={handleGeneratePDF}
+                onClick={() => handleGeneratePDF()}
                 className="bg-medical-blue hover:bg-blue-700"
               >
                 <Download className="h-4 w-4 mr-2" />
@@ -8627,6 +8599,74 @@ Report generated from Cura EMR System`;
               variant="outline"
             >
               Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Status Dialog */}
+      <Dialog open={!!editStatusDialog} onOpenChange={(open) => !open && setEditStatusDialog(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit Status</DialogTitle>
+            <DialogDescription>Change the status for this lab result.</DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="edit-status-select" className="text-sm font-medium">Status</Label>
+            <Select
+              value={editStatusDraft}
+              onValueChange={setEditStatusDraft}
+            >
+              <SelectTrigger id="edit-status-select" className="mt-2 w-full">
+                <SelectValue placeholder="Select status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pending">pending</SelectItem>
+                <SelectItem value="collected">collected</SelectItem>
+                <SelectItem value="processing">processing</SelectItem>
+                <SelectItem value="completed">completed</SelectItem>
+                <SelectItem value="cancelled">cancelled</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditStatusDialog(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (editStatusDialog) {
+                  updateLabResultMutation.mutate({
+                    id: editStatusDialog.id,
+                    data: { status: editStatusDraft },
+                  });
+                }
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Status updated success modal */}
+      <Dialog open={!!statusUpdateSuccessModal} onOpenChange={(open) => !open && setStatusUpdateSuccessModal(null)}>
+        <DialogContent className="max-w-sm">
+          <div className="flex flex-col items-center gap-4 py-4">
+            <div className="rounded-full bg-green-100 dark:bg-green-900/30 p-4">
+              <CheckCircle className="h-12 w-12 text-green-600 dark:text-green-400" />
+            </div>
+            <div className="text-center space-y-1">
+              <DialogTitle className="text-lg font-semibold">Status updated</DialogTitle>
+              <p className="text-sm text-muted-foreground capitalize">
+                {statusUpdateSuccessModal?.replace(/_/g, " ")}
+              </p>
+            </div>
+            <Button
+              onClick={() => setStatusUpdateSuccessModal(null)}
+              className="w-full bg-green-600 hover:bg-green-700"
+            >
+              OK
             </Button>
           </div>
         </DialogContent>

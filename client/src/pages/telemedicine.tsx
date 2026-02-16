@@ -1535,7 +1535,7 @@ export default function Telemedicine() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-4 page-zoom-90">
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
           <Button

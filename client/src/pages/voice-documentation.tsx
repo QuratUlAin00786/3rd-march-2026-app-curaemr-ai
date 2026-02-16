@@ -1718,8 +1718,8 @@ export default function VoiceDocumentation() {
   };
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6">
+    <div className="h-full overflow-y-auto page-zoom-90">
+      <div className="p-4 space-y-4">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-4">
             <Button

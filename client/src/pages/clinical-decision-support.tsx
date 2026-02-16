@@ -906,11 +906,11 @@ export default function ClinicalDecisionSupport() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
       <Header title="Clinical Decision Support" subtitle="AI-powered insights and recommendations" />
       
-  <div className="w-full flex-1 overflow-auto px-4 lg:px-6 py-6 space-y-4">
-        <div className="flex flex-wrap justify-end gap-3 mb-6">
+  <div className="w-full flex-1 overflow-auto px-3 sm:px-4 lg:px-5 py-4 space-y-4">
+        <div className="flex flex-wrap justify-end gap-2 sm:gap-3 mb-4">
           <Dialog open={createInsightOpen} onOpenChange={setCreateInsightOpen}>
             <DialogTrigger asChild>
               <Button data-testid="button-create-insight">
@@ -2286,11 +2286,11 @@ function DrugInteractionsTab() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
-      <div className="w-full px-4 lg:px-6 py-6 space-y-4">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
+      <div className="w-full px-3 sm:px-4 lg:px-5 py-4 space-y-4">
       {/* Header with Summary */}
-      <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border">
-        <div className="flex justify-between items-start mb-4">
+      <div className="bg-white dark:bg-gray-800 p-3 sm:p-4 rounded-lg border">
+        <div className="flex justify-between items-start mb-3">
           <div>
             <h3 className="text-lg font-semibold mb-2">Drug Interactions Analysis</h3>
             <div className="flex gap-6 text-sm text-gray-600 dark:text-gray-400">

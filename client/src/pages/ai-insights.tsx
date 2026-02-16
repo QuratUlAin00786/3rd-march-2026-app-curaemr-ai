@@ -144,7 +144,7 @@ export default function AiInsights() {
 
   if (isLoading) {
     return (
-      <>
+      <div className="w-full min-h-0 flex flex-col page-zoom-90">
         <Header 
           title="AI Insights" 
           subtitle="AI-powered medical insights and recommendations."
@@ -152,7 +152,7 @@ export default function AiInsights() {
         <div className="flex-1 flex items-center justify-center">
           <LoadingSpinner size="lg" />
         </div>
-      </>
+      </div>
     );
   }
 
@@ -160,12 +160,12 @@ export default function AiInsights() {
   if (error && !isLoading && !insights) {
     console.error('AI Insights error:', error);
     return (
-      <>
+      <div className="w-full min-h-0 flex flex-col page-zoom-90">
         <Header 
           title="AI Insights" 
           subtitle="AI-powered medical insights and recommendations."
         />
-        <div className="flex-1 p-6">
+        <div className="flex-1 p-4">
           <Card>
             <CardContent className="text-center py-8">
               <p className="text-neutral-600">
@@ -180,7 +180,7 @@ export default function AiInsights() {
             </CardContent>
           </Card>
         </div>
-      </>
+      </div>
     );
   }
 
@@ -193,7 +193,7 @@ export default function AiInsights() {
   const resolvedInsights = safeInsights.filter(insight => insight.status === 'resolved');
 
   return (
-    <>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       <Header 
         title="AI Insights" 
         subtitle="AI-powered medical insights and recommendations."
@@ -273,9 +273,9 @@ export default function AiInsights() {
         }
       />
       
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-3 sm:p-4">
         {/* AI Disclaimer */}
-        <div className="mb-6">
+        <div className="mb-4">
           <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 rounded-lg p-4">
             <div className="flex items-start space-x-3">
               <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
@@ -510,6 +510,6 @@ export default function AiInsights() {
           </div>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }

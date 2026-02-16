@@ -1091,10 +1091,10 @@ export default function FinancialIntelligence() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
       <Header title="Financial Intelligence" subtitle="Advanced analytics and financial insights" />
       
-      <div className="w-full px-4 lg:px-6 py-6">
+      <div className="w-full px-3 sm:px-4 lg:px-5 py-4">
         {/* Scroll Down Button */}
         {showScrollButton && (
         <Button

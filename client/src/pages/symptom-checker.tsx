@@ -291,10 +291,10 @@ export default function SymptomCheckerPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
       <Header title="AI Symptom Checker" subtitle="Get AI-powered insights about your symptoms and recommended next steps" />
       
-      <div className="w-full px-4 lg:px-6 py-6">
+      <div className="w-full px-3 sm:px-4 lg:px-5 py-4">
 
         {!showResults ? (
           <Form {...form}>

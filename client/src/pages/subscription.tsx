@@ -363,12 +363,12 @@ export default function Subscription() {
 
   if (isLoading || packagesLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
         <Header 
           title="Subscription" 
           subtitle="Manage your subscription and billing."
         />
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-6 flex-1 flex items-center justify-center">
+        <div className="w-full px-3 sm:px-4 lg:px-6 py-4 flex-1 flex items-center justify-center">
           <LoadingSpinner size="lg" />
         </div>
       </div>
@@ -376,13 +376,13 @@ export default function Subscription() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-full-width page-zoom-90">
       <Header 
         title="Subscription" 
         subtitle="Manage your subscription and billing."
       />
-      <div className="w-full flex-1 overflow-auto bg-white dark:bg-gray-900 px-4 lg:px-6 py-6">
-        <div className="space-y-6">
+      <div className="w-full flex-1 overflow-auto bg-white dark:bg-gray-900 px-3 sm:px-4 lg:px-5 py-4">
+        <div className="space-y-4">
           {postCheckoutLoading && (
             <Alert>
               <AlertTitle className="text-sm">Confirming your subscription</AlertTitle>

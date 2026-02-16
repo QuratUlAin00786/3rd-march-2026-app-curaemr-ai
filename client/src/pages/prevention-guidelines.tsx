@@ -122,9 +122,9 @@ export default function PreventionGuidelines() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="container mx-auto p-6">
-        <div className="mb-6">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 page-zoom-90">
+      <div className="container mx-auto p-4">
+        <div className="mb-4">
           <Button 
             variant="ghost" 
             onClick={() => setLocation("/clinical-decision-support")}

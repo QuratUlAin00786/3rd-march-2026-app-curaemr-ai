@@ -3510,22 +3510,22 @@ export default function MessagingPage() {
 
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden max-w-full w-full min-h-0">
       {/* Top row: Header + Theme Toggle */}
-      <div className="flex items-center justify-between mr-6 bg-white px-2 py-1 rounded flex-shrink-0">
+      <div className="flex items-center justify-between gap-2 bg-white px-2 py-1 rounded flex-shrink-0 min-w-0 max-w-full">
         <Header
           title="Messaging Center"
           subtitle="Secure communication with patients and staff"
         />
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-sm text-neutral-600">Theme:</span>
           <ThemeToggle />
         </div>
       </div>
 
       {/* Healthcare Quick Actions */}
-      <div className="flex items-center gap-4 mb-2 px-6 flex-wrap flex-shrink-0">
+      <div className="flex items-center gap-2 sm:gap-4 mb-2 px-4 sm:px-6 flex-wrap flex-shrink-0 min-w-0 max-w-full">
             <Button 
               variant="outline" 
               size="sm"
@@ -4185,23 +4185,23 @@ export default function MessagingPage() {
       </Dialog>
 
       {/* Messaging Content */}
-      <div className="flex-1 overflow-hidden h-[calc(100vh-180px)] p-[30px]">
-      <Tabs value={activeMessagingTab} onValueChange={setActiveMessagingTab} className="w-full h-full flex flex-col">
-        <TabsList className="w-full grid grid-cols-4 flex-shrink-0">
-          <TabsTrigger value="conversations">Conversations</TabsTrigger>
-          <TabsTrigger value="sms">SMS</TabsTrigger>
-          <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
-          <TabsTrigger value="templates">Announcement</TabsTrigger>
+      <div className="flex-1 min-h-0 overflow-hidden p-4 md:p-6 max-w-full">
+      <Tabs value={activeMessagingTab} onValueChange={setActiveMessagingTab} className="w-full h-full flex flex-col min-h-0 min-w-0">
+        <TabsList className="w-full grid grid-cols-4 flex-shrink-0 min-w-0">
+          <TabsTrigger value="conversations" className="min-w-0">Conversations</TabsTrigger>
+          <TabsTrigger value="sms" className="min-w-0">SMS</TabsTrigger>
+          <TabsTrigger value="campaigns" className="min-w-0">Campaigns</TabsTrigger>
+          <TabsTrigger value="templates" className="min-w-0">Announcement</TabsTrigger>
         </TabsList>
-        <TabsContent value="conversations" className="flex-1 overflow-hidden mt-4">
-          <div className="grid grid-cols-12 gap-4 h-full">
+        <TabsContent value="conversations" className="flex-1 overflow-hidden mt-4 min-h-0 min-w-0">
+          <div className="grid grid-cols-12 gap-3 md:gap-4 h-full min-w-0">
             {/* Conversations List */}
-            <div className="col-span-4 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col overflow-hidden">
-              <div className="p-4 border-b border-gray-200 dark:border-slate-600 flex-shrink-0">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">All Messages</h2>
+            <div className="col-span-4 min-w-0 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col overflow-hidden">
+              <div className="p-3 md:p-4 border-b border-gray-200 dark:border-slate-600 flex-shrink-0 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
+                  <h2 className="text-base md:text-lg font-semibold text-gray-900 dark:text-gray-100 truncate min-w-0">All Messages</h2>
                 <Select value={messageFilter} onValueChange={setMessageFilter}>
-                    <SelectTrigger className="w-[140px] h-9">
+                    <SelectTrigger className="min-w-0 w-full max-w-[8.75rem] h-9 flex-shrink-0">
                       <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -4225,8 +4225,8 @@ export default function MessagingPage() {
               </div>
 
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <ScrollArea className="flex-1 min-h-0">
-                  <div className="p-[30px]">
+                <ScrollArea className="flex-1 min-h-0 min-w-0">
+                  <div className="p-4 md:p-6">
                     {/* New Conversation Option */}
                     {/* Show existing conversations first */}
                     {filteredConversations && filteredConversations.length > 0 && (
@@ -4351,7 +4351,7 @@ export default function MessagingPage() {
             </div>
 
             {/* Message Thread */}
-            <div className="col-span-8 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col overflow-hidden">
+            <div className="col-span-8 min-w-0 border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg flex flex-col overflow-hidden">
               {selectedConversation ? (
                 <>
                   {/* Message Header */}
@@ -4497,7 +4497,7 @@ export default function MessagingPage() {
                               )}
                               
                               {/* Message Container */}
-                              <div className={`flex flex-col ${isSentByCurrentUser ? 'items-end' : 'items-start'}`} style={{ maxWidth: '70%' }}>
+                              <div className={`flex flex-col min-w-0 max-w-[70%] ${isSentByCurrentUser ? 'items-end' : 'items-start'}`}>
                                 {/* Sender Name and Timestamp - only for received messages */}
                                 {!isSentByCurrentUser && (
                                   <div className="flex items-center gap-2 mb-1 px-1">
@@ -5066,10 +5066,10 @@ export default function MessagingPage() {
 
         </TabsContent>
 
-        <TabsContent value="sms" className="space-y-6">
-          <div className="border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg">
+        <TabsContent value="sms" className="space-y-6 min-h-0 min-w-0 overflow-auto">
+          <div className="border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-lg min-w-0 max-w-full">
             <div className="p-4 border-b border-gray-200 dark:border-slate-600">
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-4 min-w-0">
                 <div>
                   <h3 className="text-lg font-semibold">SMS Messages</h3>
                   <p className="text-sm text-muted-foreground mt-1">
@@ -5202,8 +5202,8 @@ export default function MessagingPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="campaigns" className="space-y-6 p-6">
-          <div className="flex items-center justify-between">
+        <TabsContent value="campaigns" className="space-y-6 p-4 md:p-6 min-h-0 min-w-0 overflow-auto">
+          <div className="flex flex-wrap items-center justify-between gap-4 min-w-0 max-w-full">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Messaging Campaigns</h2>
             <div className="flex items-center gap-4">
               <div className="flex border rounded-lg overflow-hidden">
@@ -7005,8 +7005,8 @@ export default function MessagingPage() {
           </Dialog>
         </TabsContent>
 
-        <TabsContent value="templates" className="space-y-6">
-          <div className="flex items-center justify-between">
+        <TabsContent value="templates" className="space-y-6 min-w-0 overflow-auto">
+          <div className="flex flex-wrap items-center justify-between gap-4 min-w-0 max-w-full">
             <h2 className="text-xl font-semibold">Message Announcement</h2>
             <Dialog open={showCreateTemplate} onOpenChange={setShowCreateTemplate}>
               {canCreate('messaging') && (

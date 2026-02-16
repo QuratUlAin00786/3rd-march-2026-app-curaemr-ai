@@ -69,24 +69,24 @@ export default function StaffProfile() {
 
   if (isLoading) {
     return (
-      <>
+      <div className="w-full min-h-0 flex flex-col page-zoom-90">
         <Header title="Staff Profile" subtitle="Loading staff member details..." />
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-3 sm:p-4">
           <div className="animate-pulse">
             <div className="h-8 bg-gray-200 rounded w-1/3 mb-4"></div>
             <div className="h-32 bg-gray-200 rounded mb-6"></div>
             <div className="h-64 bg-gray-200 rounded"></div>
           </div>
         </div>
-      </>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <>
+      <div className="w-full min-h-0 flex flex-col page-zoom-90">
         <Header title="Staff Profile" subtitle="Error loading staff member" />
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-3 sm:p-4">
           <Card>
             <CardContent className="pt-6">
               <div className="text-center">
@@ -99,15 +99,15 @@ export default function StaffProfile() {
             </CardContent>
           </Card>
         </div>
-      </>
+      </div>
     );
   }
 
   if (!staffMember) {
     return (
-      <>
+      <div className="w-full min-h-0 flex flex-col page-zoom-90">
         <Header title="Staff Profile" subtitle="Staff member not found" />
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-3 sm:p-4">
           <Card>
             <CardContent className="pt-6">
               <div className="text-center">
@@ -120,19 +120,19 @@ export default function StaffProfile() {
             </CardContent>
           </Card>
         </div>
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="w-full min-h-0 flex flex-col page-zoom-90">
       <Header 
         title={`${staffMember.firstName} ${staffMember.lastName}`} 
         subtitle="Staff Profile & Information" 
       />
       
-      <div className="flex-1 overflow-auto p-6">
-        <div className="grid gap-6 lg:grid-cols-3">
+      <div className="flex-1 overflow-auto p-3 sm:p-4">
+        <div className="grid gap-4 lg:grid-cols-3">
           {/* Profile Overview */}
           <div className="lg:col-span-1">
             <Card>
@@ -311,6 +311,6 @@ export default function StaffProfile() {
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

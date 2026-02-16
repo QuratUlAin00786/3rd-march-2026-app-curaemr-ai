@@ -398,7 +398,7 @@ export default function PopulationHealth() {
   };
 
   return (
-    <div className="p-6 space-y-6 h-screen overflow-y-auto">
+    <div className="p-4 space-y-4 h-screen overflow-y-auto page-zoom-90">
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
           <Button

@@ -158,12 +158,12 @@ export default function ChatbotPage() {
   };
 
   if (isLoading) {
-    return <div className="p-6">Loading chatbot configuration...</div>;
+    return <div className="p-4 page-zoom-90">Loading chatbot configuration...</div>;
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 max-w-6xl mx-auto page-zoom-90">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-3xl font-bold">AI Chatbot</h1>
           <p className="text-gray-600">Configure and manage your AI-powered patient assistant</p>
