@@ -4537,18 +4537,69 @@ export default function ImagingPage() {
                                       )}
                                     </DropdownMenuContent>
                                   </DropdownMenu>
+                                ) : activeTab === 'generate-report' && user?.role !== 'patient' ? (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 flex-shrink-0" title="Actions">
+                                        <MoreVertical className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="min-w-[10rem]">
+                                      <DropdownMenuItem onClick={() => handleViewStudy(study, false)} data-testid={`button-edit-${study.id}`}>
+                                        <Edit className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                        Edit
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleGenerateReport(study.id)} data-testid={`button-save-report-${study.id}`}>
+                                        <Save className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                        Save
+                                      </DropdownMenuItem>
+                                      {canDelete('medical_imaging') && (
+                                        <DropdownMenuItem
+                                          onClick={() => { setStudyToDelete(study); setShowDeleteDialog(true); }}
+                                          className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+                                          data-testid={`button-delete-${study.id}`}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                      <DropdownMenuItem onClick={() => handleDownloadStudy(study.id)} data-testid={`button-download-${study.id}`}>
+                                        <Download className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                        Download
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                ) : activeTab === 'order-study' && user?.role !== 'patient' ? (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 flex-shrink-0" title="Actions">
+                                        <MoreVertical className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="min-w-[10rem]">
+                                      <DropdownMenuItem onClick={() => handleGenerateImagePrescription(study.id)} data-testid={`button-save-prescription-${study.id}`}>
+                                        <Save className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                        Save
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleESignClick(study.id)} data-testid={`button-esign-${study.id}`}>
+                                        <PenTool className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                        Sign
+                                      </DropdownMenuItem>
+                                      {canDelete('medical_imaging') && (
+                                        <DropdownMenuItem
+                                          onClick={() => { setStudyToDelete(study); setShowDeleteDialog(true); }}
+                                          className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+                                          data-testid={`button-delete-${study.id}`}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 ) : user?.role !== 'patient' && (
                                   <>
-                                    {activeTab === "order-study" ? (
-                                      <>
-                                        <Button variant="ghost" size="sm" onClick={() => handleGenerateImagePrescription(study.id)} className="h-5 w-5 p-0" data-testid={`button-save-prescription-${study.id}`} title="Save/Generate Prescription">
-                                          <Save className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
-                                        </Button>
-                                        <Button variant="ghost" size="sm" onClick={() => handleESignClick(study.id)} className="h-5 w-5 p-0" data-testid={`button-esign-${study.id}`} title="Electronic Signature">
-                                          <PenTool className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
-                                        </Button>
-                                      </>
-                                    ) : (
+                                    {activeTab === "order-study" ? null : (
                                       <>
                                         {activeTab !== 'generate-report' && (
                                         <Button variant="ghost" size="sm" onClick={() => activeTab === 'imaging-results' ? viewPDFReportInDialog(study) : handleViewStudy(study)} className="h-5 w-5 p-0" data-testid={`button-view-${study.id}`} title={activeTab === 'imaging-results' ? "View PDF Report" : "View Study"}>
@@ -4559,11 +4610,6 @@ export default function ImagingPage() {
                                           <Edit className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                         </Button>
                                       </>
-                                    )}
-                                    {activeTab === 'generate-report' && (
-                                      <Button variant="ghost" size="sm" onClick={() => handleGenerateReport(study.id)} className="h-5 w-5 p-0" data-testid={`button-save-report-${study.id}`} title="Save/Generate Report">
-                                        <Save className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
-                                      </Button>
                                     )}
                                     {activeTab !== 'generate-report' && activeTab !== 'imaging-results' && activeTab !== 'order-study' && (
                                       <Button variant="ghost" size="sm" onClick={() => handleESignClick(study.id)} className="h-5 w-5 p-0" data-testid={`button-esign-${study.id}`} title="Electronic Signature">
@@ -4582,7 +4628,7 @@ export default function ImagingPage() {
                                     )}
                                   </>
                                 )}
-                                {activeTab === "imaging-results" ? null : activeTab !== "order-study" && user?.role !== 'patient' ? (
+                                {activeTab === "imaging-results" ? null : activeTab !== "order-study" && activeTab !== "generate-report" && user?.role !== 'patient' ? (
                                   <Button variant="ghost" size="sm" onClick={() => handleDownloadStudy(study.id)} className="h-5 w-5 p-0" data-testid={`button-download-${study.id}`}>
                                     <Download className="h-2.5 w-2.5 text-gray-600 dark:text-gray-400" />
                                   </Button>

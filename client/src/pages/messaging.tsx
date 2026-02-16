@@ -308,13 +308,16 @@ const formatTimestampNoConversion = (timestamp: string): string => {
 export default function MessagingPage() {
   const { canCreate, canEdit, canDelete } = useRolePermissions();
   
-  // Helper function to show toast notification (auto-dismiss)
+  // State for success modal (used by showSuccess)
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
+  const [successTitle, setSuccessTitle] = useState<string>("");
+  const [successMessage, setSuccessMessage] = useState<string>("");
+
+  // Helper to show success in modal popup with green tick (instead of toast)
   const showSuccess = (title: string, message: string) => {
-    toast({
-      title: title,
-      description: message,
-      duration: 3000, // Auto-dismiss after 3 seconds
-    });
+    setSuccessTitle(title);
+    setSuccessMessage(message);
+    setShowSuccessDialog(true);
   };
   const [, setLocation] = useLocation();
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
@@ -443,9 +446,6 @@ export default function MessagingPage() {
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [newTagName, setNewTagName] = useState<string>("");
   const [newTagColor, setNewTagColor] = useState<string>("blue");
-  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
-  const [successTitle, setSuccessTitle] = useState<string>("");
-  const [successMessage, setSuccessMessage] = useState<string>("");
   const [showCallInProgress, setShowCallInProgress] = useState(false);
   const [callInProgressParticipant, setCallInProgressParticipant] = useState<string>("");
   const [newMessage, setNewMessage] = useState({
@@ -1202,11 +1202,7 @@ export default function MessagingPage() {
           description = `Voice call with text-to-speech message initiated successfully to ${variables.phoneNumber || 'recipient'}.`;
         }
         
-        toast({
-          title: title,
-          description: description,
-          duration: 3000,
-        });
+        showSuccess(title, description);
       }
     },
     onError: (error: any) => {
@@ -3887,18 +3883,20 @@ export default function MessagingPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
-                {/* From/Sender Field */}
+                {/* From/Sender Field - display logged-in user */}
                 <div className="space-y-1.5">
                   <Label htmlFor="message-sender" className="text-sm font-medium">From</Label>
-                  {isDoctor ? (
-                    <div className="h-9 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm text-gray-700 dark:text-gray-300">
-                      {formatRoleLabel(user?.role)} {user?.firstName} {user?.lastName}
-                    </div>
-                  ) : (
-                    <div className="h-9 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm text-gray-700 dark:text-gray-300">
-                      {user?.firstName} {user?.lastName}
-                    </div>
-                  )}
+                  <div className="h-9 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm text-gray-700 dark:text-gray-300">
+                    {(currentUser || user) ? (
+                      isDoctor ? (
+                        <>{formatRoleLabel((currentUser || user)?.role)} {(currentUser || user)?.firstName} {(currentUser || user)?.lastName}</>
+                      ) : (
+                        <>{(currentUser || user)?.firstName} {(currentUser || user)?.lastName}</>
+                      )
+                    ) : (
+                      <span className="text-muted-foreground">Loading...</span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Role and Name Selection - Show for admin, patient, doctor, and nurse */}
@@ -3940,9 +3938,9 @@ export default function MessagingPage() {
                             setNewMessage(prev => ({ ...prev, recipient: value }));
                             setValidationErrors(prev => ({ ...prev, recipientName: undefined }));
                             
-                            // Auto-populate phone number for patient role
+                            // Auto-populate phone number for patient role (find by id for unique selection)
                             if (selectedRecipientRole === 'patient') {
-                              const patient = (patientsData || []).find((p: any) => `${p.firstName} ${p.lastName}` === value);
+                              const patient = (patientsData || []).find((p: any) => String(p.id) === value);
                               if (patient && (patient.phone || patient.phoneNumber || patient.mobile)) {
                                 setNewMessage(prev => ({ 
                                   ...prev, 
@@ -3950,24 +3948,29 @@ export default function MessagingPage() {
                                   phoneNumber: patient.phone || patient.phoneNumber || patient.mobile || ""
                                 }));
                               }
+                            } else {
+                              const recipient = filteredRecipients.find((r: any) => String(r.id) === value);
+                              if (recipient && (recipient.phone || recipient.phoneNumber || recipient.mobile)) {
+                                setNewMessage(prev => ({ 
+                                  ...prev, 
+                                  phoneNumber: recipient.phone || recipient.phoneNumber || recipient.mobile || ""
+                                }));
+                              }
                             }
                           }}
                           disabled={!selectedRecipientRole}
                         >
-                          <SelectTrigger data-testid="select-recipient-name" className={`h-9 ${validationErrors.recipientName ? "border-red-500" : ""}`}>
+                          <SelectTrigger data-testid="select-recipient-name" className={`h-9 min-w-0 truncate ${validationErrors.recipientName ? "border-red-500" : ""}`}>
                             <SelectValue placeholder={selectedRecipientRole ? "Select a name..." : "Select role first..."} />
                           </SelectTrigger>
                           <SelectContent>
                             {filteredRecipients.map((recipient: any) => (
                               <SelectItem 
                                 key={recipient.id} 
-                                value={`${recipient.firstName} ${recipient.lastName}`}
+                                value={String(recipient.id)}
                                 data-testid={`recipient-option-${recipient.id}`}
                               >
-                                <div className="flex flex-col">
-                                  <span className="font-medium">{recipient.firstName} {recipient.lastName}</span>
-                                  <span className="text-xs text-gray-500">{recipient.email}</span>
-                                </div>
+                                <span className="truncate block">{recipient.firstName} {recipient.lastName} ({recipient.email})</span>
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -3978,45 +3981,59 @@ export default function MessagingPage() {
                       </div>
                     </>
                   ) : (
-                    <div className="space-y-1.5">
-                      <Label htmlFor="messageRecipient" className="text-sm font-medium">Recipient *</Label>
-                      <Select 
-                        value={selectedMessagePatient} 
-                        onValueChange={(value) => {
-                          const patient = (patientsData || []).find((p: any) => `${p.firstName} ${p.lastName}` === value);
-                          if (patient) {
-                            setSelectedMessagePatient(value);
-                            setNewMessage(prev => ({ 
-                              ...prev, 
-                              recipient: value,
-                              phoneNumber: patient.phone || patient.phoneNumber || patient.mobile || ""
-                            }));
-                            setValidationErrors(prev => ({ ...prev, recipientName: undefined }));
-                          }
-                        }}
-                      >
-                        <SelectTrigger data-testid="select-patient-recipient" className={`h-9 ${validationErrors.recipientName ? "border-red-500" : ""}`}>
-                          <SelectValue placeholder="Select a patient..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(patientsData || []).map((patient: any) => (
-                            <SelectItem 
-                              key={patient.id} 
-                              value={`${patient.firstName} ${patient.lastName}`}
-                              data-testid={`patient-option-${patient.id}`}
-                            >
-                              <div className="flex flex-col">
-                                <span className="font-medium">{patient.firstName} {patient.lastName}</span>
-                                <span className="text-xs text-gray-500">{patient.email} • {patient.patientId}</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {validationErrors.recipientName && (
-                        <p className="text-xs text-red-500 mt-1">{validationErrors.recipientName}</p>
-                      )}
-                    </div>
+                    <>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="selectRoleOther" className="text-sm font-medium">Select Role *</Label>
+                        <Select 
+                          value="patient"
+                          onValueChange={() => {}}
+                          disabled
+                        >
+                          <SelectTrigger data-testid="select-recipient-role-other" className="h-9 bg-gray-50 dark:bg-gray-800">
+                            <SelectValue placeholder="Select a role..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="patient">Patient</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="selectNameOther" className="text-sm font-medium">Select Name *</Label>
+                        <Select 
+                          value={selectedMessagePatient} 
+                          onValueChange={(value) => {
+                            const patient = (patientsData || []).find((p: any) => String(p.id) === value);
+                            if (patient) {
+                              setSelectedMessagePatient(value);
+                              setNewMessage(prev => ({ 
+                                ...prev, 
+                                recipient: value,
+                                phoneNumber: patient.phone || patient.phoneNumber || patient.mobile || ""
+                              }));
+                              setValidationErrors(prev => ({ ...prev, recipientName: undefined }));
+                            }
+                          }}
+                        >
+                          <SelectTrigger data-testid="select-patient-recipient" className={`h-9 min-w-0 truncate ${validationErrors.recipientName ? "border-red-500" : ""}`}>
+                            <SelectValue placeholder="Select a name..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(patientsData || []).map((patient: any) => (
+                              <SelectItem 
+                                key={patient.id} 
+                                value={String(patient.id)}
+                                data-testid={`patient-option-${patient.id}`}
+                              >
+                                <span className="truncate block">{patient.firstName} {patient.lastName} ({patient.email}){patient.patientId ? ` • ${patient.patientId}` : ""}</span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {validationErrors.recipientName && (
+                          <p className="text-xs text-red-500 mt-1">{validationErrors.recipientName}</p>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
 

@@ -36,7 +36,14 @@ import {
   DollarSign,
   CreditCard,
   Mail,
+  MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -3086,96 +3093,61 @@ export function PatientList({ onSelectPatient, genderFilter = null, viewMode = "
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-right">
-                      <div className="flex justify-end gap-1">
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => handleViewPatient(patient)}
-                                className="h-7 w-7 p-0"
-                                data-testid={`button-view-${patient.id}`}
+                      <div className="flex justify-end">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0"
+                              data-testid={`button-actions-${patient.id}`}
+                              title="Actions"
+                            >
+                              <MoreVertical className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[10rem]">
+                            <DropdownMenuItem
+                              onClick={() => handleViewPatient(patient)}
+                              data-testid={`button-view-${patient.id}`}
+                            >
+                              <Eye className="h-3.5 w-3.5 mr-2 shrink-0" />
+                              View
+                            </DropdownMenuItem>
+                            {canEditPatient && (
+                              <DropdownMenuItem
+                                onClick={() => handleEditPatient(patient)}
+                                data-testid={`button-edit-${patient.id}`}
                               >
-                                <Eye className="h-3 w-3" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>View Details</TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                        
-                        {canEditPatient && (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleEditPatient(patient)}
-                                  className="h-7 w-7 p-0"
-                                  data-testid={`button-edit-${patient.id}`}
-                                >
-                                  <Edit className="h-3 w-3" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Edit</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        )}
-                        
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => handleViewRecords(patient)}
-                                className="h-7 w-7 p-0"
-                                style={{ color: '#4A7DFF' }}
+                                <Edit className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                Edit
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem
+                              onClick={() => handleViewRecords(patient)}
+                            >
+                              <FileText className="h-3.5 w-3.5 mr-2 shrink-0" />
+                              View Records
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleBookAppointment(patient)}
+                            >
+                              <Calendar className="h-3.5 w-3.5 mr-2 shrink-0" />
+                              Book Appointment
+                            </DropdownMenuItem>
+                            {canDeletePatient && (
+                              <DropdownMenuItem
+                                onClick={() => handleDeletePatient(patient)}
+                                disabled={deletePatientMutation.isPending}
+                                className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+                                data-testid={`button-delete-${patient.id}`}
                               >
-                                <FileText className="h-3 w-3" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Medical Records</TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                        
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => handleBookAppointment(patient)}
-                                className="h-7 w-7 p-0"
-                                style={{ color: '#7279FB' }}
-                              >
-                                <Calendar className="h-3 w-3" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Book Appointment</TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                        
-                        {canDeletePatient && (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleDeletePatient(patient)}
-                                  disabled={deletePatientMutation.isPending}
-                                  className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                  data-testid={`button-delete-${patient.id}`}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Delete</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        )}
+                                <Trash2 className="h-3.5 w-3.5 mr-2 shrink-0" />
+                                Delete
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </td>
                   </tr>

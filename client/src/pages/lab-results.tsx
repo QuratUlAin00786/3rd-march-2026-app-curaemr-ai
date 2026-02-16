@@ -245,7 +245,14 @@ import {
   BarChart,
   Save,
   Loader2,
+  MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface DatabaseLabResult {
   id: number;
@@ -3461,7 +3468,7 @@ Report generated from Cura EMR System`;
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '10%' }}>Test Type</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Ordered</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Priority</th>
-                          {activeTab !== "request" && (
+                          {activeTab === "generated" && (
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '6%' }}>Rx</th>
                           )}
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Sample</th>
@@ -3471,7 +3478,7 @@ Report generated from Cura EMR System`;
                           <th className="px-1 py-1.5 text-center text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '2%', minWidth: '1.5rem' }}>.</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '5%' }}>Pay</th>
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '4%' }}>Signed</th>
-                          {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
+                          {activeTab === "request" && (
                             <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase min-w-0" style={{ width: '7%' }}>Inv/Sign</th>
                           )}
                           <th className="px-1 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase shrink-0" style={{ width: '7%', minWidth: '4.5rem' }}>Actions</th>
@@ -3488,8 +3495,8 @@ Report generated from Cura EMR System`;
                               <div className="truncate" title={result.testId}>
                                 {result.testId}
                               </div>
-                              {activeTab !== "request" && (
-                                <Button
+{activeTab === "generated" && (
+                              <Button
                                   variant="link"
                                   size="sm"
                                   onClick={() => {
@@ -3546,7 +3553,7 @@ Report generated from Cura EMR System`;
                                 {result.priority || "routine"}
                               </Badge>
                             </td>
-                            {activeTab !== "request" && (
+                            {activeTab === "generated" && (
                               <td className="px-1 py-1.5 text-[11px] min-w-0">
                                 <div className="flex items-center justify-center gap-0.5 flex-shrink-0">
                                   {/* Save/View Prescription PDF Button */}
@@ -3804,10 +3811,10 @@ Report generated from Cura EMR System`;
                                 )}
                               </div>
                             </td>
-                            {activeTab !== "generated" && !(activeTab === "generate" && user?.role === "nurse") && (
+                            {activeTab === "request" && (
                             <td className="px-1 py-1.5 text-[11px] min-w-0">
                               <div className="flex items-center gap-0.5 justify-center flex-shrink-0 flex-wrap">
-                                {(activeTab === "request" || activeTab === "generated") && user?.role !== 'patient' && (
+                                {user?.role !== 'patient' && (
                                   <>
                                       {activeTab === "request" && (
                                         <Button
@@ -3869,42 +3876,47 @@ Report generated from Cura EMR System`;
                             <td className="px-1 py-1.5 text-[11px] min-w-[4.5rem] w-[4.5rem] shrink-0">
                               <div className="flex items-center gap-0.5 justify-center flex-shrink-0">
                                 {activeTab === "request" ? (
-                                  <>
-                                    {user?.role !== 'patient' && canEdit('lab_results') && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                        onClick={() => handleViewResult(result)}
-                                      className="h-4 w-4 min-w-4 p-0 shrink-0"
-                                        data-testid={`button-edit-${result.id}`}
-                                        title="Edit"
-                                    >
-                                        <Edit className="w-[10px] h-[10px] text-gray-600 dark:text-gray-400 shrink-0" />
-                                    </Button>
-                                    )}
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleGeneratePrescription(result)}
-                                      className="h-4 w-4 min-w-4 p-0 shrink-0"
-                                      data-testid={`button-prescription-${result.id}`}
-                                      title={user?.role === 'patient' ? 'View Prescription' : 'Generate Prescription'}
-                                    >
-                                      <Eye className="w-[10px] h-[10px] text-gray-600 dark:text-gray-400 shrink-0" />
-                                    </Button>
-                                    {user?.role !== 'patient' && canDelete('lab_results') && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={() => handleDeleteResult(result.id)}
-                                        className="h-4 w-4 min-w-4 p-0 shrink-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                                        data-testid={`button-delete-${result.id}`}
-                                        title="Delete"
+                                        className="h-6 w-6 min-w-6 p-0 shrink-0"
+                                        data-testid={`button-actions-${result.id}`}
+                                        title="Actions"
                                       >
-                                        <Trash2 className="w-[10px] h-[10px] shrink-0" />
+                                        <MoreVertical className="w-4 h-4 text-gray-600 dark:text-gray-400 shrink-0" />
                                       </Button>
-                                    )}
-                                  </>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="min-w-[10rem]">
+                                      {user?.role !== 'patient' && canEdit('lab_results') && (
+                                        <DropdownMenuItem
+                                          onClick={() => handleViewResult(result)}
+                                          data-testid={`button-edit-${result.id}`}
+                                        >
+                                          <Edit className="w-3.5 h-3.5 mr-2 shrink-0" />
+                                          Edit
+                                        </DropdownMenuItem>
+                                      )}
+                                      <DropdownMenuItem
+                                        onClick={() => handleGeneratePrescription(result)}
+                                        data-testid={`button-prescription-${result.id}`}
+                                      >
+                                        <Eye className="w-3.5 h-3.5 mr-2 shrink-0" />
+                                        {user?.role === 'patient' ? 'View Prescription' : 'View'}
+                                      </DropdownMenuItem>
+                                      {user?.role !== 'patient' && canDelete('lab_results') && (
+                                        <DropdownMenuItem
+                                          onClick={() => handleDeleteResult(result.id)}
+                                          className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+                                          data-testid={`button-delete-${result.id}`}
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5 mr-2 shrink-0" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 ) : activeTab === "generate" ? (
                                   <>
                                     {user?.role !== 'patient' && (
@@ -3923,167 +3935,146 @@ Report generated from Cura EMR System`;
                                     )}
                                   </>
                                 ) : (
-                                  <>
-                                    {/* Lab Results tab: Only show Print, Save, and Download */}
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={async () => {
-                                        try {
-                                          const token = localStorage.getItem("auth_token");
-                                          const headers: Record<string, string> = {
-                                            "X-Tenant-Subdomain": getActiveSubdomain(),
-                                          };
-                                          if (token) {
-                                            headers["Authorization"] = `Bearer ${token}`;
-                                          }
-
-                                          // Fetch PDF as blob with authentication
-                                          const response = await fetch(`/api/lab-results/${result.id}/download-pdf`, {
-                                            headers: headers,
-                                          });
-
-                                          if (!response.ok) {
-                                            const errorData = await response.json().catch(() => ({ error: "Failed to download PDF" }));
-                                            throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-                                          }
-
-                                          // Create blob URL from response
-                                          const blob = await response.blob();
-                                          const blobUrl = URL.createObjectURL(blob);
-                                          
-                                          // Set PDF URL and open viewer
-                                          setPdfViewerUrl(blobUrl);
-                                          setShowPdfViewerDialog(true);
-                                        } catch (error: any) {
-                                          console.error("Error opening PDF:", error);
-                                          toast({
-                                            title: "Error",
-                                            description: error.message || "Failed to open PDF. Please try again.",
-                                            variant: "destructive",
-                                          });
-                                        }
-                                      }}
-                                      className="h-5 w-5 p-0"
-                                      data-testid={`button-save-pdf-viewer-${result.id}`}
-                                      title="View PDF"
-                                    >
-                                      <Save className="h-2.5 w-2.5 text-yellow-600 dark:text-yellow-400" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={async () => {
-                                        try {
-                                          const token = localStorage.getItem("auth_token");
-                                          const headers: Record<string, string> = {
-                                            "X-Tenant-Subdomain": getActiveSubdomain(),
-                                          };
-                                          if (token) {
-                                            headers["Authorization"] = `Bearer ${token}`;
-                                          }
-
-                                          // Get signed URL for the PDF
-                                          const signedUrlResponse = await fetch(`/api/files/${result.id}/signed-url?type=testresult`, {
-                                            headers,
-                                            credentials: "include",
-                                          });
-
-                                          if (!signedUrlResponse.ok) {
-                                            const errorData = await signedUrlResponse.json();
-                                            throw new Error(errorData.error || "Failed to get PDF URL");
-                                          }
-
-                                          const { signedUrl } = await signedUrlResponse.json();
-                                          
-                                          // Open PDF in new window for printing
-                                          const printWindow = window.open(signedUrl, '_blank');
-                                          if (printWindow) {
-                                            printWindow.onload = () => {
-                                              printWindow.print();
+                                  /* Lab Results tab: kebab dropdown with Save, Print, Download, Delete */
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 w-6 min-w-6 p-0 shrink-0"
+                                        data-testid={`button-actions-${result.id}`}
+                                        title="Actions"
+                                      >
+                                        <MoreVertical className="w-4 h-4 text-gray-600 dark:text-gray-400 shrink-0" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="min-w-[10rem]">
+                                      <DropdownMenuItem
+                                        onClick={async () => {
+                                          try {
+                                            const token = localStorage.getItem("auth_token");
+                                            const headers: Record<string, string> = {
+                                              "X-Tenant-Subdomain": getActiveSubdomain(),
                                             };
+                                            if (token) {
+                                              headers["Authorization"] = `Bearer ${token}`;
+                                            }
+                                            const response = await fetch(`/api/lab-results/${result.id}/download-pdf`, { headers });
+                                            if (!response.ok) {
+                                              const errorData = await response.json().catch(() => ({ error: "Failed to download PDF" }));
+                                              throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                                            }
+                                            const blob = await response.blob();
+                                            const blobUrl = URL.createObjectURL(blob);
+                                            setPdfViewerUrl(blobUrl);
+                                            setShowPdfViewerDialog(true);
+                                          } catch (error: any) {
+                                            console.error("Error opening PDF:", error);
+                                            toast({
+                                              title: "Error",
+                                              description: error.message || "Failed to open PDF. Please try again.",
+                                              variant: "destructive",
+                                            });
                                           }
-                                        } catch (error: any) {
-                                          console.error("Error printing PDF:", error);
-                                          toast({
-                                            title: "Error",
-                                            description: error.message || "Failed to print PDF. Please try again.",
-                                            variant: "destructive",
-                                          });
-                                        }
-                                      }}
-                                      className="h-5 w-5 p-0"
-                                      data-testid={`button-print-${result.id}`}
-                                      title="Print PDF"
-                                    >
-                                      <Printer className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={async () => {
-                                        try {
-                                          const token = localStorage.getItem("auth_token");
-                                          const headers: Record<string, string> = {
-                                            "X-Tenant-Subdomain": getActiveSubdomain(),
-                                          };
-                                          if (token) {
-                                            headers["Authorization"] = `Bearer ${token}`;
+                                        }}
+                                        data-testid={`button-save-pdf-viewer-${result.id}`}
+                                      >
+                                        <Save className="w-3.5 h-3.5 mr-2 shrink-0" />
+                                        Save
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onClick={async () => {
+                                          try {
+                                            const token = localStorage.getItem("auth_token");
+                                            const headers: Record<string, string> = {
+                                              "X-Tenant-Subdomain": getActiveSubdomain(),
+                                            };
+                                            if (token) {
+                                              headers["Authorization"] = `Bearer ${token}`;
+                                            }
+                                            const signedUrlResponse = await fetch(`/api/files/${result.id}/signed-url?type=testresult`, {
+                                              headers,
+                                              credentials: "include",
+                                            });
+                                            if (!signedUrlResponse.ok) {
+                                              const errorData = await signedUrlResponse.json();
+                                              throw new Error(errorData.error || "Failed to get PDF URL");
+                                            }
+                                            const { signedUrl } = await signedUrlResponse.json();
+                                            const printWindow = window.open(signedUrl, '_blank');
+                                            if (printWindow) {
+                                              printWindow.onload = () => {
+                                                printWindow.print();
+                                              };
+                                            }
+                                          } catch (error: any) {
+                                            console.error("Error printing PDF:", error);
+                                            toast({
+                                              title: "Error",
+                                              description: error.message || "Failed to print PDF. Please try again.",
+                                              variant: "destructive",
+                                            });
                                           }
-
-                                          // Download the test result PDF (same as save button)
-                                          const response = await fetch(`/api/lab-results/${result.id}/download-pdf`, {
-                                            headers: headers,
-                                          });
-
-                                          if (!response.ok) {
-                                            const errorData = await response.json().catch(() => ({ error: "Failed to download PDF" }));
-                                            throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                                        }}
+                                        data-testid={`button-print-${result.id}`}
+                                      >
+                                        <Printer className="w-3.5 h-3.5 mr-2 shrink-0" />
+                                        Print
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onClick={async () => {
+                                          try {
+                                            const token = localStorage.getItem("auth_token");
+                                            const headers: Record<string, string> = {
+                                              "X-Tenant-Subdomain": getActiveSubdomain(),
+                                            };
+                                            if (token) {
+                                              headers["Authorization"] = `Bearer ${token}`;
+                                            }
+                                            const response = await fetch(`/api/lab-results/${result.id}/download-pdf`, { headers });
+                                            if (!response.ok) {
+                                              const errorData = await response.json().catch(() => ({ error: "Failed to download PDF" }));
+                                              throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                                            }
+                                            const blob = await response.blob();
+                                            const url = window.URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = `${result.testId}_test_result.pdf`;
+                                            document.body.appendChild(a);
+                                            a.click();
+                                            window.URL.revokeObjectURL(url);
+                                            document.body.removeChild(a);
+                                            toast({
+                                              title: "Success",
+                                              description: "Test result PDF downloaded successfully.",
+                                            });
+                                          } catch (error: any) {
+                                            console.error("Error downloading PDF:", error);
+                                            toast({
+                                              title: "Error",
+                                              description: error.message || "Failed to download PDF. Please try again.",
+                                              variant: "destructive",
+                                            });
                                           }
-
-                                          // Create blob URL from response and download
-                                          const blob = await response.blob();
-                                          const url = window.URL.createObjectURL(blob);
-                                          const a = document.createElement('a');
-                                          a.href = url;
-                                          a.download = `${result.testId}_test_result.pdf`;
-                                          document.body.appendChild(a);
-                                          a.click();
-                                          window.URL.revokeObjectURL(url);
-                                          document.body.removeChild(a);
-
-                                          toast({
-                                            title: "Success",
-                                            description: "Test result PDF downloaded successfully.",
-                                          });
-                                        } catch (error: any) {
-                                          console.error("Error downloading PDF:", error);
-                                          toast({
-                                            title: "Error",
-                                            description: error.message || "Failed to download PDF. Please try again.",
-                                            variant: "destructive",
-                                          });
-                                        }
-                                      }}
-                                      className="h-5 w-5 p-0"
-                                      data-testid={`button-download-${result.id}`}
-                                      title="Download PDF"
-                                    >
-                                      <Download className="h-2.5 w-2.5 text-purple-600 dark:text-purple-400" />
-                                    </Button>
-                                    {user?.role !== 'patient' && canDelete('lab_results') && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                        onClick={() => handleDeleteResult(result.id)}
-                                        className="h-5 w-5 p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                                        data-testid={`button-delete-${result.id}`}
-                                        title="Delete Lab Result"
-                                    >
-                                        <Trash2 className="h-2.5 w-2.5" />
-                                    </Button>
-                                    )}
-                                  </>
+                                        }}
+                                        data-testid={`button-download-${result.id}`}
+                                      >
+                                        <Download className="w-3.5 h-3.5 mr-2 shrink-0" />
+                                        Download
+                                      </DropdownMenuItem>
+                                      {user?.role !== 'patient' && canDelete('lab_results') && (
+                                        <DropdownMenuItem
+                                          onClick={() => handleDeleteResult(result.id)}
+                                          className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+                                          data-testid={`button-delete-${result.id}`}
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5 mr-2 shrink-0" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 )}
                               </div>
                             </td>

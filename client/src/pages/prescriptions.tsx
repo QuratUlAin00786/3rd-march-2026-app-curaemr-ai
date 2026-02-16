@@ -72,7 +72,14 @@ import {
   Share2,
   History,
   Loader2,
+  MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
 import { useRolePermissions } from "@/hooks/use-role-permissions";
@@ -6206,40 +6213,50 @@ export default function PrescriptionsPage() {
                         </Button>
                     </div>
                   )}
-                  <div className="flex items-center justify-center gap-0.5 px-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0 flex-shrink-0"
-                      onClick={() => handleViewPrescription(prescription)}
-                      title="View"
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                    </Button>
-                    {user?.role !== "patient" &&
-                      prescription.status === "active" &&
-                      canEdit("prescriptions") && (
+                  <div className="flex items-center justify-center px-1">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-6 w-6 p-0 flex-shrink-0"
-                          onClick={() => handleEditPrescription(prescription)}
-                          title="Edit"
+                          title="Actions"
                         >
-                          <Edit className="h-3.5 w-3.5" />
+                          <MoreVertical className="h-4 w-4 text-gray-600 dark:text-gray-400" />
                         </Button>
-                      )}
-                    {user?.role !== "patient" && canDelete("prescriptions") && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 w-6 p-0 flex-shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                        onClick={() => handleDeletePrescription(prescription.id)}
-                        title="Delete"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="min-w-[10rem]">
+                        <DropdownMenuItem
+                          onClick={() => handleViewPrescription(prescription)}
+                          title="View"
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-2 shrink-0" />
+                          View
+                        </DropdownMenuItem>
+                        {user?.role !== "patient" &&
+                          prescription.status === "active" &&
+                          canEdit("prescriptions") && (
+                            <DropdownMenuItem
+                              onClick={() => handleEditPrescription(prescription)}
+                              title="Edit"
+                            >
+                              <Edit className="h-3.5 w-3.5 mr-2 shrink-0" />
+                              Edit
+                            </DropdownMenuItem>
+                          )}
+                        {user?.role !== "patient" && canDelete("prescriptions") && (
+                          <DropdownMenuItem
+                            onClick={() => handleDeletePrescription(prescription.id)}
+                            disabled={deletePrescriptionMutation.isPending}
+                            className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mr-2 shrink-0" />
+                            Delete
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
               ))}

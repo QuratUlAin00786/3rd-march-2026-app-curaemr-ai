@@ -689,7 +689,7 @@ export default function AnalyticsPage() {
           <TabsContent value="patients" className="space-y-4 lg:space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 mb-4 lg:mb-6">
             {/* Patient Growth Trend */}
-            <Card>
+            <Card className="border-white">
               <CardHeader>
                 <CardTitle>Patient Growth Trend</CardTitle>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -711,7 +711,7 @@ export default function AnalyticsPage() {
             </Card>
 
             {/* Appointment Volume */}
-            <Card>
+            <Card className="border-white">
               <CardHeader>
                 <CardTitle>Appointment Volume</CardTitle>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -735,8 +735,8 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 mb-4 lg:mb-6">
-            {/* Patient Demographics */}
-            <Card>
+            {/* Patient Demographics - Age Distribution chart with white border */}
+            <Card className="rounded-lg bg-card text-card-foreground shadow-sm" style={{ border: "2px solid white" }}>
               <CardHeader>
                 <CardTitle>Age Distribution</CardTitle>
               </CardHeader>
@@ -766,7 +766,7 @@ export default function AnalyticsPage() {
             </Card>
 
             {/* Gender Distribution */}
-            <Card>
+            <Card className="border-white">
               <CardHeader>
                 <CardTitle>Gender Distribution</CardTitle>
               </CardHeader>
@@ -789,7 +789,7 @@ export default function AnalyticsPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
             {/* Top Conditions */}
-            <Card>
+            <Card className="border-white">
               <CardHeader>
                 <CardTitle>Most Common Conditions</CardTitle>
               </CardHeader>
@@ -816,7 +816,7 @@ export default function AnalyticsPage() {
             </Card>
 
             {/* Appointment Statistics */}
-            <Card>
+            <Card className="border-white">
               <CardHeader>
                 <CardTitle>Patient Appointment Statistics</CardTitle>
               </CardHeader>
@@ -849,7 +849,7 @@ export default function AnalyticsPage() {
             </Card>
             </div>
 
-            <Card>
+            <Card className="border-white">
               <CardHeader>
                 <CardTitle>Patient Summary</CardTitle>
               </CardHeader>
