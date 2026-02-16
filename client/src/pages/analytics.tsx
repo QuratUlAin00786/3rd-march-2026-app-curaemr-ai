@@ -736,12 +736,13 @@ export default function AnalyticsPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 mb-4 lg:mb-6">
             {/* Patient Demographics - Age Distribution chart with white border */}
-            <Card className="rounded-lg bg-card text-card-foreground shadow-sm" style={{ border: "2px solid white" }}>
+            <Card data-age-distribution-chart className="rounded-lg bg-card text-card-foreground shadow-sm age-distribution-card-white-border">
               <CardHeader>
                 <CardTitle>Age Distribution</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
+                <div className="age-distribution-chart-wrap rounded-lg overflow-hidden" style={{ border: "2px solid white", boxSizing: "border-box" }}>
+                  <ResponsiveContainer width="100%" height={250}>
                   <PieChart>
                     <Pie
                       data={Object.entries(analyticsData?.patientAnalytics?.demographics?.ageDistribution || {}).map(([key, value]) => ({
@@ -759,9 +760,15 @@ export default function AnalyticsPage() {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip content={<CustomTooltip />} />
+                    <Tooltip
+                      content={<CustomTooltip />}
+                      wrapperStyle={{ border: '1px solid white', outline: 'none' }}
+                      contentStyle={{ border: '1px solid white', backgroundColor: 'white' }}
+                      itemStyle={{ color: '#000' }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
+                </div>
               </CardContent>
             </Card>
 

@@ -634,6 +634,12 @@ export default function PrescriptionsPage() {
   const [editingStatusId, setEditingStatusId] = useState<string | null>(null);
   const [tempStatus, setTempStatus] = useState<string>("");
 
+  // Popup to edit status (list view - column under (.))
+  const [editStatusDialog, setEditStatusDialog] = useState<{
+    open: boolean;
+    prescription: any | null;
+  }>({ open: false, prescription: null });
+
   // Status update mutation
   const statusUpdateMutation = useMutation({
     mutationFn: async ({
@@ -672,6 +678,7 @@ export default function PrescriptionsPage() {
       showSuccessModalPopup("Status Updated", "Prescription status has been updated successfully.");
       setEditingStatusId(null);
       setTempStatus("");
+      setEditStatusDialog({ open: false, prescription: null });
     },
     onError: (error) => {
       toast({
@@ -6012,59 +6019,17 @@ export default function PrescriptionsPage() {
                       </div>
                     </div>
                     <div className="min-w-0 max-w-full">
-                      {editingStatusId === prescription.id ? (
-                        <div className="flex flex-col gap-1 w-full">
-                          <Select
-                            value={tempStatus}
-                            onValueChange={setTempStatus}
-                          >
-                            <SelectTrigger className="h-7 w-full text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="active">Active</SelectItem>
-                              <SelectItem value="pending">Pending</SelectItem>
-                              <SelectItem value="completed">Completed</SelectItem>
-                              <SelectItem value="cancelled">Cancelled</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <div className="flex items-center gap-1 justify-center">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleSaveStatus(prescription.id)}
-                              className="h-6 w-6 p-0 flex-shrink-0"
-                              title="Save"
-                            >
-                              <Check className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                setEditingStatusId(null);
-                                setTempStatus("");
-                              }}
-                              className="h-6 w-6 p-0 flex-shrink-0"
-                              title="Cancel"
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <Badge className={getStatusColor(prescription.status)}>
-                          {prescription.status || "active"}
-                        </Badge>
-                      )}
+                      <Badge className={getStatusColor(prescription.status)}>
+                        {prescription.status || "active"}
+                      </Badge>
                     </div>
                     <div className="flex items-center justify-center min-w-0 flex-shrink-0">
-                      {editingStatusId !== prescription.id && user?.role !== "patient" && (
+                      {user?.role !== "patient" && (
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            setEditingStatusId(prescription.id);
+                            setEditStatusDialog({ open: true, prescription });
                             setTempStatus(prescription.status || "active");
                           }}
                           className="h-5 w-5 p-0 hover:bg-gray-100 flex-shrink-0"
@@ -8722,6 +8687,62 @@ export default function PrescriptionsPage() {
               <div className="flex justify-end">
                 <Button onClick={() => setShowSignatureDetailsDialog(false)}>
                   Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Status Dialog (list view - edit icon under (.) column) */}
+      <Dialog
+        open={editStatusDialog.open}
+        onOpenChange={(open) => {
+          if (!open) setEditStatusDialog({ open: false, prescription: null });
+        }}
+      >
+        <DialogContent className="max-w-sm dark:bg-slate-800 dark:border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Edit Status</DialogTitle>
+          </DialogHeader>
+          {editStatusDialog.prescription && (
+            <div className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select
+                  value={tempStatus}
+                  onValueChange={setTempStatus}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setEditStatusDialog({ open: false, prescription: null })}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (editStatusDialog.prescription?.id && tempStatus) {
+                      statusUpdateMutation.mutate({
+                        prescriptionId: editStatusDialog.prescription.id,
+                        status: tempStatus,
+                      });
+                    }
+                  }}
+                  disabled={statusUpdateMutation.isPending}
+                >
+                  Save
                 </Button>
               </div>
             </div>

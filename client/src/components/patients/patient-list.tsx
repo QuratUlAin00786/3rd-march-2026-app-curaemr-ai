@@ -56,6 +56,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLocation } from "wouter";
 import { formatDistanceToNow, format } from "date-fns";
@@ -583,7 +584,7 @@ function PatientDetailsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-screen h-screen max-w-none max-h-none p-0 flex flex-col">
+      <DialogContent className="w-screen h-screen max-w-none max-h-none p-0 pt-6 flex flex-col">
         <DialogHeader className="px-6 pt-4 pb-2 flex-shrink-0">
           <DialogTitle className="text-xl font-bold">
             Patient Details - {patient.firstName} {patient.lastName}
@@ -2307,6 +2308,12 @@ export function PatientList({ onSelectPatient, genderFilter = null, viewMode = "
   const [editingRiskLevelId, setEditingRiskLevelId] = useState<number | null>(null);
   const [tempRiskLevel, setTempRiskLevel] = useState("");
 
+  // Grid view: popup to edit risk level (status)
+  const [editRiskLevelDialog, setEditRiskLevelDialog] = useState<{
+    open: boolean;
+    patient: any | null;
+  }>({ open: false, patient: null });
+
   // Delete confirmation dialog state
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
     open: boolean;
@@ -2431,6 +2438,7 @@ export function PatientList({ onSelectPatient, genderFilter = null, viewMode = "
       });
       setEditingRiskLevelId(null);
       setTempRiskLevel("");
+      setEditRiskLevelDialog({ open: false, patient: null });
     },
     onError: (error) => {
       toast({
@@ -3259,63 +3267,28 @@ export function PatientList({ onSelectPatient, genderFilter = null, viewMode = "
                     <div className="flex flex-col items-end space-y-1 gap-1 flex-shrink-0">
                       {patient.riskLevel && (
                         <div className="flex items-center gap-1 flex-shrink-0">
-                          {editingRiskLevelId === patient.id ? (
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <Select
-                                value={tempRiskLevel}
-                                onValueChange={setTempRiskLevel}
-                              >
-                                <SelectTrigger className="w-[72px] h-6 text-[10px] sm:text-xs flex-shrink-0">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="low">low</SelectItem>
-                                  <SelectItem value="medium">medium</SelectItem>
-                                  <SelectItem value="high">high</SelectItem>
-                                  <SelectItem value="critical">critical</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <Button
-                                size="sm"
-                                onClick={handleSaveRiskLevel}
-                                disabled={riskLevelUpdateMutation.isPending}
-                                className="h-6 w-6 p-0 flex-shrink-0"
-                              >
-                                <Check className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={handleCancelEditingRiskLevel}
-                                disabled={riskLevelUpdateMutation.isPending}
-                                className="h-6 w-6 p-0 flex-shrink-0"
-                              >
-                                <X className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <Badge
-                                className={`text-[10px] sm:text-xs flex-shrink-0 whitespace-nowrap max-w-[4.5rem] truncate ${getRiskLevelColor(patient.riskLevel)}`}
-                                style={{
-                                  backgroundColor: getRiskLevelBgColor(
-                                    patient.riskLevel,
-                                  ),
-                                }}
-                              >
-                                {patient.riskLevel}
-                              </Badge>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => handleStartEditingRiskLevel(patient.id, patient.riskLevel)}
-                                className="h-4 w-4 p-0 hover:bg-gray-100 flex-shrink-0"
-                                data-testid="button-edit-risk-level"
-                              >
-                                <Edit className="h-2 w-2" />
-                              </Button>
-                            </div>
-                          )}
+                          <Badge
+                            className={`text-[10px] sm:text-xs flex-shrink-0 whitespace-nowrap max-w-[4.5rem] truncate ${getRiskLevelColor(patient.riskLevel)}`}
+                            style={{
+                              backgroundColor: getRiskLevelBgColor(
+                                patient.riskLevel,
+                              ),
+                            }}
+                          >
+                            {patient.riskLevel}
+                          </Badge>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setEditRiskLevelDialog({ open: true, patient });
+                              setTempRiskLevel(patient.riskLevel || "low");
+                            }}
+                            className="h-4 w-4 p-0 hover:bg-gray-100 flex-shrink-0"
+                            data-testid="button-edit-risk-level"
+                          >
+                            <Edit className="h-2 w-2" />
+                          </Button>
                         </div>
                       )}
                       {patient.insuranceInfo?.provider && (
@@ -3672,6 +3645,66 @@ export function PatientList({ onSelectPatient, genderFilter = null, viewMode = "
         }
         patient={patientDetailsModal.patient}
       />
+
+      {/* Grid view: Edit Risk Level (Status) popup */}
+      <Dialog
+        open={editRiskLevelDialog.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditRiskLevelDialog({ open: false, patient: null });
+            setTempRiskLevel("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit Status</DialogTitle>
+          </DialogHeader>
+          {editRiskLevelDialog.patient && (
+            <>
+              <div className="space-y-2 py-2">
+                <Label>Risk Level</Label>
+                <Select
+                  value={tempRiskLevel}
+                  onValueChange={setTempRiskLevel}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select risk level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditRiskLevelDialog({ open: false, patient: null });
+                    setTempRiskLevel("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    riskLevelUpdateMutation.mutate({
+                      patientId: editRiskLevelDialog.patient.id,
+                      riskLevel: tempRiskLevel,
+                    });
+                  }}
+                  disabled={riskLevelUpdateMutation.isPending}
+                >
+                  {riskLevelUpdateMutation.isPending ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteConfirmDialog.open} onOpenChange={(open) => setDeleteConfirmDialog({ open, patient: open ? deleteConfirmDialog.patient : null })}>

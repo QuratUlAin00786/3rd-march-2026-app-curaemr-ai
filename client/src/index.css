@@ -294,6 +294,49 @@ button[data-testid="delete-customer-button"] {
 .border-cura-mist { border-color: #E0E1F4 !important; }
 .border-cura-mint-drift { border-color: #6CFFEB !important; }
 
+/* Patients tab - Age Distribution chart: force white border (override theme black/dark border) */
+[data-age-distribution-chart],
+.age-distribution-card-white-border {
+  border: 2px solid white !important;
+}
+[data-age-distribution-chart] > *,
+[data-age-distribution-chart] [class*="CardContent"],
+[data-age-distribution-chart] [class*="card-content"] {
+  border-color: white !important;
+}
+
+/* Chart wrapper and Recharts containers: white border only, no black box */
+.age-distribution-chart-wrap,
+[data-age-distribution-chart] .age-distribution-chart-wrap,
+[data-age-distribution-chart] .recharts-responsive-container,
+[data-age-distribution-chart] .recharts-wrapper,
+[data-age-distribution-chart] .recharts-surface {
+  border: 1px solid white !important;
+  outline: none !important;
+}
+.age-distribution-chart-wrap {
+  border-width: 2px !important;
+}
+
+/* Pie sectors (recharts-pie-sector, recharts-sector): no black border, use white outline/stroke */
+[data-age-distribution-chart] .recharts-layer.recharts-pie-sector,
+[data-age-distribution-chart] .recharts-pie-sector,
+[data-age-distribution-chart] .recharts-sector {
+  outline: none !important;
+  border: none !important;
+  stroke: white !important;
+}
+[data-age-distribution-chart] .recharts-pie-sector:focus,
+[data-age-distribution-chart] .recharts-sector:focus {
+  outline: none !important;
+}
+
+/* Age Distribution chart tooltip ("Under 18 : 2" etc.): white border instead of black */
+[data-age-distribution-chart] .recharts-tooltip-wrapper,
+[data-age-distribution-chart] .recharts-default-tooltip {
+  border: 1px solid white !important;
+}
+
 /* ContentEditable placeholder styling */
 [contenteditable][data-placeholder]:empty::before {
   content: attr(data-placeholder);
