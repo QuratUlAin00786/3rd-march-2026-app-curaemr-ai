@@ -2206,9 +2206,17 @@ function DrugInteractionsTab() {
     }
   });
 
-  const interactions = interactionsData?.interactions || [];
-  const totalInteractions = interactionsData?.totalInteractions || 0;
-  const patientsScanned = interactionsData?.patientsScanned || 0;
+  // Latest first (desc by detectedAt)
+  const interactions = React.useMemo(() => {
+    const list = interactionsData?.interactions || [];
+    return [...list].sort((a: any, b: any) => {
+      const tA = a.detectedAt ? new Date(a.detectedAt).getTime() : 0;
+      const tB = b.detectedAt ? new Date(b.detectedAt).getTime() : 0;
+      return tB - tA;
+    });
+  }, [interactionsData?.interactions]);
+  const totalInteractions = interactionsData?.totalInteractions ?? 0;
+  const patientsScanned = interactionsData?.patientsScanned ?? 0;
 
   // Refresh all drug interactions data from database
   const handleRefreshDrugInteractions = React.useCallback(async () => {
@@ -2577,22 +2585,19 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
         }
         throw new Error(message);
       }
-      let result: { severity?: string; description?: string; warnings?: string[]; recommendations?: string[]; notes?: string; fallback?: boolean };
+      let result: { severity?: string; description?: string; warnings?: string[]; recommendations?: string[]; notes?: string };
       try {
         result = JSON.parse(text);
       } catch {
         throw new Error('Server returned an invalid response. Please try again.');
       }
-      setSeverity(result.severity || 'medium');
-      setDescription(result.description || '');
-      setWarnings(Array.isArray(result.warnings) ? result.warnings.join('\n') : (result.warnings || ''));
-      setRecommendations(Array.isArray(result.recommendations) ? result.recommendations.join('\n') : (result.recommendations || ''));
-      setNotes(result.fallback ? '' : (result.notes || ''));
-      if (result.fallback) {
-        toast({ title: "Default guidance applied", description: "AI was unavailable; default interaction guidance has been filled. Please review and edit before adding." });
-      } else {
-        toast({ title: "Analysis complete", description: "AI-generated fields have been filled. You can edit and then add the interaction." });
-      }
+      // Only fill from AI response — no hardcoded values
+      setSeverity(result.severity ?? 'medium');
+      setDescription(result.description ?? '');
+      setWarnings(Array.isArray(result.warnings) ? result.warnings.join('\n') : (result.warnings ?? ''));
+      setRecommendations(Array.isArray(result.recommendations) ? result.recommendations.join('\n') : (result.recommendations ?? ''));
+      setNotes(result.notes ?? '');
+      toast({ title: "Analysis complete", description: "AI-generated fields have been filled. You can edit and then add the interaction." });
     } catch (error: any) {
       toast({
         title: "Error",

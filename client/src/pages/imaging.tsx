@@ -726,21 +726,31 @@ export default function ImagingPage() {
     enabled: !!user, // Only fetch when user is authenticated
   });
 
-  // Filter medical images for patient users to show only their own imaging
+  // Filter medical images: patient = own only; nurse/doctor = own only; admin = all
   const medicalImages = useMemo(() => {
     if (!medicalImagesRaw) return [];
     
     // For patient users, filter by patient ID
     if (user?.role === "patient" && currentPatient) {
       return medicalImagesRaw.filter((image: any) => {
-        // Use currentPatient.id to match with image.patientId from database
         return String(image.patientId) === String(currentPatient.id);
       });
     }
     
-    // For non-patient users, show all images
+    // For nurse or doctor, show only their own data (uploaded by them or selected as provider)
+    if (user?.role === "nurse" || user?.role === "doctor") {
+      const currentUserId = user?.id != null ? String(user.id) : "";
+      if (!currentUserId) return [];
+      return medicalImagesRaw.filter((image: any) => {
+        const uploadedByMatch = String(image.uploadedBy) === currentUserId;
+        const selectedUserMatch = image.selectedUserId != null && String(image.selectedUserId) === currentUserId;
+        return uploadedByMatch || selectedUserMatch;
+      });
+    }
+    
+    // For admin (and any other role), show all images
     return medicalImagesRaw;
-  }, [medicalImagesRaw, user?.role, currentPatient]);
+  }, [medicalImagesRaw, user?.role, user?.id, currentPatient]);
 
   // Derive selectedStudy from React Query cache (single source of truth)
   const selectedStudy = useMemo<ImagingStudy | null>(() => {

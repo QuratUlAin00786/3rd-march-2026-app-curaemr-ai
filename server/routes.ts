@@ -10702,7 +10702,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
             eq(patientDrugInteractions.patientId, patientId),
             eq(patientDrugInteractions.status, 'active'),
             eq(patientDrugInteractions.isActive, true)
-          ));
+          ))
+          .orderBy(desc(patientDrugInteractions.createdAt));
       } else {
         manualInteractions = await db
           .select()
@@ -10711,7 +10712,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
             eq(patientDrugInteractions.organizationId, req.tenant!.id),
             eq(patientDrugInteractions.status, 'active'),
             eq(patientDrugInteractions.isActive, true)
-          ));
+          ))
+          .orderBy(desc(patientDrugInteractions.createdAt));
       }
 
       // Add manual interactions to results
@@ -10801,6 +10803,11 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         }
       }
 
+      // Sort so latest first (desc by detectedAt)
+      interactions.sort((a: { detectedAt: string }, b: { detectedAt: string }) =>
+        new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
+      );
+
       res.json({
         success: true,
         interactions,
@@ -10814,27 +10821,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     }
   });
 
-  // Analyze two-drug interaction (AI) for Add Drug Interaction form - uses same aiService/OpenAI as "Generate Treatment Plan"
+  // Analyze two-drug interaction (AI) for Add Drug Interaction form - always uses AI; no hardcoded fallback
   app.post("/api/clinical/drug-interaction-analyze", authMiddleware, async (req: TenantRequest, res) => {
     res.setHeader("Content-Type", "application/json");
-
-    const buildFallbackResult = (med1: string, med2: string) => ({
-      severity: "medium" as const,
-      description: `Potential interaction between ${med1} and ${med2}. Combined use may increase risk of bleeding or other effects. This is default guidance; AI analysis was unavailable. Please consult a pharmacist or clinical reference and review before saving.`,
-      warnings: [
-        "Possible drug interaction — verify with clinical reference",
-        "Consider monitoring for bleeding risk or other known interactions",
-        "Review patient medication list for other interactions"
-      ],
-      recommendations: [
-        "Consult current clinical guidelines or drug interaction database",
-        "Consider alternative therapy if appropriate",
-        "Monitor patient if combination is continued",
-        "Document clinical justification if both medications are required"
-      ],
-      notes: "",
-      fallback: true
-    });
 
     try {
       if (req.user?.role === "patient") {
@@ -10849,34 +10838,22 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         medication2Frequency: z.string().optional()
       }).parse(req.body);
 
-      const med1 = body.medication1Name + (body.medication1Dosage ? ` ${body.medication1Dosage}` : "") + (body.medication1Frequency ? ` ${body.medication1Frequency}` : "");
-      const med2 = body.medication2Name + (body.medication2Dosage ? ` ${body.medication2Dosage}` : "") + (body.medication2Frequency ? ` ${body.medication2Frequency}` : "");
-
-      try {
-        const result = await aiService.generateDrugInteractionAnalysis(
-          { name: body.medication1Name, dosage: body.medication1Dosage, frequency: body.medication1Frequency },
-          { name: body.medication2Name, dosage: body.medication2Dosage, frequency: body.medication2Frequency }
-        );
-        return res.json(result);
-      } catch (aiError: any) {
-        console.log("[DRUG-INTERACTION-ANALYZE] OpenAI failed, using fallback template");
-        console.error("[DRUG-INTERACTION-ANALYZE] OpenAI Error:", aiError?.message || aiError);
-        return res.json(buildFallbackResult(med1, med2));
-      }
+      const result = await aiService.generateDrugInteractionAnalysis(
+        { name: body.medication1Name, dosage: body.medication1Dosage, frequency: body.medication1Frequency },
+        { name: body.medication2Name, dosage: body.medication2Dosage, frequency: body.medication2Frequency }
+      );
+      return res.json(result);
     } catch (error: any) {
       console.error("Drug interaction analyze error:", error);
       if (error?.name === "ZodError" && error?.errors) {
         const msg = error.errors.map((e: { path: string[]; message: string }) => e.message).join("; ") || "Invalid request";
         return res.status(400).json({ error: msg });
       }
-      // If error is due to API key / 401 / OpenAI auth, return 200 with fallback so UI does not show 500
-      const errMsg = error?.message && typeof error.message === "string" ? error.message : "";
-      if (errMsg.includes("401") || errMsg.includes("API key") || errMsg.includes("Incorrect API key") || error?.status === 401 || error?.code === "invalid_api_key") {
-        const med1 = (req.body?.medication1Name || "Medication 1") + (req.body?.medication1Dosage ? ` ${req.body.medication1Dosage}` : "") + (req.body?.medication1Frequency ? ` ${req.body.medication1Frequency}` : "");
-        const med2 = (req.body?.medication2Name || "Medication 2") + (req.body?.medication2Dosage ? ` ${req.body.medication2Dosage}` : "") + (req.body?.medication2Frequency ? ` ${req.body.medication2Frequency}` : "");
-        return res.json(buildFallbackResult(med1, med2));
-      }
-      return res.status(500).json({ error: errMsg || "Failed to analyze drug interaction" });
+      const errMsg = error?.message && typeof error.message === "string" ? error.message : "AI analysis unavailable";
+      return res.status(503).json({
+        error: "AI analysis unavailable. Please try again or enter details manually.",
+        details: errMsg
+      });
     }
   });
 

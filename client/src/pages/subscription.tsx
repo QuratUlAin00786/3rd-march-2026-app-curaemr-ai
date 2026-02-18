@@ -408,18 +408,23 @@ export default function Subscription() {
               </AlertDescription>
             </Alert>
           )}
-          {subscription?.status === "active" && (
-            <Alert className="flex items-start gap-3 pb-2 border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30">
-              <Check className="h-5 w-5 text-emerald-600 dark:text-emerald-500 shrink-0 mt-0.5" />
-              <div>
-                <AlertTitle className="text-sm text-emerald-800 dark:text-emerald-200">Subscription active</AlertTitle>
-                <AlertDescription className="text-sm text-muted-foreground">
-                  Activated: {formatDateTime(subscription.currentPeriodStart ?? subscription.createdAt)} ·
-                  Expires: {formatDateTime(subscription.expiresAt ?? subscription.nextBillingAt)}
-                </AlertDescription>
-              </div>
-            </Alert>
-          )}
+          {(subscription?.status === "active" || subscription?.status === "trial") && (() => {
+            const isTrial = subscription?.planName?.toLowerCase() === "trial" || subscription?.status === "trial";
+            return (
+              <Alert className={`flex items-start gap-3 pb-2 ${isTrial ? "border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30" : "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30"}`}>
+                <Check className={`h-5 w-5 shrink-0 mt-0.5 ${isTrial ? "text-blue-600 dark:text-blue-500" : "text-emerald-600 dark:text-emerald-500"}`} />
+                <div>
+                  <AlertTitle className={`text-sm ${isTrial ? "text-blue-800 dark:text-blue-200" : "text-emerald-800 dark:text-emerald-200"}`}>
+                    {isTrial ? "Trial active" : "Subscription active"}
+                  </AlertTitle>
+                  <AlertDescription className="text-sm text-muted-foreground">
+                    Activated: {formatDateTime(subscription.currentPeriodStart ?? subscription.createdAt)} ·
+                    Expires: {formatDateTime(subscription.expiresAt ?? subscription.nextBillingAt)}
+                  </AlertDescription>
+                </div>
+              </Alert>
+            );
+          })()}
           {/* Current Subscription */}
           {subscription && (
             <Card className="border border-gray-200 dark:border-gray-700">
