@@ -20,24 +20,24 @@ const insightIcons = {
 
 const insightColors = {
   risk_alert: {
-    bg: "bg-blue-50",
-    border: "border-blue-100",
-    icon: "text-blue-500"
+    bg: "bg-blue-50 dark:bg-blue-950/50",
+    border: "border-blue-100 dark:border-blue-800",
+    icon: "text-blue-500 dark:text-blue-400"
   },
   treatment_suggestion: {
-    bg: "bg-green-50",
-    border: "border-green-100",
-    icon: "text-green-500"
+    bg: "bg-green-50 dark:bg-green-950/50",
+    border: "border-green-100 dark:border-green-800",
+    icon: "text-green-500 dark:text-green-400"
   },
   drug_interaction: {
-    bg: "bg-yellow-50",
-    border: "border-yellow-100",
-    icon: "text-yellow-500"
+    bg: "bg-yellow-50 dark:bg-yellow-950/50",
+    border: "border-yellow-100 dark:border-yellow-800",
+    icon: "text-yellow-500 dark:text-yellow-400"
   },
   preventive_care: {
-    bg: "bg-purple-50",
-    border: "border-purple-100",
-    icon: "text-purple-500"
+    bg: "bg-purple-50 dark:bg-purple-950/50",
+    border: "border-purple-100 dark:border-purple-800",
+    icon: "text-purple-500 dark:text-purple-400"
   }
 };
 
@@ -150,13 +150,13 @@ export function AiInsightsPanel() {
     return (
       <Card className="dashboard-card">
         <CardHeader>
-          <CardTitle className="flex items-center justify-between">
+          <CardTitle className="flex items-center justify-between text-gray-900 dark:text-gray-100">
             AI Patient Insights
             <Badge variant="secondary">Unavailable</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent className="h-[600px] flex items-center justify-center">
-          <p className="text-neutral-600 text-center py-8">
+          <p className="text-neutral-600 dark:text-neutral-400 text-center py-8">
             Unable to load AI insights. Please try again later.
           </p>
         </CardContent>
@@ -168,7 +168,7 @@ export function AiInsightsPanel() {
     return (
       <Card className="dashboard-card">
         <CardHeader>
-          <CardTitle className="flex items-center justify-between">
+          <CardTitle className="flex items-center justify-between text-gray-900 dark:text-gray-100">
             AI Patient Insights
             <Badge className="ai-gradient text-white">
               <Sparkles className="w-3 h-3 mr-1" />
@@ -177,7 +177,7 @@ export function AiInsightsPanel() {
           </CardTitle>
         </CardHeader>
         <CardContent className="h-[600px] flex items-center justify-center">
-          <p className="text-neutral-600 text-center py-8">
+          <p className="text-neutral-600 dark:text-neutral-400 text-center py-8">
             No AI insights available at the moment.
           </p>
         </CardContent>
@@ -188,7 +188,7 @@ export function AiInsightsPanel() {
   return (
     <Card className="dashboard-card">
       <CardHeader>
-        <CardTitle className="flex items-center justify-between">
+        <CardTitle className="flex items-center justify-between text-gray-900 dark:text-gray-100">
           AI Patient Insights
           <Badge className="ai-gradient text-white">
             <Sparkles className="w-3 h-3 mr-1" />
@@ -206,18 +206,18 @@ export function AiInsightsPanel() {
               key={insight.id}
               className={`ai-insight-card ${colors.bg} ${colors.border} overflow-hidden`}
             >
-              <div className={`w-8 h-8 ${colors.icon} bg-white rounded-full flex items-center justify-center flex-shrink-0`}>
+              <div className={`w-8 h-8 ${colors.icon} bg-white dark:bg-slate-700 rounded-full flex items-center justify-center flex-shrink-0`}>
                 <IconComponent className="w-4 h-4" />
               </div>
               <div className="flex-1 min-w-0 overflow-hidden">
-                <h4 className="font-medium text-gray-900 truncate" title={insight.title}>
+                <h4 className="font-medium text-gray-900 dark:text-gray-100 truncate" title={insight.title}>
                   {insight.title}
                 </h4>
-                <p className="text-sm text-gray-600 mt-1 line-clamp-2 break-words" title={insight.description}>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1 line-clamp-2 break-words" title={insight.description}>
                   {insight.description}
                 </p>
                 {insight.confidence && (
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     Confidence: {Math.round(insight.confidence * 100)}%
                   </p>
                 )}
@@ -225,7 +225,7 @@ export function AiInsightsPanel() {
                   <Button
                     variant="link"
                     size="sm"
-                    className="p-0 h-auto text-medical-blue hover:text-blue-700"
+                    className="p-0 h-auto text-medical-blue hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
                     onClick={() => {
                       setSelectedInsight(insight);
                       setIsDialogOpen(true);
@@ -237,7 +237,7 @@ export function AiInsightsPanel() {
                   <Button
                     variant="link"
                     size="sm"
-                    className="p-0 h-auto text-gray-500 hover:text-gray-600"
+                    className="p-0 h-auto text-gray-500 hover:text-gray-600 dark:text-gray-300 dark:hover:text-gray-200"
                     onClick={() => {
                       setDismissingInsightId(insight.id);
                       updateInsightMutation.mutate({ 
@@ -260,7 +260,7 @@ export function AiInsightsPanel() {
           <Button 
             variant="link" 
             size="sm"
-            className="text-medical-blue hover:text-blue-700"
+            className="text-medical-blue hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
             onClick={() => {
               const subdomain = getActiveSubdomain();
               setLocation(`/${subdomain}/clinical-decision-support`);
@@ -273,7 +273,7 @@ export function AiInsightsPanel() {
       
       {/* Details Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto dark:bg-[#1E1E1E] dark:border-[#2A2A2A]">
           {selectedInsight && (
             <>
               <DialogHeader>
@@ -283,18 +283,18 @@ export function AiInsightsPanel() {
                       const IconComponent = insightIcons[selectedInsight.type] || Lightbulb;
                       const colors = insightColors[selectedInsight.type] || insightColors.risk_alert;
                       return (
-                        <div className={`w-10 h-10 ${colors.icon} bg-white rounded-full flex items-center justify-center flex-shrink-0 border-2 ${colors.border}`}>
+                        <div className={`w-10 h-10 ${colors.icon} bg-white dark:bg-slate-700 rounded-full flex items-center justify-center flex-shrink-0 border-2 ${colors.border}`}>
                           <IconComponent className="w-5 h-5" />
                         </div>
                       );
                     })()}
                     <div>
-                      <DialogTitle className="text-xl font-semibold text-gray-900">
+                      <DialogTitle className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                         {selectedInsight.title}
                       </DialogTitle>
                       <Badge 
                         variant="outline" 
-                        className={`mt-1 capitalize ${insightColors[selectedInsight.type]?.icon || 'text-blue-500'}`}
+                        className={`mt-1 capitalize ${insightColors[selectedInsight.type]?.icon || 'text-blue-500'} dark:border-slate-500 dark:text-blue-300`}
                       >
                         {selectedInsight.type.replace('_', ' ')}
                       </Badge>
@@ -305,23 +305,23 @@ export function AiInsightsPanel() {
               
               <div className="space-y-6">
                 <div>
-                  <h4 className="font-medium text-gray-900 mb-2">Description</h4>
-                  <DialogDescription className="text-gray-600 leading-relaxed">
+                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Description</h4>
+                  <DialogDescription className="text-gray-600 dark:text-gray-300 leading-relaxed">
                     {selectedInsight.description}
                   </DialogDescription>
                 </div>
                 
                 {selectedInsight.confidence && (
                   <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Confidence Level</h4>
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Confidence Level</h4>
                     <div className="flex items-center space-x-3">
-                      <div className="flex-1 bg-gray-200 rounded-full h-2">
+                      <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                         <div 
                           className="bg-blue-500 h-2 rounded-full transition-all duration-300" 
                           style={{ width: `${Math.round(selectedInsight.confidence * 100)}%` }}
                         ></div>
                       </div>
-                      <span className="text-sm font-medium text-gray-700">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                         {Math.round(selectedInsight.confidence * 100)}%
                       </span>
                     </div>
@@ -330,50 +330,50 @@ export function AiInsightsPanel() {
                 
                 {selectedInsight.patientId && (
                   <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Patient Information</h4>
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Patient Information</h4>
                     {isPatientLoading ? (
                       <div className="flex items-center space-x-2">
                         <LoadingSpinner />
-                        <span className="text-gray-500 text-sm">Loading patient details...</span>
+                        <span className="text-gray-500 dark:text-gray-400 text-sm">Loading patient details...</span>
                       </div>
                     ) : patientData ? (
                       <div className="space-y-2">
-                        <p className="text-gray-600">
+                        <p className="text-gray-600 dark:text-gray-300">
                           <span className="font-medium">Patient ID:</span> {patientData.patientId}
                         </p>
-                        <p className="text-gray-600">
+                        <p className="text-gray-600 dark:text-gray-300">
                           <span className="font-medium">Name:</span> {patientData.firstName} {patientData.lastName}
                         </p>
                         {patientData.dateOfBirth && (
-                          <p className="text-gray-600">
+                          <p className="text-gray-600 dark:text-gray-300">
                             <span className="font-medium">Date of Birth:</span> {new Date(patientData.dateOfBirth).toLocaleDateString()}
                           </p>
                         )}
                         {patientData.email && (
-                          <p className="text-gray-600">
+                          <p className="text-gray-600 dark:text-gray-300">
                             <span className="font-medium">Email:</span> {patientData.email}
                           </p>
                         )}
                         {patientData.phone && (
-                          <p className="text-gray-600">
+                          <p className="text-gray-600 dark:text-gray-300">
                             <span className="font-medium">Phone:</span> {patientData.phone}
                           </p>
                         )}
                         {patientData.nhsNumber && (
-                          <p className="text-gray-600">
+                          <p className="text-gray-600 dark:text-gray-300">
                             <span className="font-medium">NHS Number:</span> {patientData.nhsNumber}
                           </p>
                         )}
                       </div>
                     ) : (
-                      <p className="text-gray-600">Patient ID: {selectedInsight.patientId}</p>
+                      <p className="text-gray-600 dark:text-gray-300">Patient ID: {selectedInsight.patientId}</p>
                     )}
                   </div>
                 )}
                 
                 {selectedInsight.severity && (
                   <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Severity</h4>
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Severity</h4>
                     <Badge 
                       variant={selectedInsight.severity === 'high' ? 'destructive' : 
                               selectedInsight.severity === 'medium' ? 'default' : 'secondary'}
@@ -386,18 +386,19 @@ export function AiInsightsPanel() {
                 
                 {selectedInsight.actionRequired !== undefined && (
                   <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Action Required</h4>
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Action Required</h4>
                     <Badge variant={selectedInsight.actionRequired ? 'destructive' : 'secondary'}>
                       {selectedInsight.actionRequired ? 'Yes' : 'No'}
                     </Badge>
                   </div>
                 )}
                 
-                <div className="flex justify-end space-x-3 pt-4 border-t">
+                <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                   <Button 
                     variant="outline" 
                     onClick={() => setIsDialogOpen(false)}
                     data-testid="button-close-dialog"
+                    className="dark:border-gray-600 dark:text-gray-100 dark:hover:bg-[#242424] dark:hover:border-gray-500"
                   >
                     Close
                   </Button>

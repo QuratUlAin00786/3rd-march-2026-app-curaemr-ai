@@ -3544,7 +3544,7 @@ Report generated from Cura EMR System`;
                                     setSelectedResult(result);
                                     setShowPrescriptionDialog(true);
                                   }}
-                                  className="h-auto p-0 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                                  className="h-auto p-0 text-xs text-blue-600 dark:text-white hover:text-blue-700 dark:hover:text-gray-300"
                                   data-testid={`link-view-prescription-${result.id}`}
                                 >
                                   View
@@ -3567,7 +3567,7 @@ Report generated from Cura EMR System`;
                                   const hiddenCount = tests.length - 2;
                                   return (
                                     <div className="group relative inline-block w-full">
-                                      <span className="truncate block">{visibleTests} <span className="text-blue-600 dark:text-blue-400 cursor-help">+{hiddenCount}</span></span>
+                                      <span className="truncate block">{visibleTests} <span className="text-blue-600 dark:text-gray-100 cursor-help">+{hiddenCount}</span></span>
                                       <div className="invisible group-hover:visible absolute left-0 top-full mt-1 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-3 min-w-[300px]">
                                         <div className="text-sm font-medium mb-2">All Tests:</div>
                                         <div className="space-y-1">
@@ -3694,7 +3694,7 @@ Report generated from Cura EMR System`;
                                       data-testid={`button-prescription-print-${result.id}`}
                                       title="Print Prescription PDF"
                                     >
-                                      <Printer className="h-2.5 w-2.5 text-blue-600 dark:text-blue-400" />
+                                      <Printer className="h-2.5 w-2.5 text-blue-600 dark:text-gray-100" />
                                     </Button>
                                   )}
                                   
@@ -3818,7 +3818,7 @@ Report generated from Cura EMR System`;
                               )}
                             </td>
                             <td className="px-1 py-1.5 text-[11px] min-w-0">
-                              <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700 text-[10px] px-1 py-0 truncate max-w-full">
+                              <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-gray-100 border-blue-200 dark:border-blue-700 text-[10px] px-1 py-0 truncate max-w-full">
                                 <span className="truncate block">{(result as any).paymentMethod || 'N/A'}</span>
                               </Badge>
                             </td>
@@ -4135,36 +4135,36 @@ Report generated from Cura EMR System`;
                   <CardContent className="p-6 relative">
                     {/* Doctor information - Top Right Position */}
                     <div className="absolute top-6 right-6 w-70">
-                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="p-4 bg-blue-50 dark:bg-slate-800 border border-blue-200 dark:border-slate-600 rounded-lg">
                         <div className="flex items-center gap-2 mb-3">
-                          <User className="h-4 w-4 text-blue-600" />
-                          <h4 className="font-semibold text-blue-900">
+                          <User className="h-4 w-4 text-blue-600 dark:text-gray-100" />
+                          <h4 className="font-semibold text-blue-900 dark:text-white">
                             {result.doctorName || "Dr. Sarah Williams"}
                           </h4>
                         </div>
 
                         <div className="space-y-2">
                           <div className="text-sm">
-                            <span className="font-medium text-gray-800">
+                            <span className="font-medium text-gray-800 dark:text-gray-300">
                               Main Specialization:
                             </span>
-                            <div className="text-blue-600">
+                            <div className="text-blue-600 dark:text-gray-100">
                               {result.mainSpecialty || "Diagnostic Specialties"}
                             </div>
                           </div>
                           <div className="text-sm">
-                            <span className="font-medium text-gray-800">
+                            <span className="font-medium text-gray-800 dark:text-gray-300">
                               Sub-Specialization:
                             </span>
-                            <div className="text-blue-600">
+                            <div className="text-blue-600 dark:text-gray-100">
                               {result.subSpecialty || "Neurosurgeon"}
                             </div>
                           </div>
                           <div className="text-sm">
-                            <span className="font-medium text-gray-800">
+                            <span className="font-medium text-gray-800 dark:text-gray-300">
                               Priority:
                             </span>
-                            <div className="text-green-600">
+                            <div className="text-green-600 dark:text-green-400">
                               {result.priority || "urgent"}
                             </div>
                           </div>
@@ -4248,7 +4248,7 @@ Report generated from Cura EMR System`;
                               const hiddenCount = tests.length - 3;
                               return (
                                 <span className="group relative inline-block">
-                                  <span>{visibleTests} <span className="text-blue-600 dark:text-blue-400 cursor-help font-medium">+{hiddenCount} more</span></span>
+                                  <span>{visibleTests} <span className="text-blue-600 dark:text-gray-100 cursor-help font-medium">+{hiddenCount} more</span></span>
                                   <div className="invisible group-hover:visible absolute left-0 top-full mt-1 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-3 min-w-[400px] max-w-[600px]">
                                     <div className="text-sm font-semibold mb-2 text-gray-900 dark:text-gray-100">All Tests ({tests.length}):</div>
                                     <div className="space-y-1 max-h-[300px] overflow-y-auto">
@@ -4272,7 +4272,7 @@ Report generated from Cura EMR System`;
                                   setSelectedResult(result);
                                   setShowPrescriptionDialog(true);
                                 }}
-                                className="h-auto p-0 ml-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                                className="h-auto p-0 ml-2 text-xs text-blue-600 dark:text-white hover:text-blue-700 dark:hover:text-gray-300"
                                 data-testid={`link-view-prescription-card-${result.id}`}
                               >
                                 View Prescription
@@ -4317,7 +4317,7 @@ Report generated from Cura EMR System`;
                               return newSet;
                             });
                           }}
-                          className="flex items-center gap-2 font-medium mb-3 hover:text-blue-600 transition-colors"
+                          className="flex items-center gap-2 font-medium mb-3 text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-gray-300 transition-colors"
                           data-testid="button-toggle-test-results"
                         >
                           {expandedResults.has(result.id) ? (
@@ -6378,9 +6378,9 @@ Report generated from Cura EMR System`;
         open={showPrescriptionDialog}
         onOpenChange={setShowPrescriptionDialog}
       >
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader className="border-b pb-4">
-            <DialogTitle className="text-xl font-bold">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto dark:bg-[#1E1E1E] dark:border-[#2A2A2A]">
+          <DialogHeader className="border-b border-gray-200 dark:border-gray-700 pb-4">
+            <DialogTitle className="text-xl font-bold text-gray-900 dark:text-gray-100">
               Lab Result Prescription
             </DialogTitle>
           </DialogHeader>
@@ -6391,7 +6391,7 @@ Report generated from Cura EMR System`;
               id="prescription-print"
             >
               {/* Header */}
-              <div className="border-b pb-4 pt-6">
+              <div className="border-b border-gray-200 dark:border-gray-700 pb-4 pt-6">
                 <div 
                   className="flex items-start gap-4"
                   style={{
@@ -6419,7 +6419,7 @@ Report generated from Cura EMR System`;
                     }}
                   >
                     <h1 
-                      className="font-bold text-medical-blue mb-2"
+                      className="font-bold text-medical-blue dark:text-white mb-2"
                       style={{
                         fontSize: clinicHeader?.clinicNameFontSize || '24pt',
                         fontFamily: clinicHeader?.fontFamily || 'verdana',
@@ -6431,7 +6431,7 @@ Report generated from Cura EMR System`;
                       {clinicHeader?.clinicName || 'CURA EMR SYSTEM'}
                     </h1>
                     <p 
-                      className="text-gray-600 font-medium"
+                      className="text-gray-600 dark:text-gray-300 font-medium"
                       style={{
                         fontSize: clinicHeader?.fontSize || '12pt',
                         fontFamily: clinicHeader?.fontFamily || 'verdana'
@@ -6441,7 +6441,7 @@ Report generated from Cura EMR System`;
                     </p>
 
                     <div 
-                      className="text-gray-700 mt-2 leading-5"
+                      className="text-gray-700 dark:text-gray-300 mt-2 leading-5"
                       style={{
                         fontSize: clinicHeader?.fontSize || '12pt',
                         fontFamily: clinicHeader?.fontFamily || 'verdana'
@@ -6472,74 +6472,51 @@ Report generated from Cura EMR System`;
               {/* Doctor and Patient Information */}
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-3">
-                  <h4 className="font-semibold text-gray-800 border-b fs-6">
+                  <h4 className="font-semibold text-gray-800 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 fs-6">
                     Physician Information
                   </h4>
-                  <div className="space-y-1 text-sm">
-                    <p>
-                      <strong>Name:</strong>{" "}
-                      {selectedResult.doctorName || "Doctor"}
-                    </p>
+                  <div className="space-y-1 text-sm text-gray-900 dark:text-gray-100">
+                    <p><strong className="text-gray-800 dark:text-gray-200">Name:</strong>{" "}{selectedResult.doctorName || "Doctor"}</p>
                     {selectedResult.mainSpecialty && (
-                      <p>
-                        <strong>Main Specialization:</strong>{" "}
-                        {selectedResult.mainSpecialty}
-                      </p>
+                      <p><strong className="text-gray-800 dark:text-gray-200">Main Specialization:</strong>{" "}{selectedResult.mainSpecialty}</p>
                     )}
                     {selectedResult.subSpecialty && (
-                      <p>
-                        <strong>Sub-Specialization:</strong>{" "}
-                        {selectedResult.subSpecialty}
-                      </p>
+                      <p><strong className="text-gray-800 dark:text-gray-200">Sub-Specialization:</strong>{" "}{selectedResult.subSpecialty}</p>
                     )}
                     {selectedResult.priority && (
-                      <p>
-                        <strong>Priority:</strong> {selectedResult.priority}
-                      </p>
+                      <p><strong className="text-gray-800 dark:text-gray-200">Priority:</strong> {selectedResult.priority}</p>
                     )}
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                  <h4 className="font-semibold text-gray-800 border-b fs-6">
+                  <h4 className="font-semibold text-gray-800 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 fs-6">
                     Patient Information
                   </h4>
-                  <div className="space-y-1 text-sm">
-                    <p>
-                      <strong>Name:</strong>{" "}
-                      {getPatientName(selectedResult.patientId)}
-                    </p>
-                    <p>
-                      <strong>Date:</strong>{" "}
-                      {format(new Date(), "MMM dd, yyyy")}
-                    </p>
-                    <p>
-                      <strong>Time:</strong> {format(new Date(), "HH:mm")}
-                    </p>
+                  <div className="space-y-1 text-sm text-gray-900 dark:text-gray-100">
+                    <p><strong className="text-gray-800 dark:text-gray-200">Name:</strong>{" "}{getPatientName(selectedResult.patientId)}</p>
+                    <p><strong className="text-gray-800 dark:text-gray-200">Date:</strong>{" "}{format(new Date(), "MMM dd, yyyy")}</p>
+                    <p><strong className="text-gray-800 dark:text-gray-200">Time:</strong> {format(new Date(), "HH:mm")}</p>
                   </div>
                 </div>
               </div>
 
               {/* Prescription Details */}
               <div className="space-y-4">
-                <h3 className="font-semibold text-gray-800 text-lg border-b pb-2">
+                <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-lg border-b border-gray-200 dark:border-gray-700 pb-2">
                   ℞ Laboratory Test Prescription
                 </h3>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="bg-blue-50 dark:bg-slate-800/60 border border-blue-200 dark:border-slate-600 rounded-lg p-4">
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div>
-                      <p className="text-sm font-medium text-gray-700">
-                        Test ID:
-                      </p>
-                      <p className="font-mono">{selectedResult.testId}</p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Test ID:</p>
+                      <p className="font-mono text-gray-900 dark:text-gray-100">{selectedResult.testId}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-700">
-                        Test Type:
-                      </p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Test Type:</p>
                       <p 
-                        className="font-semibold text-blue-800 cursor-default" 
+                        className="font-semibold text-blue-800 dark:text-gray-100 cursor-default" 
                         title={selectedResult.testType}
                       >
                         {(() => {
@@ -6555,10 +6532,8 @@ Report generated from Cura EMR System`;
 
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div>
-                      <p className="text-sm font-medium text-gray-700">
-                        Ordered Date:
-                      </p>
-                      <p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Ordered Date:</p>
+                      <p className="text-gray-900 dark:text-gray-100">
                         {format(
                           new Date(selectedResult.orderedAt),
                           "MMM dd, yyyy HH:mm",
@@ -6566,9 +6541,7 @@ Report generated from Cura EMR System`;
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-700">
-                        Status:
-                      </p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Status:</p>
                       <Badge className={getStatusColor(selectedResult.status)}>
                         {selectedResult.status.toUpperCase()}
                       </Badge>
@@ -6578,18 +6551,16 @@ Report generated from Cura EMR System`;
                   {selectedResult.results &&
                     selectedResult.results.length > 0 && (
                       <div className="mt-4">
-                        <p className="text-sm font-medium text-gray-700 mb-3">
-                          Test Results:
-                        </p>
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Test Results:</p>
                         <div className="space-y-2">
                           {selectedResult.results.map(
                             (testResult: any, index: number) => (
                               <div
                                 key={index}
-                                className="bg-white border rounded p-3"
+                                className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded p-3"
                               >
                                 <div className="flex justify-between items-start mb-2">
-                                  <span className="font-medium text-gray-900 dark:text-white">
+                                  <span className="font-medium text-gray-900 dark:text-gray-100">
                                     {testResult.name}
                                   </span>
                                   <Badge
@@ -6602,19 +6573,11 @@ Report generated from Cura EMR System`;
                                       .toUpperCase()}
                                   </Badge>
                                 </div>
-                                <div className="text-sm text-gray-700">
-                                  <p>
-                                    <strong>Value:</strong> {testResult.value}{" "}
-                                    {testResult.unit}
-                                  </p>
-                                  <p>
-                                    <strong>Reference Range:</strong>{" "}
-                                    {testResult.referenceRange}
-                                  </p>
+                                <div className="text-sm text-gray-700 dark:text-gray-300">
+                                  <p><strong className="text-gray-800 dark:text-gray-200">Value:</strong> {testResult.value}{" "}{testResult.unit}</p>
+                                  <p><strong className="text-gray-800 dark:text-gray-200">Reference Range:</strong>{" "}{testResult.referenceRange}</p>
                                   {testResult.flag && (
-                                    <p>
-                                      <strong>Flag:</strong> {testResult.flag}
-                                    </p>
+                                    <p><strong className="text-gray-800 dark:text-gray-200">Flag:</strong> {testResult.flag}</p>
                                   )}
                                 </div>
                               </div>
@@ -6625,11 +6588,9 @@ Report generated from Cura EMR System`;
                     )}
 
                   {selectedResult.notes && (
-                    <div className="mt-4 pt-4 border-t">
-                      <p className="text-sm font-medium text-gray-700 mb-2">
-                        Clinical Notes:
-                      </p>
-                      <p className="text-sm text-gray-800 bg-yellow-50 border-l-4 border-yellow-400 p-3">
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Clinical Notes:</p>
+                      <p className="text-sm text-gray-800 dark:text-gray-200 bg-yellow-50 dark:bg-yellow-950/40 border-l-4 border-yellow-400 dark:border-yellow-600 p-3">
                         {selectedResult.notes}
                       </p>
                     </div>
@@ -6637,36 +6598,32 @@ Report generated from Cura EMR System`;
                 </div>
 
                 {selectedResult.criticalValues && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-4">
-                    <div className="flex items-center gap-2 text-red-800">
+                  <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg p-4 mt-4">
+                    <div className="flex items-center gap-2 text-red-800 dark:text-red-300">
                       <AlertTriangle className="h-5 w-5" />
-                      <span className="font-semibold">
-                        CRITICAL VALUES DETECTED
-                      </span>
+                      <span className="font-semibold">CRITICAL VALUES DETECTED</span>
                     </div>
-                    <p className="text-sm text-red-700 mt-2">
-                      This lab result contains critical values that require
-                      immediate attention.
+                    <p className="text-sm text-red-700 dark:text-red-300 mt-2">
+                      This lab result contains critical values that require immediate attention.
                     </p>
                   </div>
                 )}
               </div>
 
               {/* Footer */}
-              <div className="border-t pt-4 mt-6">
-                <div className="flex justify-between items-center text-xs text-gray-500">
+              <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-6">
+                <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
                   <p>Generated by Cura EMR System</p>
                   <p>Date: {format(new Date(), "MMM dd, yyyy HH:mm")}</p>
                 </div>
                 <div className="mt-4 text-center">
-                  {/* Display signature if it exists in the database */}
                   {selectedResult.signature?.doctorSignature && 
                    String(selectedResult.signature.doctorSignature).trim() !== "" && (
-                    <div className="mb-4">
+                    <div className="mb-4 flex justify-center">
                       <img
                         src={selectedResult.signature.doctorSignature}
                         alt="E-Signature"
-                        className="h-20 mx-auto"
+                        className="h-20 mx-auto dark:invert"
                         style={{ maxWidth: "250px" }}
                         onError={(e) => {
                           console.error("Error loading signature image");
@@ -6675,12 +6632,12 @@ Report generated from Cura EMR System`;
                       />
                     </div>
                   )}
-                  <div className="border-t border-gray-300 w-64 mx-auto mb-2"></div>
-                  <p className="text-sm font-medium">
+                  <div className="border-t border-gray-300 dark:border-gray-600 w-64 mx-auto mb-2"></div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
                     {selectedResult.doctorName || "Doctor"}
                   </p>
                   {selectedResult.mainSpecialty && (
-                    <p className="text-xs text-gray-600">
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
                       {selectedResult.mainSpecialty}
                     </p>
                   )}
@@ -6892,7 +6849,7 @@ Report generated from Cura EMR System`;
 
                     return (
                       <div key={testType} className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600">
-                        <h4 className="font-semibold text-blue-700 dark:text-blue-300 mb-4">{testType}</h4>
+                        <h4 className="font-semibold text-blue-700 dark:text-gray-100 mb-4">{testType}</h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {testFields.map((field) => {
                             const currentValue = generateFormData.testValues?.[testType]?.[field.name] || "";
@@ -7444,7 +7401,7 @@ Report generated from Cura EMR System`;
                                   {isCustom ? (
                                     <div className="border-2 border-dashed border-blue-300 dark:border-gray-600 rounded-lg p-3 bg-blue-50/50 dark:bg-gray-800/50">
                                       <div className="flex items-center justify-between mb-2">
-                                        <Label className="text-xs font-semibold text-blue-700 dark:text-blue-300">Custom Field</Label>
+                                        <Label className="text-xs font-semibold text-blue-700 dark:text-gray-100">Custom Field</Label>
                                         <Button
                                           type="button"
                                           variant="ghost"
@@ -7566,7 +7523,7 @@ Report generated from Cura EMR System`;
                                     return (
                                       <div key={`${testType}-custom-${fieldIndex}`} className="space-y-1 border-2 border-dashed border-blue-300 dark:border-gray-600 rounded-lg p-3 bg-blue-50/50 dark:bg-gray-800/50">
                                         <div className="flex items-center justify-between mb-2">
-                                          <Label className="text-xs font-semibold text-blue-700 dark:text-blue-300">Custom Parameter</Label>
+                                          <Label className="text-xs font-semibold text-blue-700 dark:text-gray-100">Custom Parameter</Label>
                                           <Button
                                             type="button"
                                             variant="ghost"
@@ -8933,11 +8890,11 @@ Report generated from Cura EMR System`;
                     </div>
                   </div>
 
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <h5 className="font-medium text-blue-800 mb-2">
+                  <div className="bg-blue-50 dark:bg-slate-800 p-4 rounded-lg border border-blue-200 dark:border-slate-600">
+                    <h5 className="font-medium text-blue-800 dark:text-gray-100 mb-2">
                       Biometric Verification
                     </h5>
-                    <div className="text-sm text-blue-700 space-y-1">
+                    <div className="text-sm text-blue-700 dark:text-gray-300 space-y-1">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                         <span>Touch patterns analyzed</span>
@@ -9122,7 +9079,7 @@ Report generated from Cura EMR System`;
                         </p>
                         <p>
                           <strong>Authentication Level:</strong>{" "}
-                          <span className="text-blue-600 font-medium">
+                          <span className="text-blue-600 dark:text-gray-100 font-medium">
                             High Security
                           </span>
                         </p>
@@ -9156,8 +9113,8 @@ Report generated from Cura EMR System`;
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <h5 className="font-semibold text-blue-900 mb-3">
+                  <div className="bg-blue-50 dark:bg-slate-800 p-4 rounded-lg border border-blue-200 dark:border-slate-600">
+                    <h5 className="font-semibold text-blue-900 dark:text-gray-100 mb-3">
                       Electronic Signature Compliance Standards
                     </h5>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">

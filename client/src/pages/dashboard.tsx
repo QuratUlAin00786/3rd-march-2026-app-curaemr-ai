@@ -129,7 +129,7 @@ export default function Dashboard() {
   return (
     <div className="w-full min-h-0 flex flex-col page-zoom-90">
       {/* Top row: Header + Theme Toggle */}
-      <div className="flex items-center justify-between mr-5 bg-white px-2 py-1 rounded">
+      <div className="flex items-center justify-between mr-5 bg-white dark:bg-card px-2 py-1 rounded">
         <Header
           title="Dashboard"
           subtitle={
@@ -142,7 +142,7 @@ export default function Dashboard() {
         />
 
         <div className="flex items-center gap-2">
-          <span className="text-sm text-neutral-600">Theme:</span>
+          <span className="text-sm text-neutral-600 dark:text-neutral-400">Theme:</span>
           <ThemeToggle />
         </div>
       </div>

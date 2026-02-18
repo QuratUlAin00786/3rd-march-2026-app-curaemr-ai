@@ -5068,17 +5068,19 @@ export default function PrescriptionsPage() {
                           {prescription.signature &&
                           prescription.signature.doctorSignature ? (
                             <div className="mt-2">
-                              <img
-                                src={prescription.signature.doctorSignature}
-                                alt="Doctor Signature"
-                                className="h-12 w-32 border border-gray-300 bg-white rounded"
-                              />
-                              <p className="text-xs text-green-600 mt-1">
+                              <div className="h-12 w-32 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 rounded flex items-center justify-center overflow-hidden">
+                                <img
+                                  src={prescription.signature.doctorSignature}
+                                  alt="Doctor Signature"
+                                  className="h-full w-full object-contain dark:invert object-left"
+                                />
+                              </div>
+                              <p className="text-xs text-green-600 dark:text-green-400 mt-1">
                                 ✓ E-Signed by{" "}
                                 {prescription.signature.signedBy ||
                                   "Unknown Provider"}
                               </p>
-                              <p className="text-xs text-gray-500">
+                              <p className="text-xs text-gray-500 dark:text-gray-400">
                                 {prescription.signature.signedAt &&
                                 !isNaN(
                                   new Date(
@@ -5093,14 +5095,14 @@ export default function PrescriptionsPage() {
                               </p>
                             </div>
                           ) : (
-                            <div className="border-b border-gray-400 w-32 mt-2"></div>
+                            <div className="border-b border-gray-400 dark:border-gray-500 w-32 mt-2"></div>
                           )}
                         </div>
                         <div className="text-left sm:text-right min-w-0 flex-1 sm:flex-none">
                           <p className="text-xs sm:text-sm font-medium text-gray-800 dark:text-gray-100 break-words">
                             May Substitute
                           </p>
-                          <div className="border-b border-gray-400 w-full sm:w-32 mt-2"></div>
+                          <div className="border-b border-gray-400 dark:border-gray-500 w-full sm:w-32 mt-2"></div>
                         </div>
                       </div>
 
@@ -5442,7 +5444,7 @@ export default function PrescriptionsPage() {
                     )}
                     {user?.role !== 'patient' && (
                       <div className="flex flex-1 min-w-[150px] max-w-full sm:max-w-xs flex-col gap-1">
-                        <Label className="text-xs uppercase tracking-wide text-gray-500">
+                        <Label className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
                           Patient
                         </Label>
                       <Popover open={patientFilterOpen} onOpenChange={setPatientFilterOpen}>
@@ -5451,20 +5453,23 @@ export default function PrescriptionsPage() {
                             variant="outline"
                             role="combobox"
                             aria-expanded={patientFilterOpen}
-                            className="w-full justify-between rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none h-auto font-normal"
+                            className="w-full justify-between rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none h-auto min-h-[2.5rem] font-normal text-left"
                           >
-                            {patientNameFilter || "All patients"}
+                            <span className="flex-1 min-w-0 break-words line-clamp-2 text-left">
+                              {patientNameFilter || "All patients"}
+                            </span>
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-none p-0" align="start">
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-sm min-w-[200px] p-0" align="start">
                           <Command>
                             <CommandInput placeholder="Search patients..." />
-                            <CommandList>
+                            <CommandList className="max-h-[300px] overflow-y-auto overflow-x-hidden">
                               <CommandEmpty>No patient found.</CommandEmpty>
                               <CommandGroup className="max-h-[300px] overflow-y-auto">
                                 <CommandItem
                                   value="all"
+                                  className="whitespace-normal break-words"
                                   onSelect={() => {
                                     try {
                                       handlePatientFilter("");
@@ -5479,11 +5484,11 @@ export default function PrescriptionsPage() {
                                   }}
                                 >
                                   <Check
-                                    className={`mr-2 h-4 w-4 ${
+                                    className={`mr-2 h-4 w-4 shrink-0 ${
                                       !patientNameFilter ? "opacity-100" : "opacity-0"
                                     }`}
                                   />
-                                  All patients
+                                  <span className="break-words whitespace-normal text-left">All patients</span>
                                 </CommandItem>
                                 {Array.isArray(patientOptions) && patientOptions.length > 0 && patientOptions.map((name) => {
                                   // Validate name before rendering
@@ -5497,6 +5502,7 @@ export default function PrescriptionsPage() {
                                     <CommandItem
                                       key={trimmedName}
                                       value={trimmedName}
+                                      className="whitespace-normal break-words"
                                       onSelect={() => {
                                         try {
                                           if (!trimmedName || trimmedName === '') {
@@ -5516,11 +5522,11 @@ export default function PrescriptionsPage() {
                                       }}
                                     >
                                       <Check
-                                        className={`mr-2 h-4 w-4 ${
+                                        className={`mr-2 h-4 w-4 shrink-0 ${
                                           patientNameFilter === trimmedName ? "opacity-100" : "opacity-0"
                                         }`}
                                       />
-                                      {trimmedName}
+                                      <span className="break-words whitespace-normal text-left">{trimmedName}</span>
                                     </CommandItem>
                                   );
                                 })}
@@ -5533,7 +5539,7 @@ export default function PrescriptionsPage() {
                     )}
                     {user?.role !== 'patient' && (
                       <div className="flex flex-1 min-w-[150px] max-w-full sm:max-w-xs flex-col gap-1">
-                        <Label className="text-xs uppercase tracking-wide text-gray-500">
+                        <Label className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
                           Prescription #
                         </Label>
                       <Popover open={prescriptionIdFilterOpen} onOpenChange={setPrescriptionIdFilterOpen}>
@@ -5542,20 +5548,23 @@ export default function PrescriptionsPage() {
                             variant="outline"
                             role="combobox"
                             aria-expanded={prescriptionIdFilterOpen}
-                            className="w-full justify-between rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none h-auto font-normal"
+                            className="w-full justify-between rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none h-auto min-h-[2.5rem] font-normal text-left"
                           >
-                            {prescriptionIdFilter !== "all" ? prescriptionIdFilter : "All prescriptions"}
+                            <span className="flex-1 min-w-0 break-words line-clamp-2 text-left">
+                              {prescriptionIdFilter !== "all" ? prescriptionIdFilter : "All prescriptions"}
+                            </span>
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-none p-0" align="start">
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-sm min-w-[200px] p-0" align="start">
                           <Command>
                             <CommandInput placeholder="Search prescription number..." />
-                            <CommandList>
+                            <CommandList className="max-h-[300px] overflow-y-auto overflow-x-hidden">
                               <CommandEmpty>No prescription found.</CommandEmpty>
                               <CommandGroup className="max-h-[300px] overflow-y-auto">
                                 <CommandItem
                                   value="all"
+                                  className="whitespace-normal break-words"
                                   onSelect={() => {
                                     try {
                                       setPrescriptionIdFilter("all");
@@ -5568,11 +5577,11 @@ export default function PrescriptionsPage() {
                                   }}
                                 >
                                   <Check
-                                    className={`mr-2 h-4 w-4 ${
+                                    className={`mr-2 h-4 w-4 shrink-0 ${
                                       prescriptionIdFilter === "all" ? "opacity-100" : "opacity-0"
                                     }`}
                                   />
-                                  All prescriptions
+                                  <span className="break-words whitespace-normal text-left">All prescriptions</span>
                                 </CommandItem>
                                 {Array.isArray(uniquePrescriptionIds) && uniquePrescriptionIds.map((id) => {
                                   if (!id) return null;
@@ -5580,6 +5589,7 @@ export default function PrescriptionsPage() {
                                     <CommandItem
                                       key={id}
                                       value={id}
+                                      className="whitespace-normal break-words"
                                       onSelect={() => {
                                         try {
                                           setPrescriptionIdFilter(id);
@@ -5595,11 +5605,11 @@ export default function PrescriptionsPage() {
                                       }}
                                     >
                                       <Check
-                                        className={`mr-2 h-4 w-4 ${
+                                        className={`mr-2 h-4 w-4 shrink-0 ${
                                           prescriptionIdFilter === id ? "opacity-100" : "opacity-0"
                                         }`}
                                       />
-                                      {id}
+                                      <span className="break-words whitespace-normal text-left">{id}</span>
                                     </CommandItem>
                                   );
                                 })}
@@ -6152,7 +6162,7 @@ export default function PrescriptionsPage() {
                         <Printer className="h-3.5 w-3.5" />
                       </Button>
                     )}
-                    {prescription.savedPdfPath && (
+                    {prescription.savedPdfPath ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -6162,6 +6172,13 @@ export default function PrescriptionsPage() {
                       >
                         <FileText className="h-3.5 w-3.5 text-red-600" />
                       </Button>
+                    ) : (
+                      <span
+                        className="inline-flex h-6 w-6 items-center justify-center flex-shrink-0 cursor-not-allowed opacity-60"
+                        title="No saved PDF file"
+                      >
+                        <FileText className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
+                      </span>
                     )}
                   </div>
                   {user?.role !== 'patient' && (
@@ -8350,12 +8367,12 @@ export default function PrescriptionsPage() {
 
       {/* Send to Pharmacy Dialog */}
       <Dialog open={showPharmacyDialog} onOpenChange={setShowPharmacyDialog}>
-        <DialogContent className="max-w-md max-h-[650px] overflow-y-auto dark:bg-slate-800 dark:border-gray-700">
+        <DialogContent className="max-w-md max-h-[650px] overflow-y-auto overflow-x-hidden dark:bg-slate-800 dark:border-gray-700">
           <DialogHeader>
             <DialogTitle>Send Prescription to Halo Health Pharmacy</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+          <div className="space-y-4 min-w-0">
+            <div className="bg-blue-50 dark:bg-slate-700/50 p-4 rounded-lg border border-blue-200 dark:border-slate-600">
               <h4 className="font-semibold text-blue-900 mb-2">
                 Halo Health Pharmacy
               </h4>
@@ -8421,20 +8438,20 @@ export default function PrescriptionsPage() {
 
                 {/* Display attached files */}
                 {attachedFiles.length > 0 && (
-                  <div className="space-y-2">
+                  <div className="space-y-2 min-w-0">
                     <p className="text-sm font-medium">Attached Files:</p>
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0">
                       {attachedFiles.map((file, index) => (
                         <div
                           key={index}
-                          className="flex items-center justify-between bg-gray-50 p-2 rounded border"
+                          className="flex items-center justify-between gap-2 bg-gray-50 dark:bg-slate-700/50 p-2 rounded border border-gray-200 dark:border-slate-600 min-w-0"
                         >
-                          <div className="flex items-center gap-2">
-                            <Paperclip className="h-3 w-3 text-gray-500" />
-                            <span className="text-sm text-gray-700">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <Paperclip className="h-3 w-3 text-gray-500 dark:text-gray-400 shrink-0" />
+                            <span className="text-sm text-gray-700 dark:text-gray-300 break-words min-w-0 flex-1">
                               {file.name}
                             </span>
-                            <span className="text-xs text-gray-500">
+                            <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
                               ({(file.size / 1024).toFixed(1)} KB)
                             </span>
                           </div>
@@ -8443,7 +8460,7 @@ export default function PrescriptionsPage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => removeAttachedFile(index)}
-                            className="h-6 w-6 p-0 hover:bg-red-100"
+                            className="h-6 w-6 p-0 hover:bg-red-100 dark:hover:bg-red-900/30 shrink-0"
                           >
                             <X className="h-3 w-3 text-red-500" />
                           </Button>
@@ -8702,11 +8719,11 @@ export default function PrescriptionsPage() {
               {selectedSignatureData.doctorSignature ? (
                 <div>
                   <Label className="text-sm font-semibold">Doctor Signature</Label>
-                  <div className="mt-2 p-4 border rounded-lg bg-gray-50 dark:bg-gray-800">
+                  <div className="mt-2 p-4 border rounded-lg bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-600">
                     <img 
                       src={selectedSignatureData.doctorSignature} 
                       alt="Doctor Signature" 
-                      className="max-w-full h-auto border border-gray-300 dark:border-gray-600 rounded"
+                      className="max-w-full h-auto border border-gray-300 dark:border-gray-600 rounded dark:invert"
                       onError={(e) => {
                         console.error("Error loading signature image:", selectedSignatureData.doctorSignature);
                         e.currentTarget.style.display = 'none';

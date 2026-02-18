@@ -10830,7 +10830,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         "Monitor patient if combination is continued",
         "Document clinical justification if both medications are required"
       ],
-      notes: "Default guidance provided because AI analysis could not be completed. Update OPENAI_API_KEY (or OPENAI_API_KEY_ENV_VAR) with a valid key for AI-generated analysis.",
+      notes: "",
       fallback: true
     });
 
@@ -30646,10 +30646,17 @@ Cura EMR Team
         
         console.log(`📷 HIGHEST PRIORITY SUMMARY: Successfully processed ${imageBuffers.length} out of ${previewImageDataUrls.length} preview image(s)`);
       }
+
+      // If we already have images from frontend preview (uploaded in this session), do NOT load again from DB/filesystem to avoid duplicating each image in the PDF.
+      const usedPreviewImages = previewImageDataUrls && Array.isArray(previewImageDataUrls) && previewImageDataUrls.length > 0 && imageBuffers.length > 0;
+      if (usedPreviewImages) {
+        console.log(`📷 SKIP PRIMARY/SECONDARY: Using ${imageBuffers.length} image(s) from preview only (avoid duplicate embedding)`);
+      }
       
       // PRIMARY: Get all images from radiology_images by medical_image_id (= study.id / image_id).
-      // For each row we use file_path (or filePath) to load the image file from the server, then embed in PDF.
+      // Skip when we already have images from previewImageDataUrls to prevent same images appearing twice in PDF.
       let radiologyImagesCount = 0;
+      if (!usedPreviewImages) {
       try {
         console.log(`📷 PRIMARY SOURCE: Querying radiology_images for medical_image_id=${imageId} (image_id) to get file_path for each image`);
         
@@ -31207,9 +31214,10 @@ Cura EMR Team
       } catch (error) {
         console.error('Error fetching radiology images from database:', error);
       }
+      } // end if (!usedPreviewImages)
       
-      // SECONDARY: Also try to use radiologyImagePaths provided from frontend (additional images)
-      if (radiologyImagePaths && Array.isArray(radiologyImagePaths) && radiologyImagePaths.length > 0) {
+      // SECONDARY: Also try to use radiologyImagePaths provided from frontend (skip when already using preview to avoid duplicates)
+      if (!usedPreviewImages && radiologyImagePaths && Array.isArray(radiologyImagePaths) && radiologyImagePaths.length > 0) {
         console.log(`📷 Also processing ${radiologyImagePaths.length} image paths provided from frontend`);
         
         for (const rawPath of radiologyImagePaths) {
@@ -31264,8 +31272,8 @@ Cura EMR Team
         }
       }
       
-      // Process uploaded image filenames if provided (fallback or additional images)
-      if (uploadedImageFileNames && Array.isArray(uploadedImageFileNames) && uploadedImageFileNames.length > 0) {
+      // Process uploaded image filenames if provided (skip when already using preview to avoid duplicates)
+      if (!usedPreviewImages && uploadedImageFileNames && Array.isArray(uploadedImageFileNames) && uploadedImageFileNames.length > 0) {
         const imagesDir = path.resolve(process.cwd(), 'uploads', 'Imaging_Images', String(organizationId), 'patients', String(patientId));
         
         for (const fileName of uploadedImageFileNames) {

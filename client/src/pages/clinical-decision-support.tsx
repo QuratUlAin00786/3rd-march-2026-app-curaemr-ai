@@ -2587,7 +2587,7 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
       setDescription(result.description || '');
       setWarnings(Array.isArray(result.warnings) ? result.warnings.join('\n') : (result.warnings || ''));
       setRecommendations(Array.isArray(result.recommendations) ? result.recommendations.join('\n') : (result.recommendations || ''));
-      setNotes(result.notes || '');
+      setNotes(result.fallback ? '' : (result.notes || ''));
       if (result.fallback) {
         toast({ title: "Default guidance applied", description: "AI was unavailable; default interaction guidance has been filled. Please review and edit before adding." });
       } else {

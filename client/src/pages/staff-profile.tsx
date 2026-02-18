@@ -69,13 +69,13 @@ export default function StaffProfile() {
 
   if (isLoading) {
     return (
-      <div className="w-full min-h-0 flex flex-col page-zoom-90">
+      <div className="w-full min-h-0 flex flex-col page-zoom-90 dark:bg-[#121212]">
         <Header title="Staff Profile" subtitle="Loading staff member details..." />
-        <div className="flex-1 overflow-auto p-3 sm:p-4">
+        <div className="flex-1 overflow-auto p-3 sm:p-4 dark:bg-[#121212]">
           <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 rounded w-1/3 mb-4"></div>
-            <div className="h-32 bg-gray-200 rounded mb-6"></div>
-            <div className="h-64 bg-gray-200 rounded"></div>
+            <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-4"></div>
+            <div className="h-32 bg-gray-200 dark:bg-gray-700 rounded mb-6"></div>
+            <div className="h-64 bg-gray-200 dark:bg-gray-700 rounded"></div>
           </div>
         </div>
       </div>
@@ -84,15 +84,15 @@ export default function StaffProfile() {
 
   if (error) {
     return (
-      <div className="w-full min-h-0 flex flex-col page-zoom-90">
+      <div className="w-full min-h-0 flex flex-col page-zoom-90 dark:bg-[#121212]">
         <Header title="Staff Profile" subtitle="Error loading staff member" />
-        <div className="flex-1 overflow-auto p-3 sm:p-4">
-          <Card>
+        <div className="flex-1 overflow-auto p-3 sm:p-4 dark:bg-[#121212]">
+          <Card className="dark:bg-card dark:border-border dark:hover:bg-[#242424] transition-colors">
             <CardContent className="pt-6">
               <div className="text-center">
-                <User className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900">Error loading staff member</h3>
-                <p className="mt-1 text-sm text-gray-500">
+                <User className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" />
+                <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">Error loading staff member</h3>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                   {error?.message || "An error occurred while loading the staff member."}
                 </p>
               </div>
@@ -105,15 +105,15 @@ export default function StaffProfile() {
 
   if (!staffMember) {
     return (
-      <div className="w-full min-h-0 flex flex-col page-zoom-90">
+      <div className="w-full min-h-0 flex flex-col page-zoom-90 dark:bg-[#121212]">
         <Header title="Staff Profile" subtitle="Staff member not found" />
-        <div className="flex-1 overflow-auto p-3 sm:p-4">
-          <Card>
+        <div className="flex-1 overflow-auto p-3 sm:p-4 dark:bg-[#121212]">
+          <Card className="dark:bg-card dark:border-border dark:hover:bg-[#242424] transition-colors">
             <CardContent className="pt-6">
               <div className="text-center">
                 <User className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900">Staff member not found</h3>
-                <p className="mt-1 text-sm text-gray-500">
+                <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">Staff member not found</h3>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                   The requested staff member could not be found.
                 </p>
               </div>
@@ -125,26 +125,26 @@ export default function StaffProfile() {
   }
 
   return (
-    <div className="w-full min-h-0 flex flex-col page-zoom-90">
+    <div className="w-full min-h-0 flex flex-col page-zoom-90 dark:bg-[#121212]">
       <Header 
         title={`${staffMember.firstName} ${staffMember.lastName}`} 
         subtitle="Staff Profile & Information" 
       />
       
-      <div className="flex-1 overflow-auto p-3 sm:p-4">
+      <div className="flex-1 overflow-auto p-3 sm:p-4 dark:bg-[#121212]">
         <div className="grid gap-4 lg:grid-cols-3">
           {/* Profile Overview */}
           <div className="lg:col-span-1">
-            <Card>
+            <Card className="dark:bg-card dark:border-border dark:hover:bg-[#242424] transition-colors">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <User className="h-5 w-5" />
+                <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
+                  <User className="h-5 w-5 text-gray-900 dark:text-gray-100" />
                   Profile Overview
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-center">
-                  <Avatar className="mx-auto h-24 w-24 mb-4">
+                  <Avatar className="mx-auto h-24 w-24 mb-4 ring-2 ring-gray-200 dark:ring-slate-600 bg-gray-100 dark:bg-slate-700">
                     <AvatarContent>
                       {staffMember.profileImageUrl ? (
                         <img src={staffMember.profileImageUrl} alt="Profile" className="object-cover" />
@@ -154,17 +154,17 @@ export default function StaffProfile() {
                         </div>
                       )}
                     </AvatarContent>
-                    <AvatarFallback>
+                    <AvatarFallback className="bg-gray-200 text-gray-700 dark:bg-slate-600 dark:text-gray-100 text-lg font-semibold">
                       {getInitials(staffMember.firstName, staffMember.lastName)}
                     </AvatarFallback>
                   </Avatar>
                   
-                  <h2 className="text-xl font-semibold text-gray-900">
+                  <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                     {staffMember.firstName} {staffMember.lastName}
                   </h2>
                   
                   <div className="flex justify-center gap-2 mt-2">
-                    <Badge className={roleColors[staffMember.role] || "bg-gray-100 text-gray-800"}>
+                    <Badge className={`${roleColors[staffMember.role] || "bg-gray-100 text-gray-800"} dark:bg-slate-600 dark:text-slate-100`}>
                       {staffMember.role.charAt(0).toUpperCase() + staffMember.role.slice(1)}
                     </Badge>
                   </div>
@@ -173,7 +173,7 @@ export default function StaffProfile() {
                     <div className="mt-3">
                       <Badge 
                         variant="outline" 
-                        className={departmentColors[staffMember.department as keyof typeof departmentColors] || "bg-gray-100 text-gray-800"}
+                        className={`${departmentColors[staffMember.department as keyof typeof departmentColors] || "bg-gray-100 text-gray-800"} dark:bg-slate-600 dark:text-slate-100 dark:border-slate-500`}
                       >
                         <MapPin className="h-3 w-3 mr-1" />
                         {staffMember.department}
@@ -187,37 +187,37 @@ export default function StaffProfile() {
 
           {/* Contact Information & Details */}
           <div className="lg:col-span-2 space-y-6">
-            <Card>
+            <Card className="dark:bg-card dark:border-border dark:hover:bg-[#242424] transition-colors">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
                   <Mail className="h-5 w-5" />
                   Contact Information
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center gap-3">
-                  <Mail className="h-4 w-4 text-gray-400" />
+                  <Mail className="h-4 w-4 text-gray-400 dark:text-gray-500" />
                   <div>
-                    <p className="text-sm font-medium text-gray-900">Email</p>
-                    <p className="text-sm text-gray-600">{staffMember.email}</p>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Email</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.email}</p>
                   </div>
                 </div>
                 
                 {staffMember.phone && (
                   <div className="flex items-center gap-3">
-                    <Phone className="h-4 w-4 text-gray-400" />
+                    <Phone className="h-4 w-4 text-gray-400 dark:text-gray-500" />
                     <div>
-                      <p className="text-sm font-medium text-gray-900">Phone</p>
-                      <p className="text-sm text-gray-600">{staffMember.phone}</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Phone</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.phone}</p>
                     </div>
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="dark:bg-card dark:border-border dark:hover:bg-[#242424] transition-colors">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
                   <Building className="h-5 w-5" />
                   Professional Information
                 </CardTitle>
@@ -225,25 +225,25 @@ export default function StaffProfile() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-sm font-medium text-gray-900">Role</p>
-                    <p className="text-sm text-gray-600 capitalize">{staffMember.role}</p>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Role</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 capitalize">{staffMember.role}</p>
                   </div>
                   
                   {staffMember.department && (
                     <div>
-                      <p className="text-sm font-medium text-gray-900">Department</p>
-                      <p className="text-sm text-gray-600">{staffMember.department}</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Department</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.department}</p>
                     </div>
                   )}
                   
                   <div>
-                    <p className="text-sm font-medium text-gray-900">Staff ID</p>
-                    <p className="text-sm text-gray-600">ID-{staffMember.id}</p>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Staff ID</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">ID-{staffMember.id}</p>
                   </div>
                   
                   <div>
-                    <p className="text-sm font-medium text-gray-900">Status</p>
-                    <Badge className="bg-green-100 text-green-800">Active</Badge>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Status</p>
+                    <Badge className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">Active</Badge>
                   </div>
                 </div>
               </CardContent>
@@ -251,9 +251,9 @@ export default function StaffProfile() {
 
             {/* Medical Practice - Show for doctors and nurses */}
             {(isDoctorLike(staffMember.role) || staffMember.role === 'nurse') && (
-              <Card>
+              <Card className="dark:bg-card dark:border-border dark:hover:bg-[#242424] transition-colors">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
                     <Stethoscope className="h-5 w-5" />
                     Medical Practice
                   </CardTitle>
@@ -262,29 +262,29 @@ export default function StaffProfile() {
                   <div className="grid grid-cols-2 gap-4">
                     {staffMember.medicalSpecialtyCategory && (
                       <div>
-                        <p className="text-sm font-medium text-gray-900">Specialization</p>
-                        <p className="text-sm text-gray-600">{staffMember.medicalSpecialtyCategory}</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Specialization</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.medicalSpecialtyCategory}</p>
                       </div>
                     )}
                     
                     {staffMember.subSpecialty && (
                       <div>
-                        <p className="text-sm font-medium text-gray-900">Sub-Specialization</p>
-                        <p className="text-sm text-gray-600">{staffMember.subSpecialty}</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Sub-Specialization</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.subSpecialty}</p>
                       </div>
                     )}
                     
                     {!staffMember.medicalSpecialtyCategory && staffMember.department && (
                       <div>
-                        <p className="text-sm font-medium text-gray-900">Department</p>
-                        <p className="text-sm text-gray-600">{staffMember.department}</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Department</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.department}</p>
                       </div>
                     )}
                     
                     {staffMember.workingDays && Array.isArray(staffMember.workingDays) && staffMember.workingDays.length > 0 && (
                       <div>
-                        <p className="text-sm font-medium text-gray-900">Working Days</p>
-                        <p className="text-sm text-gray-600">{staffMember.workingDays.join(', ')}</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Working Days</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.workingDays.join(', ')}</p>
                       </div>
                     )}
                   </div>
@@ -293,14 +293,14 @@ export default function StaffProfile() {
                     <div className="grid grid-cols-2 gap-4">
                       {staffMember.workingHours.start && (
                         <div>
-                          <p className="text-sm font-medium text-gray-900">Working Hours Start</p>
-                          <p className="text-sm text-gray-600">{staffMember.workingHours.start}</p>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Working Hours Start</p>
+                          <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.workingHours.start}</p>
                         </div>
                       )}
                       {staffMember.workingHours.end && (
                         <div>
-                          <p className="text-sm font-medium text-gray-900">Working Hours End</p>
-                          <p className="text-sm text-gray-600">{staffMember.workingHours.end}</p>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Working Hours End</p>
+                          <p className="text-sm text-gray-600 dark:text-gray-300">{staffMember.workingHours.end}</p>
                         </div>
                       )}
                     </div>

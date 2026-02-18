@@ -6253,72 +6253,10 @@ export default function ImagingPage() {
                     )}
                   </div>
 
-                  {/* Uploaded Images Column */}
+                  {/* Uploaded Images Column - Save Images button hidden; preview only */}
                   <div className="border rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <Label className="text-sm font-medium">Uploaded Images</Label>
-                      {uploadedImagePreviews.length > 0 && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            try {
-                              if (!selectedStudy || !user) return;
-                              
-                              const token = localStorage.getItem("auth_token");
-                              if (!token) {
-                                toast({
-                                  title: "Authentication Required",
-                                  description: "Please log in to save images.",
-                                  variant: "destructive",
-                                });
-                                return;
-                              }
-
-                              const response = await fetch('/api/imaging/save-uploaded-images', {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  'X-Tenant-Subdomain': getActiveSubdomain(),
-                                  'Authorization': `Bearer ${token}`,
-                                },
-                                body: JSON.stringify({
-                                  organizationId: user.organizationId || selectedStudy.organizationId,
-                                  patientId: selectedStudy.patientId,
-                                  imageUrls: uploadedImagePreviews,
-                                }),
-                              });
-
-                              if (!response.ok) {
-                                throw new Error('Failed to save images');
-                              }
-
-                              const data = await response.json();
-                              
-                              toast({
-                                title: "Success",
-                                description: `Saved ${data.savedCount} image(s) to Imaging_Images folder.`,
-                              });
-                              
-                              // Set success message to display below "Uploaded Images"
-                              setSaveImageSuccess(`Successfully saved ${data.savedCount} image(s) to database`);
-                            } catch (error) {
-                              console.error('Error saving images:', error);
-                              toast({
-                                title: "Error",
-                                description: error instanceof Error ? error.message : "Failed to save images.",
-                                variant: "destructive",
-                              });
-                              setSaveImageSuccess(null);
-                            }
-                          }}
-                          data-testid="button-save-images"
-                        >
-                          <Save className="h-3 w-3 mr-1" />
-                          Save Images
-                        </Button>
-                      )}
                     </div>
                     {saveImageSuccess && (
                       <div className="text-sm text-green-600 dark:text-green-400 font-medium mt-1">

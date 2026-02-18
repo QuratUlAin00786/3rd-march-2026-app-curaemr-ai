@@ -426,23 +426,9 @@ export default function AiInsights() {
                               </Button>
                               {insight.patientId && (
                                 <Button 
-                                  variant="link" 
                                   size="sm"
                                   onClick={() => setLocation(`/patients/${insight.patientId}`)}
-                                  style={{ 
-                                    backgroundColor: '#4A7DFF', 
-                                    borderColor: '#4A7DFF',
-                                    color: 'white'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    e.currentTarget.style.backgroundColor = '#7279FB';
-                                    e.currentTarget.style.borderColor = '#7279FB';
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.backgroundColor = '#4A7DFF';
-                                    e.currentTarget.style.borderColor = '#4A7DFF';
-                                  }}
-                                  className="transition-all duration-200"
+                                  className="transition-all duration-200 bg-[#4A7DFF] hover:bg-[#7279FB] border-[#4A7DFF] text-white dark:bg-blue-600 dark:hover:bg-blue-500 dark:border-blue-600 dark:text-white"
                                 >
                                   View Patient
                                 </Button>

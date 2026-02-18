@@ -1871,7 +1871,7 @@ const bookingSummaryServiceInfo = useMemo(
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="bg-white hover:bg-gray-50 border border-gray-200 flex-shrink-0"
+                      className="bg-white hover:bg-gray-50 border border-gray-200 flex-shrink-0 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-600"
                       onClick={(e) => {
                         e.stopPropagation();
                         const profilePath = isDoctorLike(user?.role) 

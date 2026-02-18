@@ -239,9 +239,10 @@ button[data-testid="delete-customer-button"] {
   --muted-foreground: hsl(240, 4%, 70%);
   --popover: hsl(220, 45%, 8%);
   --popover-foreground: hsl(0, 0%, 95%);
-  --card: hsl(220, 45%, 8%);
+  --card: #1E1E1E;
   --card-foreground: hsl(0, 0%, 95%);
-  --border: hsl(220, 45%, 18%);
+  --card-hover: #242424;
+  --border: #2A2A2A;
   --input: hsl(220, 45%, 18%);
   --primary: #4A7DFF;
   --primary-foreground: #FFFFFF;
@@ -267,6 +268,26 @@ button[data-testid="delete-customer-button"] {
   --medical-blue: hsl(222, 100%, 64%);
   --medical-green: hsl(142, 70%, 55%);
   --medical-orange: hsl(15, 100%, 65%);
+
+  /* Vertical scrollbar: grey in dark theme */
+  scrollbar-color: #6b7280 #374151;
+  scrollbar-width: thin;
+}
+
+/* WebKit scrollbar (Chrome, Safari, Edge): grey in dark theme */
+.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #374151;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #6b7280;
+  border-radius: 4px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
 }
 
 /* CURA BRAND COLOR UTILITY CLASSES - EXACT HEX VALUES */
@@ -577,6 +598,10 @@ button[data-testid="delete-customer-button"] {
   
   .dashboard-card {
     @apply bg-white dark:bg-card rounded-xl border border-neutral-100 dark:border-border p-6 shadow-sm hover:shadow-md transition-shadow;
+  }
+  .dark .dashboard-card:hover,
+  .dark .bg-card:hover {
+    background-color: var(--card-hover);
   }
   
   .stats-card {
