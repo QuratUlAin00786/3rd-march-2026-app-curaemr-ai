@@ -13,6 +13,8 @@ interface LiveKitVideoCallProps {
   serverUrl?: string;
   onDisconnect?: () => void;
   showControls?: boolean;
+  audioEnabled?: boolean;
+  videoEnabled?: boolean;
 }
 
 export function LiveKitVideoCall({
@@ -22,6 +24,8 @@ export function LiveKitVideoCall({
   serverUrl,
   onDisconnect,
   showControls = true,
+  audioEnabled = true,
+  videoEnabled = true,
 }: LiveKitVideoCallProps) {
   const {
     room,
@@ -48,8 +52,8 @@ export function LiveKitVideoCall({
       connect({
         roomName,
         participantName,
-        audioEnabled: true,
-        videoEnabled: true,
+        audioEnabled,
+        videoEnabled,
         token,
         url: serverUrl,
       });
@@ -65,6 +69,8 @@ export function LiveKitVideoCall({
     participantName,
     token,
     serverUrl,
+    audioEnabled,
+    videoEnabled,
     isConnected,
     isConnecting,
     connect,

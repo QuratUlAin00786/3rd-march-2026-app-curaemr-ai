@@ -66,6 +66,22 @@ if (typeof window !== 'undefined') {
   window.__stopIncomingCallRingtone = globalStopRingtone;
 }
 
+// Stop camera (video tracks) when closing Incoming Video Call
+function stopCameraForIncomingVideoCall() {
+  try {
+    document.querySelectorAll('video').forEach((videoEl) => {
+      const video = videoEl as HTMLVideoElement;
+      if (video.srcObject instanceof MediaStream) {
+        const stream = video.srcObject as MediaStream;
+        stream.getVideoTracks().forEach((track) => track.stop());
+        video.srcObject = null;
+      }
+    });
+  } catch (e) {
+    console.log('[GlobalIncomingCall] Error stopping camera:', e);
+  }
+}
+
 export function GlobalIncomingCallBar() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -176,8 +192,20 @@ export function GlobalIncomingCallBar() {
   }, [stopRingtone, stopCallTimer]);
 
   useEffect(() => {
+    const closeIncomingCallIfMatch = (data: { roomId?: string }) => {
+      if (incomingCall && data.roomId === incomingCall.roomId) {
+        console.log('[GlobalIncomingCall] Auto-decline and close Incoming Audio/Video Call - caller ended or declined');
+        if (incomingCall.isVideo) stopCameraForIncomingVideoCall();
+        stopRingtone();
+        clearIncomingCall();
+      }
+    };
+
     const unsubscribeCallEnded = socketManager.on('call_ended', (data: any) => {
       console.log('[GlobalIncomingCall] Received call_ended event:', data);
+      
+      // If we have an incoming call for this room (caller cancelled from "Call in Progress"), close popup
+      closeIncomingCallIfMatch(data);
       
       if (activeVideoCall && data.roomId === activeVideoCall.roomName) {
         console.log('[GlobalIncomingCall] Closing video call - caller ended');
@@ -200,10 +228,18 @@ export function GlobalIncomingCallBar() {
       }
     });
 
+    const unsubscribeCallDeclined = socketManager.on('call_declined', (data: any) => {
+      console.log('[GlobalIncomingCall] Received call_declined event:', data);
+      
+      // If we have an incoming call and it matches the declined call, auto-decline and close popup
+      closeIncomingCallIfMatch(data);
+    });
+
     return () => {
       unsubscribeCallEnded();
+      unsubscribeCallDeclined();
     };
-  }, [activeVideoCall, activeAudioCall, stopCallTimer, toast]);
+  }, [activeVideoCall, activeAudioCall, incomingCall, stopCallTimer, stopRingtone, clearIncomingCall, toast]);
 
   const handleAccept = useCallback((callData: IncomingCallData) => {
     console.log('[GlobalIncomingCall] Accepting call, stopping ringtone...');
@@ -237,17 +273,20 @@ export function GlobalIncomingCallBar() {
 
   const handleDecline = useCallback(() => {
     console.log('[GlobalIncomingCall] Declining call, stopping ringtone...');
+    if (incomingCall?.isVideo) stopCameraForIncomingVideoCall();
     stopRingtone();
     stopCallTimer();
-    declineCall();
-  }, [declineCall, stopRingtone, stopCallTimer]);
+    declineCall(); // Emit and clear state
+    clearIncomingCall(); // Ensure "Incoming Audio Call" popup closes when user declines (before other party accepts/declines)
+  }, [incomingCall, declineCall, clearIncomingCall, stopRingtone, stopCallTimer]);
 
   const handleTimeout = useCallback(() => {
     console.log('[GlobalIncomingCall] Call timed out, stopping ringtone...');
+    if (incomingCall?.isVideo) stopCameraForIncomingVideoCall();
     stopRingtone();
     stopCallTimer();
     clearIncomingCall();
-  }, [clearIncomingCall, stopRingtone, stopCallTimer]);
+  }, [incomingCall, clearIncomingCall, stopRingtone, stopCallTimer]);
 
   const handleEndVideoCall = useCallback(() => {
     if (activeVideoCall && user) {

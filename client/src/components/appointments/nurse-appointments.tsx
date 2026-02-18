@@ -8,6 +8,7 @@ import { format, isToday, isFuture } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
+import { AppointmentInvoiceInfo } from "./AppointmentInvoiceInfo";
 
 const statusColors = {
   scheduled: "#4A7DFF",
@@ -300,6 +301,19 @@ export default function NurseAppointments({ onNewAppointment }: { onNewAppointme
                         </div>
                         <span className="font-medium">{formatTime(appointment.scheduledAt)}</span>
                       </div>
+
+                      {/* Appointment ID (e.g. APT1770784119025P125AUTO) and Invoice for doctor/nurse */}
+                      {(appointment.appointmentId || (appointment as any).appointment_id) && (
+                        <div className="space-y-1.5">
+                          <Badge
+                            variant="outline"
+                            className="bg-blue-50 text-blue-700 border-blue-200 text-xs font-medium"
+                          >
+                            {appointment.appointmentId ?? (appointment as any).appointment_id}
+                          </Badge>
+                          <AppointmentInvoiceInfo appointmentId={appointment.appointmentId ?? (appointment as any).appointment_id} />
+                        </div>
+                      )}
 
                       {/* Description if available */}
                       {appointment.description && (

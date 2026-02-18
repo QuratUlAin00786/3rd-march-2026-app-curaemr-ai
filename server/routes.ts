@@ -25,6 +25,7 @@ import { db, pool } from "./db";
 import { and, eq, sql, desc, asc, isNull, isNotNull, or, gte, lte, ne } from "drizzle-orm";
 import { processAppointmentBookingChat, generateAppointmentSummary } from "./anthropic";
 import { inventoryService } from "./services/inventory";
+import { clinicalDecisionSupport } from "./services/clinical-decision-support";
 import { pharmacyService } from "./services/pharmacy";
 import { formService } from "./services/forms";
 import { emailService } from "./services/email";
@@ -10811,6 +10812,72 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     }
   });
 
+  // Analyze two-drug interaction (AI) for Add Drug Interaction form - uses same aiService/OpenAI as "Generate Treatment Plan"
+  app.post("/api/clinical/drug-interaction-analyze", authMiddleware, async (req: TenantRequest, res) => {
+    res.setHeader("Content-Type", "application/json");
+
+    const buildFallbackResult = (med1: string, med2: string) => ({
+      severity: "medium" as const,
+      description: `Potential interaction between ${med1} and ${med2}. Combined use may increase risk of bleeding or other effects. This is default guidance; AI analysis was unavailable. Please consult a pharmacist or clinical reference and review before saving.`,
+      warnings: [
+        "Possible drug interaction — verify with clinical reference",
+        "Consider monitoring for bleeding risk or other known interactions",
+        "Review patient medication list for other interactions"
+      ],
+      recommendations: [
+        "Consult current clinical guidelines or drug interaction database",
+        "Consider alternative therapy if appropriate",
+        "Monitor patient if combination is continued",
+        "Document clinical justification if both medications are required"
+      ],
+      notes: "Default guidance provided because AI analysis could not be completed. Update OPENAI_API_KEY (or OPENAI_API_KEY_ENV_VAR) with a valid key for AI-generated analysis.",
+      fallback: true
+    });
+
+    try {
+      if (req.user?.role === "patient") {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      const body = z.object({
+        medication1Name: z.string().min(1, "Medication 1 name is required"),
+        medication1Dosage: z.string().optional(),
+        medication1Frequency: z.string().optional(),
+        medication2Name: z.string().min(1, "Medication 2 name is required"),
+        medication2Dosage: z.string().optional(),
+        medication2Frequency: z.string().optional()
+      }).parse(req.body);
+
+      const med1 = body.medication1Name + (body.medication1Dosage ? ` ${body.medication1Dosage}` : "") + (body.medication1Frequency ? ` ${body.medication1Frequency}` : "");
+      const med2 = body.medication2Name + (body.medication2Dosage ? ` ${body.medication2Dosage}` : "") + (body.medication2Frequency ? ` ${body.medication2Frequency}` : "");
+
+      try {
+        const result = await aiService.generateDrugInteractionAnalysis(
+          { name: body.medication1Name, dosage: body.medication1Dosage, frequency: body.medication1Frequency },
+          { name: body.medication2Name, dosage: body.medication2Dosage, frequency: body.medication2Frequency }
+        );
+        return res.json(result);
+      } catch (aiError: any) {
+        console.log("[DRUG-INTERACTION-ANALYZE] OpenAI failed, using fallback template");
+        console.error("[DRUG-INTERACTION-ANALYZE] OpenAI Error:", aiError?.message || aiError);
+        return res.json(buildFallbackResult(med1, med2));
+      }
+    } catch (error: any) {
+      console.error("Drug interaction analyze error:", error);
+      if (error?.name === "ZodError" && error?.errors) {
+        const msg = error.errors.map((e: { path: string[]; message: string }) => e.message).join("; ") || "Invalid request";
+        return res.status(400).json({ error: msg });
+      }
+      // If error is due to API key / 401 / OpenAI auth, return 200 with fallback so UI does not show 500
+      const errMsg = error?.message && typeof error.message === "string" ? error.message : "";
+      if (errMsg.includes("401") || errMsg.includes("API key") || errMsg.includes("Incorrect API key") || error?.status === 401 || error?.code === "invalid_api_key") {
+        const med1 = (req.body?.medication1Name || "Medication 1") + (req.body?.medication1Dosage ? ` ${req.body.medication1Dosage}` : "") + (req.body?.medication1Frequency ? ` ${req.body.medication1Frequency}` : "");
+        const med2 = (req.body?.medication2Name || "Medication 2") + (req.body?.medication2Dosage ? ` ${req.body.medication2Dosage}` : "") + (req.body?.medication2Frequency ? ` ${req.body.medication2Frequency}` : "");
+        return res.json(buildFallbackResult(med1, med2));
+      }
+      return res.status(500).json({ error: errMsg || "Failed to analyze drug interaction" });
+    }
+  });
+
   // Patient Drug Interactions API endpoints
   app.post("/api/clinical/patient-drug-interactions", authMiddleware, async (req: TenantRequest, res) => {
     try {
@@ -12766,7 +12833,7 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       if (!invoice && idsToMatch.length > 0) {
         const client = await pool.connect();
         try {
-          await client.query({ text: "SET LOCAL search_path TO curauser24nov25, public" });
+          await client.query({ text: "SET LOCAL search_path TO curauser24nov25" });
           const placeholders = idsToMatch.map((_, i) => `$${i + 3}`).join(", ");
           const { rows } = await client.query(
             `SELECT * FROM invoices WHERE organization_id = $1 AND service_type = $2 AND service_id IN (${placeholders}) LIMIT 1`,
@@ -22666,6 +22733,69 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     } catch (error) {
       console.error("Error fetching telemedicine users:", error);
       res.status(500).json({ error: "Failed to fetch telemedicine users" });
+    }
+  });
+
+  // Ensure curauser24nov25.telemedicine_settings table exists (idempotent)
+  const ensureTelemedicineSettingsTable = async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS curauser24nov25.telemedicine_settings (
+        user_id INTEGER NOT NULL,
+        organization_id INTEGER NOT NULL,
+        settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+        PRIMARY KEY (user_id)
+      )
+    `);
+  };
+
+  // Get telemedicine settings for the current user (from database)
+  app.get("/api/telemedicine/settings", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      await ensureTelemedicineSettingsTable();
+      const { rows } = await pool.query(
+        `SELECT settings FROM curauser24nov25.telemedicine_settings WHERE user_id = $1`,
+        [userId]
+      );
+      if (rows.length === 0) {
+        return res.json(null);
+      }
+      res.json(rows[0].settings);
+    } catch (error) {
+      console.error("Error fetching telemedicine settings:", error);
+      res.status(500).json({ error: "Failed to fetch telemedicine settings" });
+    }
+  });
+
+  // Save telemedicine settings for the current user (to database)
+  app.put("/api/telemedicine/settings", authMiddleware, async (req: TenantRequest, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      const organizationId = req.tenant?.id ?? req.user?.organizationId ?? 1;
+      const settings = req.body;
+      if (!settings || typeof settings !== "object") {
+        return res.status(400).json({ error: "Invalid settings payload" });
+      }
+      await ensureTelemedicineSettingsTable();
+      await pool.query(
+        `INSERT INTO curauser24nov25.telemedicine_settings (user_id, organization_id, settings, updated_at)
+         VALUES ($1, $2, $3::jsonb, now())
+         ON CONFLICT (user_id)
+         DO UPDATE SET settings = $3::jsonb, organization_id = $2, updated_at = now()`,
+        [userId, organizationId, JSON.stringify(settings)]
+      );
+      res.json(settings);
+    } catch (error: any) {
+      console.error("Error saving telemedicine settings:", error);
+      const message = error?.message || "Failed to save telemedicine settings";
+      res.status(500).json({ error: message });
     }
   });
 

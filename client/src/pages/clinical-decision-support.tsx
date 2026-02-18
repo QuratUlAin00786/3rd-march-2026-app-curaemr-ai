@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, buildUrl } from "@/lib/queryClient";
 import { AiInsight } from "@shared/schema";
 import { getActiveSubdomain } from "@/lib/subdomain-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,7 +47,8 @@ import {
   AlertCircle,
   User,
   Check,
-  ChevronsUpDown
+  ChevronsUpDown,
+  Sparkles
 } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -2172,6 +2173,8 @@ function DrugInteractionsTab() {
   const [selectedSeverity, setSelectedSeverity] = React.useState<string>("all");
   const [showAddInteractionDialog, setShowAddInteractionDialog] = React.useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canAddDrugInteraction = ['doctor', 'nurse', 'admin'].includes(user?.role || '');
 
   // Fetch drug interactions data
   const { 
@@ -2206,6 +2209,16 @@ function DrugInteractionsTab() {
   const interactions = interactionsData?.interactions || [];
   const totalInteractions = interactionsData?.totalInteractions || 0;
   const patientsScanned = interactionsData?.patientsScanned || 0;
+
+  // Refresh all drug interactions data from database
+  const handleRefreshDrugInteractions = React.useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['/api/clinical/drug-interactions'] });
+    await queryClient.refetchQueries({ queryKey: ['/api/clinical/drug-interactions'] });
+    toast({
+      title: "Refreshed",
+      description: "Refreshed Drug interactions data has been reloaded",
+    });
+  }, [toast]);
 
   // Filter interactions by severity
   const filteredInteractions = React.useMemo(() => {
@@ -2275,7 +2288,7 @@ function DrugInteractionsTab() {
           <Button 
             variant="outline" 
             size="sm" 
-            onClick={() => refetch()}
+            onClick={handleRefreshDrugInteractions}
             className="ml-2 h-6"
           >
             Retry
@@ -2300,19 +2313,21 @@ function DrugInteractionsTab() {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => setShowAddInteractionDialog(true)}
-              className="flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Add Drug Interaction
-            </Button>
+            {canAddDrugInteraction && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setShowAddInteractionDialog(true)}
+                className="flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Add Drug Interaction
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
-              onClick={() => refetch()}
+              onClick={handleRefreshDrugInteractions}
               className="flex items-center gap-2"
             >
               <RotateCcw className="w-4 h-4" />
@@ -2498,6 +2513,7 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
   const [recommendations, setRecommendations] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isGenerating, setIsGenerating] = React.useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -2520,6 +2536,74 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
 
   const patients = Array.isArray(patientsData) ? patientsData : (patientsData?.patients || []);
 
+  const handleGenerateFromAI = async () => {
+    if (!medication1Name.trim() || !medication2Name.trim()) {
+      toast({
+        title: "Medications required",
+        description: "Please enter both Medication 1 and Medication 2 names to generate analysis.",
+        variant: "destructive"
+      });
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const response = await fetch(buildUrl('/api/clinical/drug-interaction-analyze'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'X-Tenant-Subdomain': getActiveSubdomain()
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          medication1Name: medication1Name.trim(),
+          medication1Dosage: medication1Dosage.trim() || undefined,
+          medication1Frequency: medication1Frequency.trim() || undefined,
+          medication2Name: medication2Name.trim(),
+          medication2Dosage: medication2Dosage.trim() || undefined,
+          medication2Frequency: medication2Frequency.trim() || undefined
+        })
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        let message = 'Failed to analyze drug interaction';
+        try {
+          const err = JSON.parse(text);
+          if (err && typeof err.error === 'string') message = err.error;
+        } catch {
+          if (text.startsWith('<!')) message = 'Server error. Please check the API is running and try again.';
+          else if (text) message = text.slice(0, 200);
+        }
+        throw new Error(message);
+      }
+      let result: { severity?: string; description?: string; warnings?: string[]; recommendations?: string[]; notes?: string; fallback?: boolean };
+      try {
+        result = JSON.parse(text);
+      } catch {
+        throw new Error('Server returned an invalid response. Please try again.');
+      }
+      setSeverity(result.severity || 'medium');
+      setDescription(result.description || '');
+      setWarnings(Array.isArray(result.warnings) ? result.warnings.join('\n') : (result.warnings || ''));
+      setRecommendations(Array.isArray(result.recommendations) ? result.recommendations.join('\n') : (result.recommendations || ''));
+      setNotes(result.notes || '');
+      if (result.fallback) {
+        toast({ title: "Default guidance applied", description: "AI was unavailable; default interaction guidance has been filled. Please review and edit before adding." });
+      } else {
+        toast({ title: "Analysis complete", description: "AI-generated fields have been filled. You can edit and then add the interaction." });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate analysis",
+        variant: "destructive"
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -2534,8 +2618,8 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
 
     setIsSubmitting(true);
 
-    // Check if user role is admin before saving to database
-    if (user?.role === 'admin') {
+    // Allow doctor, nurse, and admin roles to save to database
+    if (user && ['admin', 'doctor', 'nurse'].includes(user.role)) {
       try {
         const payload = {
           patientId: parseInt(selectedPatientId),
@@ -2552,10 +2636,11 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
           notes
         };
 
-        const response = await fetch('/api/clinical/patient-drug-interactions', {
+        const response = await fetch(buildUrl('/api/clinical/patient-drug-interactions'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Accept': 'application/json',
             'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
             'X-Tenant-Subdomain': getActiveSubdomain()
           },
@@ -2572,6 +2657,7 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
           title: "Success",
           description: "Drug interaction added successfully."
         });
+        setIsSubmitting(false);
       } catch (error: any) {
         toast({
           title: "Error",
@@ -2584,7 +2670,7 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
     } else {
       toast({
         title: "Access Denied",
-        description: "Only admin users can save drug interactions to the database.",
+        description: "Only doctor, nurse, or admin users can save drug interactions to the database.",
         variant: "destructive"
       });
       setIsSubmitting(false);
@@ -2604,7 +2690,6 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
     setWarnings("");
     setRecommendations("");
     setNotes("");
-
     onSuccess();
     setIsSubmitting(false);
   };
@@ -2747,6 +2832,27 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
                 placeholder="e.g., Daily"
               />
             </div>
+          </div>
+
+          {/* Generate from AI */}
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleGenerateFromAI}
+              disabled={isGenerating || !medication1Name.trim() || !medication2Name.trim()}
+              className="flex items-center gap-2"
+            >
+              {isGenerating ? (
+                <RotateCcw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              {isGenerating ? 'Generating...' : 'Generate from AI'}
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Fill severity, description, warnings, and recommendations from AI.
+            </span>
           </div>
 
           {/* Severity */}

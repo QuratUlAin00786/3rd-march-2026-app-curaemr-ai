@@ -122,14 +122,73 @@ interface WaitingRoom {
   status: "waiting" | "ready" | "in_call";
 }
 
+const TELEMEDICINE_SETTINGS_KEY = "telemedicine_settings";
+
+export interface TelemedicineSettings {
+  defaultVideoQuality: "480p" | "720p" | "1080p";
+  autoStartVideo: boolean;
+  autoStartAudio: boolean;
+  echoCancellation: boolean;
+  autoRecordConsultations: boolean;
+  recordingQuality: "low" | "medium" | "high";
+  patientConsentRequired: boolean;
+  appointmentReminders: boolean;
+  patientWaitingAlerts: boolean;
+  connectionIssuesAlerts: boolean;
+}
+
+const DEFAULT_TELEMEDICINE_SETTINGS: TelemedicineSettings = {
+  defaultVideoQuality: "720p",
+  autoStartVideo: true,
+  autoStartAudio: true,
+  echoCancellation: true,
+  autoRecordConsultations: false,
+  recordingQuality: "high",
+  patientConsentRequired: true,
+  appointmentReminders: true,
+  patientWaitingAlerts: true,
+  connectionIssuesAlerts: true,
+};
+
+function loadTelemedicineSettingsFromStorage(): TelemedicineSettings {
+  try {
+    const raw = localStorage.getItem(TELEMEDICINE_SETTINGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<TelemedicineSettings>;
+      return { ...DEFAULT_TELEMEDICINE_SETTINGS, ...parsed };
+    }
+  } catch (_) {}
+  return { ...DEFAULT_TELEMEDICINE_SETTINGS };
+}
+
+function saveTelemedicineSettingsToStorage(settings: TelemedicineSettings): void {
+  try {
+    localStorage.setItem(TELEMEDICINE_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (_) {}
+}
+
+function mergeWithDefaults(partial: Partial<TelemedicineSettings> | null): TelemedicineSettings {
+  if (!partial || typeof partial !== "object") return { ...DEFAULT_TELEMEDICINE_SETTINGS };
+  return { ...DEFAULT_TELEMEDICINE_SETTINGS, ...partial };
+}
+
 // Patient List Component for selecting patients for telemedicine consultations
-function PatientList() {
+function PatientList({ telemedicineSettings }: { telemedicineSettings?: TelemedicineSettings | null }) {
   const { toast } = useToast();
   const { user } = useAuth();
   const { canCreate } = useRolePermissions();
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const callTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const callStartTimeRef = useRef<number | null>(null);
+  const currentAudioCallRef = useRef<typeof liveKitAudioCall>(null);
+  const callAcceptedRef = useRef<boolean>(false);
+  const [callStatusModal, setCallStatusModal] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+  }>({ open: false, title: "", description: "" });
 
   // LiveKit call state
   const [liveKitVideoCall, setLiveKitVideoCall] = useState<{
@@ -313,6 +372,7 @@ function PatientList() {
 
         // Start call duration timer
         setCallDuration(0);
+        callAcceptedRef.current = true; // Mark call as accepted when timer starts
         callTimerRef.current = setInterval(() => {
           setCallDuration((prev) => prev + 1);
         }, 1000);
@@ -537,13 +597,69 @@ function PatientList() {
 
       const finalRoomId = liveKitRoom.roomId || roomName;
 
-      setLiveKitAudioCall({
+      const callData = {
         roomName: finalRoomId,
         patient,
         token: liveKitRoom.token,
         serverUrl: liveKitRoom.serverUrl,
         e2eeKey: liveKitRoom.e2eeKey,
-      });
+      };
+
+      setLiveKitAudioCall(callData);
+      currentAudioCallRef.current = callData;
+      callAcceptedRef.current = false;
+
+      // Start timeout for "Not Answering" (30 seconds)
+      callStartTimeRef.current = Date.now();
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+      }
+      
+      // Capture values for timeout callback
+      const capturedRoomId = finalRoomId;
+      const capturedPatient = patient;
+      const capturedUser = user;
+      
+      callTimeoutRef.current = setTimeout(() => {
+        // Check if call is still active and no one answered
+        const currentCall = currentAudioCallRef.current;
+        if (currentCall && currentCall.roomName === capturedRoomId && callStartTimeRef.current && !callAcceptedRef.current) {
+          const timeElapsed = Date.now() - callStartTimeRef.current;
+          if (timeElapsed >= 30000) {
+            console.log('[Telemedicine] Call timeout - no answer after 30 seconds');
+            // Emit call_declined to close recipient's popup
+            if (capturedUser) {
+              const initiatorUserId = buildSocketUserIdentifier(capturedUser);
+              const participantId = buildSocketUserIdentifier(capturedPatient);
+              
+              if (initiatorUserId && participantId) {
+                socketManager.emitToServer('call_declined', {
+                  roomId: capturedRoomId,
+                  fromUserId: initiatorUserId,
+                  toUserId: participantId,
+                  isGroup: false,
+                });
+                console.log('[Telemedicine] Emitted call_declined for timeout');
+              }
+            }
+            
+            // Close initiator's popup and show "Not Answering" message
+            if (callTimerRef.current) {
+              clearInterval(callTimerRef.current);
+              callTimerRef.current = null;
+            }
+            setCallDuration(0);
+            setLiveKitAudioCall(null);
+            currentAudioCallRef.current = null;
+            callStartTimeRef.current = null;
+            setCallStatusModal({
+              open: true,
+              title: "Not Answering",
+              description: "The recipient did not answer the call",
+            });
+          }
+        }
+      }, 30000);
 
       // Create consultation record
       await fetch("/api/telemedicine/consultations", {
@@ -580,12 +696,22 @@ function PatientList() {
     }
     setCallDuration(0);
 
-    // Emit call_ended event to notify the other participant
+    // Emit both call_ended and call_declined events to ensure recipient's popup closes
     if (liveKitVideoCall && user) {
       const initiatorUserId = buildSocketUserIdentifier(user);
       const participantId = buildSocketUserIdentifier(liveKitVideoCall.patient);
       
       if (initiatorUserId && participantId) {
+        // Emit call_declined to close recipient's incoming call popup
+        socketManager.emitToServer('call_declined', {
+          roomId: liveKitVideoCall.roomName,
+          fromUserId: initiatorUserId,
+          toUserId: participantId,
+          isGroup: false,
+        });
+        console.log('[Telemedicine] Emitted call_declined for video call:', liveKitVideoCall.roomName);
+        
+        // Also emit call_ended for consistency
         socketManager.emitToServer('call_ended', {
           roomId: liveKitVideoCall.roomName,
           initiatorUserId: initiatorUserId,
@@ -596,7 +722,8 @@ function PatientList() {
     }
     
     setLiveKitVideoCall(null);
-    toast({
+    setCallStatusModal({
+      open: true,
       title: "Call Ended",
       description: "Video call has been terminated",
     });
@@ -608,14 +735,31 @@ function PatientList() {
       clearInterval(callTimerRef.current);
       callTimerRef.current = null;
     }
+    
+    // Stop timeout timer
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = null;
+    }
+    
     setCallDuration(0);
 
-    // Emit call_ended event to notify the other participant
+    // Emit both call_ended and call_declined events to ensure recipient's popup closes
     if (liveKitAudioCall && user) {
       const initiatorUserId = buildSocketUserIdentifier(user);
       const participantId = buildSocketUserIdentifier(liveKitAudioCall.patient);
       
       if (initiatorUserId && participantId) {
+        // Emit call_declined to close recipient's incoming call popup
+        socketManager.emitToServer('call_declined', {
+          roomId: liveKitAudioCall.roomName,
+          fromUserId: initiatorUserId,
+          toUserId: participantId,
+          isGroup: false,
+        });
+        console.log('[Telemedicine] Emitted call_declined for audio call:', liveKitAudioCall.roomName);
+        
+        // Also emit call_ended for consistency
         socketManager.emitToServer('call_ended', {
           roomId: liveKitAudioCall.roomName,
           initiatorUserId: initiatorUserId,
@@ -626,7 +770,11 @@ function PatientList() {
     }
     
     setLiveKitAudioCall(null);
-    toast({
+    currentAudioCallRef.current = null;
+    callStartTimeRef.current = null;
+    callAcceptedRef.current = false;
+    setCallStatusModal({
+      open: true,
       title: "Call Ended",
       description: "Audio call has been terminated",
     });
@@ -637,6 +785,9 @@ function PatientList() {
     return () => {
       if (callTimerRef.current) {
         clearInterval(callTimerRef.current);
+      }
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
       }
     };
   }, []);
@@ -657,7 +808,8 @@ function PatientList() {
         }
         setCallDuration(0);
         setLiveKitVideoCall(null);
-        toast({
+        setCallStatusModal({
+          open: true,
           title: "Call Ended",
           description: "The other participant ended the call",
         });
@@ -671,9 +823,18 @@ function PatientList() {
           clearInterval(callTimerRef.current);
           callTimerRef.current = null;
         }
+        // Stop timeout timer
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+        }
         setCallDuration(0);
         setLiveKitAudioCall(null);
-        toast({
+        currentAudioCallRef.current = null;
+        callStartTimeRef.current = null;
+        callAcceptedRef.current = false;
+        setCallStatusModal({
+          open: true,
           title: "Call Ended",
           description: "The other participant ended the call",
         });
@@ -693,9 +854,42 @@ function PatientList() {
           callTimerRef.current = null;
         }
         setCallDuration(0);
+        
+        // Explicitly stop all camera/video tracks before unmounting
+        // Stop all video tracks from video elements in the document
+        document.querySelectorAll('video').forEach(videoElement => {
+          const video = videoElement as HTMLVideoElement;
+          if (video.srcObject instanceof MediaStream) {
+            const stream = video.srcObject as MediaStream;
+            stream.getVideoTracks().forEach(track => {
+              track.stop();
+              console.log('[Telemedicine] Stopped video track from video element on decline');
+            });
+            video.srcObject = null;
+          }
+        });
+        
+        // Also stop any active media tracks that might be running
+        // Get all active media streams and stop video tracks
+        const allStreams = new Set<MediaStream>();
+        document.querySelectorAll('video, audio').forEach(element => {
+          const mediaElement = element as HTMLVideoElement | HTMLAudioElement;
+          if (mediaElement.srcObject instanceof MediaStream) {
+            allStreams.add(mediaElement.srcObject as MediaStream);
+          }
+        });
+        
+        allStreams.forEach(stream => {
+          stream.getVideoTracks().forEach(track => {
+            track.stop();
+            console.log('[Telemedicine] Stopped video track from media stream on decline');
+          });
+        });
+        
         // Setting to null will unmount LiveKitVideoCall which cleans up camera/tracks
         setLiveKitVideoCall(null);
-        toast({
+        setCallStatusModal({
+          open: true,
           title: "Call Declined",
           description: "The recipient declined the call",
         });
@@ -709,9 +903,18 @@ function PatientList() {
           clearInterval(callTimerRef.current);
           callTimerRef.current = null;
         }
+        // Stop timeout timer
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+        }
         setCallDuration(0);
         setLiveKitAudioCall(null);
-        toast({
+        currentAudioCallRef.current = null;
+        callStartTimeRef.current = null;
+        callAcceptedRef.current = false;
+        setCallStatusModal({
+          open: true,
           title: "Call Declined",
           description: "The recipient declined the call",
         });
@@ -1023,7 +1226,7 @@ function PatientList() {
           open={!!liveKitVideoCall}
           onOpenChange={() => handleLiveKitVideoCallEnd()}
         >
-          <DialogContent className="max-w-none w-screen h-screen p-0 m-0 rounded-none border-none">
+          <DialogContent className="max-w-none p-0 m-0 rounded-none border-none" style={{ width: 'calc(100vw - 30px)', height: 'calc(100vh - 30px)' }}>
             <DialogHeader className="p-4 border-b absolute top-0 left-0 right-0 z-10 bg-background/95 backdrop-blur">
               <DialogTitle className="flex items-center justify-between gap-4">
                 <span>Video Call - {liveKitVideoCall.patient.firstName}{" "}
@@ -1042,6 +1245,8 @@ function PatientList() {
                 token={liveKitVideoCall.token}
                 serverUrl={liveKitVideoCall.serverUrl}
                 onDisconnect={handleLiveKitVideoCallEnd}
+                audioEnabled={telemedicineSettings?.autoStartAudio ?? true}
+                videoEnabled={telemedicineSettings?.autoStartVideo ?? true}
               />
             </div>
           </DialogContent>
@@ -1073,11 +1278,37 @@ function PatientList() {
                 token={liveKitAudioCall.token}
                 serverUrl={liveKitAudioCall.serverUrl}
                 onDisconnect={handleLiveKitAudioCallEnd}
+                audioEnabled={telemedicineSettings?.autoStartAudio ?? true}
               />
             </div>
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Call Status Modal */}
+      <Dialog open={callStatusModal.open} onOpenChange={(open) => {
+        if (!open) {
+          setCallStatusModal({ open: false, title: "", description: "" });
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{callStatusModal.title}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-gray-700 dark:text-gray-300">{callStatusModal.description}</p>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              onClick={() => {
+                setCallStatusModal({ open: false, title: "", description: "" });
+              }}
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
     </>
   );
@@ -1092,6 +1323,50 @@ export default function Telemedicine() {
   const [isRecording, setIsRecording] = useState(false);
   const [callNotes, setCallNotes] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [telemedicineSettings, setTelemedicineSettings] = useState<TelemedicineSettings>(() => loadTelemedicineSettingsFromStorage());
+
+  // Fetch telemedicine settings from database (GET)
+  const { data: savedSettings, refetch: refetchTelemedicineSettings } = useQuery({
+    queryKey: ["/api/telemedicine/settings"],
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch("/api/telemedicine/settings", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Subdomain": getActiveSubdomain(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data as Partial<TelemedicineSettings> | null;
+    },
+    enabled: true,
+  });
+
+  const settingsDialogOpenedRef = useRef(false);
+
+  // Apply saved settings from API when they load
+  useEffect(() => {
+    if (savedSettings === undefined) return;
+    if (!settingsOpen) {
+      setTelemedicineSettings(mergeWithDefaults(savedSettings));
+    } else if (settingsDialogOpenedRef.current) {
+      setTelemedicineSettings(mergeWithDefaults(savedSettings));
+      settingsDialogOpenedRef.current = false;
+    }
+  }, [savedSettings, settingsOpen]);
+
+  // When Settings dialog opens, refetch from database so form shows latest saved data
+  useEffect(() => {
+    if (settingsOpen) {
+      settingsDialogOpenedRef.current = true;
+      refetchTelemedicineSettings();
+    }
+  }, [settingsOpen, refetchTelemedicineSettings]);
+
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [monitoringOpen, setMonitoringOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -1742,7 +2017,7 @@ export default function Telemedicine() {
                 <DialogTitle>Telemedicine Settings</DialogTitle>
               </DialogHeader>
               <div className="space-y-6">
-                {/* Video Settings */}
+                {/* Video & Audio Settings */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                     Video & Audio Settings
@@ -1750,46 +2025,59 @@ export default function Telemedicine() {
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Default Video Quality
-                      </label>
-                      <select className="w-32 p-2 border rounded-md text-sm">
-                        <option value="720p">720p HD</option>
-                        <option value="1080p">1080p Full HD</option>
-                        <option value="480p">480p Standard</option>
-                      </select>
+                      </Label>
+                      <Select
+                        value={telemedicineSettings.defaultVideoQuality}
+                        onValueChange={(value: "480p" | "720p" | "1080p") =>
+                          setTelemedicineSettings((s) => ({ ...s, defaultVideoQuality: value }))
+                        }
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="480p">480p Standard</SelectItem>
+                          <SelectItem value="720p">720p HD</SelectItem>
+                          <SelectItem value="1080p">1080p Full HD</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Auto-start Video
-                      </label>
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        defaultChecked
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.autoStartVideo}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, autoStartVideo: checked }))
+                        }
                       />
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Auto-start Audio
-                      </label>
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        defaultChecked
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.autoStartAudio}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, autoStartAudio: checked }))
+                        }
                       />
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Echo Cancellation
-                      </label>
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        defaultChecked
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.echoCancellation}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, echoCancellation: checked }))
+                        }
                       />
                     </div>
                   </div>
@@ -1803,31 +2091,47 @@ export default function Telemedicine() {
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Auto-record Consultations
-                      </label>
-                      <input type="checkbox" className="w-4 h-4" />
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.autoRecordConsultations}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, autoRecordConsultations: checked }))
+                        }
+                      />
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Recording Quality
-                      </label>
-                      <select className="w-32 p-2 border rounded-md text-sm">
-                        <option value="high">High Quality</option>
-                        <option value="medium">Medium Quality</option>
-                        <option value="low">Low Quality</option>
-                      </select>
+                      </Label>
+                      <Select
+                        value={telemedicineSettings.recordingQuality}
+                        onValueChange={(value: "low" | "medium" | "high") =>
+                          setTelemedicineSettings((s) => ({ ...s, recordingQuality: value }))
+                        }
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="high">High Quality</SelectItem>
+                          <SelectItem value="medium">Medium Quality</SelectItem>
+                          <SelectItem value="low">Low Quality</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Patient Consent Required
-                      </label>
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        defaultChecked
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.patientConsentRequired}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, patientConsentRequired: checked }))
+                        }
                       />
                     </div>
                   </div>
@@ -1841,35 +2145,38 @@ export default function Telemedicine() {
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Appointment Reminders
-                      </label>
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        defaultChecked
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.appointmentReminders}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, appointmentReminders: checked }))
+                        }
                       />
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Patient Waiting Alerts
-                      </label>
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        defaultChecked
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.patientWaitingAlerts}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, patientWaitingAlerts: checked }))
+                        }
                       />
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
                         Connection Issues Alerts
-                      </label>
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        defaultChecked
+                      </Label>
+                      <Switch
+                        checked={telemedicineSettings.connectionIssuesAlerts}
+                        onCheckedChange={(checked) =>
+                          setTelemedicineSettings((s) => ({ ...s, connectionIssuesAlerts: checked }))
+                        }
                       />
                     </div>
                   </div>
@@ -1878,18 +2185,87 @@ export default function Telemedicine() {
                 {/* Actions */}
                 <div className="flex gap-3 pt-4 border-t">
                   <Button
-                    onClick={() => {
-                      setSuccessMessage(
-                        "Telemedicine settings have been updated successfully.",
-                      );
-                      setShowSuccessModal(true);
-                      setSettingsOpen(false);
-                    }}
+                    type="button"
                     className="flex-1"
+                    onClick={async () => {
+                      try {
+                        const token = localStorage.getItem("auth_token");
+                        const response = await fetch("/api/telemedicine/settings", {
+                          method: "PUT",
+                          headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${token}`,
+                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                          },
+                          credentials: "include",
+                          body: JSON.stringify(telemedicineSettings),
+                        });
+                        if (!response.ok) {
+                          const errBody = await response.json().catch(() => ({}));
+                          const msg = errBody?.error || response.statusText || "Failed to save settings";
+                          throw new Error(msg);
+                        }
+                        saveTelemedicineSettingsToStorage(telemedicineSettings);
+                        queryClient.invalidateQueries({ queryKey: ["/api/telemedicine/settings"] });
+                        setSuccessMessage(
+                          "Telemedicine settings have been updated successfully.",
+                        );
+                        setShowSuccessModal(true);
+                        setSettingsOpen(false);
+                      } catch (e: any) {
+                        toast({
+                          title: "Save failed",
+                          description: e?.message || "Could not save settings. Please try again.",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
                   >
                     Save Settings
                   </Button>
-                  <Button variant="outline" className="flex-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setTelemedicineSettings(DEFAULT_TELEMEDICINE_SETTINGS);
+                      try {
+                        const token = localStorage.getItem("auth_token");
+                        const response = await fetch("/api/telemedicine/settings", {
+                          method: "PUT",
+                          headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${token}`,
+                            "X-Tenant-Subdomain": getActiveSubdomain(),
+                          },
+                          credentials: "include",
+                          body: JSON.stringify(DEFAULT_TELEMEDICINE_SETTINGS),
+                        });
+                        if (response.ok) {
+                          saveTelemedicineSettingsToStorage(DEFAULT_TELEMEDICINE_SETTINGS);
+                          queryClient.invalidateQueries({ queryKey: ["/api/telemedicine/settings"] });
+                          toast({
+                            title: "Reset to default",
+                            description: "Telemedicine settings have been reset to defaults and saved.",
+                          });
+                        } else {
+                          toast({
+                            title: "Reset failed",
+                            description: "Settings were reset locally but could not be saved. Try again.",
+                            variant: "destructive",
+                          });
+                        }
+                      } catch (_) {
+                        toast({
+                          title: "Reset failed",
+                          description: "Settings were reset locally but could not be saved. Try again.",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
                     Reset to Default
                   </Button>
                 </div>
@@ -1911,7 +2287,7 @@ export default function Telemedicine() {
           </p>
         </CardHeader>
         <CardContent>
-          <PatientList />
+          <PatientList telemedicineSettings={telemedicineSettings} />
         </CardContent>
       </Card>
 

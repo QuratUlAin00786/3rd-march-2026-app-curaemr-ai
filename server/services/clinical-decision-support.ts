@@ -106,6 +106,59 @@ Analyze for drug interactions and provide clinical alerts in this JSON format:
   }
 
   /**
+   * Generates AI analysis for a pair of medications (for Add Drug Interaction form).
+   * Returns severity, description, warnings, recommendations, and notes.
+   */
+  async generateDrugInteractionAnalysis(
+    medication1: { name: string; dosage?: string; frequency?: string },
+    medication2: { name: string; dosage?: string; frequency?: string }
+  ): Promise<{
+    severity: "low" | "medium" | "high";
+    description: string;
+    warnings: string[];
+    recommendations: string[];
+    notes: string;
+  }> {
+    const med1Str = [medication1.name, medication1.dosage, medication1.frequency].filter(Boolean).join(", ");
+    const med2Str = [medication2.name, medication2.dosage, medication2.frequency].filter(Boolean).join(", ");
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are a clinical pharmacist AI. Analyze the drug interaction between two medications. Return a single JSON object with: severity (one of "low", "medium", "high"), description (plain text paragraph), warnings (array of strings, one per line), recommendations (array of strings, clinical recommendations one per line), notes (optional additional clinical notes string). Be concise and clinically accurate.`
+          },
+          {
+            role: "user",
+            content: `Medication 1: ${med1Str}\nMedication 2: ${med2Str}\n\nAnalyze the potential drug interaction and return JSON only in this exact format:\n{\n  "severity": "low" or "medium" or "high",\n  "description": "Full paragraph describing the interaction.",\n  "warnings": ["Warning 1", "Warning 2"],\n  "recommendations": ["Recommendation 1", "Recommendation 2"],\n  "notes": "Any additional clinical notes."\n}`
+          }
+        ],
+        response_format: { type: "json_object" }
+      });
+      const result = JSON.parse(response.choices[0].message.content || "{}");
+      const severityMap: Record<string, "low" | "medium" | "high"> = {
+        low: "low",
+        moderate: "medium",
+        medium: "medium",
+        high: "high",
+        critical: "high"
+      };
+      const severity = severityMap[String(result.severity).toLowerCase()] || "medium";
+      return {
+        severity,
+        description: result.description || "No description generated.",
+        warnings: Array.isArray(result.warnings) ? result.warnings : [result.warnings].filter(Boolean),
+        recommendations: Array.isArray(result.recommendations) ? result.recommendations : [result.recommendations].filter(Boolean),
+        notes: result.notes || ""
+      };
+    } catch (error) {
+      console.error("Error generating drug interaction analysis:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Performs comprehensive risk assessment for a patient
    */
   async performRiskAssessment(patientId: number, organizationId: number): Promise<RiskAssessment> {

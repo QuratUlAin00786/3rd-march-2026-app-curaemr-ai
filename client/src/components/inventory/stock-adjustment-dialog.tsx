@@ -100,6 +100,7 @@ export default function StockAdjustmentDialog({ open, onOpenChange, item }: Stoc
     reason: "",
     notes: "",
   });
+  const [quantityError, setQuantityError] = useState<string>("");
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -125,7 +126,7 @@ export default function StockAdjustmentDialog({ open, onOpenChange, item }: Stoc
       await apiRequest("POST", "/api/inventory/stock-movements", {
         itemId: item.id,
         movementType: data.movementType,
-        quantity: parseFloat(data.quantity),
+        quantity: parseInt(String(data.quantity), 10),
         reason: data.reason,
         notes: data.notes,
       });
@@ -165,6 +166,7 @@ export default function StockAdjustmentDialog({ open, onOpenChange, item }: Stoc
       reason: "",
       notes: "",
     });
+    setQuantityError("");
   };
 
   const getMovementDirection = (): "IN" | "OUT" | null => {
@@ -193,8 +195,13 @@ export default function StockAdjustmentDialog({ open, onOpenChange, item }: Stoc
 
     const quantity = parseFloat(formData.quantity);
     
+    // Quantity must be a whole number (integer)
+    if (isNaN(quantity) || !Number.isInteger(quantity)) {
+      return { valid: false, error: "Quantity must be a whole number (e.g. 5, 10)." };
+    }
+    
     // Quantity must be greater than 0
-    if (isNaN(quantity) || quantity <= 0) {
+    if (quantity <= 0) {
       return { valid: false, error: "Quantity must be greater than 0." };
     }
 
@@ -214,14 +221,23 @@ export default function StockAdjustmentDialog({ open, onOpenChange, item }: Stoc
 
   const handleSubmit = (e: React.FormEvent | React.MouseEvent) => {
     e.preventDefault();
+    setQuantityError("");
     
     const validation = validateForm();
     if (!validation.valid) {
-      toast({
-        title: "Validation Error",
-        description: validation.error,
-        variant: "destructive",
-      });
+      const isQuantityError =
+        validation.error?.includes("Quantity must be a whole number") ||
+        validation.error?.includes("Quantity must be greater than 0") ||
+        validation.error?.includes("Cannot remove");
+      if (isQuantityError) {
+        setQuantityError(validation.error || "Invalid quantity.");
+      } else {
+        toast({
+          title: "Validation Error",
+          description: validation.error,
+          variant: "destructive",
+        });
+      }
       return;
     }
 
@@ -239,6 +255,7 @@ export default function StockAdjustmentDialog({ open, onOpenChange, item }: Stoc
   };
 
   const handleInputChange = (field: string, value: any) => {
+    if (field === "quantity") setQuantityError("");
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -318,20 +335,22 @@ export default function StockAdjustmentDialog({ open, onOpenChange, item }: Stoc
               <Input
                 id="quantity"
                 type="number"
-                step="0.01"
+                step="1"
+                min="1"
                 value={formData.quantity}
                 onChange={(e) => {
-                  const value = e.target.value;
-                  // Only allow positive numbers
-                  if (value === "" || (!isNaN(parseFloat(value)) && parseFloat(value) > 0)) {
-                    handleInputChange("quantity", value);
-                  }
+                  setQuantityError("");
+                  handleInputChange("quantity", e.target.value);
                 }}
-                placeholder="Enter quantity"
-                min="0.01"
+                placeholder="Enter whole number (e.g. 5, 10)"
                 required
               />
-              {direction === "OUT" && item && formData.quantity && (
+              {quantityError && (
+                <p className="text-sm text-destructive mt-1" role="alert">
+                  {quantityError}
+                </p>
+              )}
+              {!quantityError && direction === "OUT" && item && formData.quantity && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Available: {item.currentStock} {item.unitOfMeasurement}
                 </p>

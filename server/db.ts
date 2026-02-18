@@ -22,9 +22,9 @@ export const pool = new Pool({
   allowExitOnIdle: false
 });
 
-// Set search_path to include user schema for pharmacy tables
+// Set search_path to user schema only (no public - avoid "permission denied for schema public")
 pool.on('connect', (client: any) => {
-  client.query('SET search_path TO public, curauser24nov25');
+  client.query('SET search_path TO curauser24nov25');
 });
 
 // One-time migration: Add recipients column to message_campaigns if missing
@@ -142,5 +142,23 @@ export const db = drizzle({ client: pool, schema });
     console.log('✅ Ensured treatments columns notes + metadata exist');
   } catch (error: any) {
     console.warn('⚠️ Unable to ensure treatments columns:', error?.message || error);
+  }
+})();
+
+// Ensure telemedicine_settings table exists in curauser24nov25 schema (per-user settings persisted in DB)
+  (async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS curauser24nov25.telemedicine_settings (
+        user_id INTEGER NOT NULL,
+        organization_id INTEGER NOT NULL,
+        settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+        PRIMARY KEY (user_id)
+      )
+    `);
+    console.log('✅ Ensured telemedicine_settings table exists');
+  } catch (error: any) {
+    console.warn('⚠️ Unable to ensure telemedicine_settings table:', error?.message || error);
   }
 })();

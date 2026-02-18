@@ -9,6 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Calendar, Clock, User, Video, Stethoscope, Plus, ArrowRight, Edit, Search, X, Filter, FileText, MapPin, ChevronsUpDown, ChevronLeft, ChevronRight, Check, Loader2, CheckCircle } from "lucide-react";
+import { AppointmentInvoiceInfo } from "./AppointmentInvoiceInfo";
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, isPast, isFuture, parseISO } from "date-fns";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -1123,6 +1124,11 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
               </div>
             )}
 
+            {/* Invoice ID and status (doctor/nurse only) */}
+            <div className="mt-3">
+              <AppointmentInvoiceInfo appointmentId={nextAppointment.appointmentId ?? (nextAppointment as any).appointment_id} />
+            </div>
+
             {/* Description if available */}
             {nextAppointment.description && (
               <div className="mt-3 pt-3 border-t">
@@ -1287,6 +1293,11 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                       </div>
                     )}
 
+                    {/* Invoice ID and status (doctor/nurse only) */}
+                    <div className="mt-3">
+                      <AppointmentInvoiceInfo appointmentId={appointment.appointmentId ?? (appointment as any).appointment_id} />
+                    </div>
+
                     {/* Description if available */}
                     {appointment.description && (
                       <div className="mt-3 pt-3 border-t">
@@ -1343,7 +1354,7 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
               </div>
 
               <div className="space-y-6">
-                {/* Basic Information */}
+                {/* Row 1: Title + Duration (minutes) */}
                 <div className="grid grid-cols-2 gap-6">
                   {/* Title */}
                   <div>
@@ -1397,7 +1408,7 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                   </div>
                 </div>
 
-                {/* Appointment Type and Treatment/Consultation Selection */}
+                {/* Row 2: Appointment Type + Select Consultation (or Select Treatment) */}
                 <div className="grid grid-cols-2 gap-6">
                   <div>
                     <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -1588,7 +1599,59 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                   </div>
                 </div>
 
-                {/* Date and Time Selection */}
+                {/* Row 3: Status + Description */}
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Status */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Status
+                    </Label>
+                    <Select
+                      value={editingAppointment.status || "scheduled"}
+                      onValueChange={(value) =>
+                        setEditingAppointment({
+                          ...editingAppointment,
+                          status: value,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="scheduled">Scheduled</SelectItem>
+                        <SelectItem value="confirmed">Confirmed</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
+                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Description */}
+                  <div>
+                    <Label
+                      htmlFor="description"
+                      className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Description
+                    </Label>
+                    <textarea
+                      id="description"
+                      value={editingAppointment.description || ""}
+                      onChange={(e) =>
+                        setEditingAppointment({
+                          ...editingAppointment,
+                          description: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                      rows={3}
+                      placeholder="Enter appointment description"
+                    />
+                  </div>
+                </div>
+
+                {/* Row 4: Select Date * + Select Time Slot * */}
                 <div className="grid grid-cols-2 gap-6">
                   {/* Select Date */}
                   <div>
@@ -1804,58 +1867,6 @@ export default function DoctorAppointments({ onNewAppointment }: { onNewAppointm
                         })}
                       </div>
                     </div>
-                  </div>
-                </div>
-
-                {/* Status and Description */}
-                <div className="grid grid-cols-2 gap-6">
-                  {/* Status */}
-                  <div>
-                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Status
-                    </Label>
-                    <Select
-                      value={editingAppointment.status || "scheduled"}
-                      onValueChange={(value) =>
-                        setEditingAppointment({
-                          ...editingAppointment,
-                          status: value,
-                        })
-                      }
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="scheduled">Scheduled</SelectItem>
-                        <SelectItem value="confirmed">Confirmed</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Description */}
-                  <div>
-                    <Label
-                      htmlFor="description"
-                      className="text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
-                      Description
-                    </Label>
-                    <textarea
-                      id="description"
-                      value={editingAppointment.description || ""}
-                      onChange={(e) =>
-                        setEditingAppointment({
-                          ...editingAppointment,
-                          description: e.target.value,
-                        })
-                      }
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
-                      rows={3}
-                      placeholder="Enter appointment description"
-                    />
                   </div>
                 </div>
               </div>

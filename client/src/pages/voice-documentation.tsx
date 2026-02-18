@@ -171,6 +171,8 @@ export default function VoiceDocumentation() {
   const [localTemplates, setLocalTemplates] = useState<SmartTemplate[]>([]);
   const [editingTemplate, setEditingTemplate] = useState<SmartTemplate | null>(null);
   const [editTemplateDialogOpen, setEditTemplateDialogOpen] = useState(false);
+  const [templateToDuplicate, setTemplateToDuplicate] = useState<SmartTemplate | null>(null);
+  const [duplicateTemplateTitle, setDuplicateTemplateTitle] = useState("");
   const [templateDialogOpen, setTemplateDialogOpen] = useState<string | null>(null); // Track which template dialog is open
   const [templateFormData, setTemplateFormData] = useState<Record<string, Record<string, string>>>({}); // Store form data per template: { templateId: { fieldName: value } }
   const [templateSelectedPatient, setTemplateSelectedPatient] = useState<Record<string, string>>({}); // Store selected patient per template: { templateId: patientId }
@@ -2077,11 +2079,10 @@ export default function VoiceDocumentation() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="voice">Voice Notes</TabsTrigger>
             <TabsTrigger value="templates">Smart Templates</TabsTrigger>
             <TabsTrigger value="photos">Clinical Photos</TabsTrigger>
-            <TabsTrigger value="coding">Medical Coding</TabsTrigger>
           </TabsList>
 
           <TabsContent value="voice" className="space-y-6">
@@ -3394,73 +3395,21 @@ export default function VoiceDocumentation() {
                         size="sm"
                         variant="outline"
                         onClick={() => {
-                          try {
-                            const timestamp = Date.now();
-                            const duplicatedTemplate: SmartTemplate = {
-                              ...template,
-                              id: `template_copy_${timestamp}`,
-                              name: `${template.name} (Copy)`,
-                              usageCount: 0,
-                            };
-
-                            console.log(
-                              "Creating duplicated template:",
-                              duplicatedTemplate,
-                            );
-
-                            // Add the duplicated template to the local state immediately
-                            setLocalTemplates((prev) => {
-                              const newTemplates = [
-                                ...prev,
-                                duplicatedTemplate,
-                              ];
-                              console.log(
-                                "Updated templates list:",
-                                newTemplates.length,
-                              );
-                              return newTemplates;
-                            });
-
-                            // Store in localStorage for persistence
-                            try {
-                              const existingTemplates = JSON.parse(
-                                localStorage.getItem("duplicatedTemplates") ||
-                                  "[]",
-                              );
-                              existingTemplates.push(duplicatedTemplate);
-                              localStorage.setItem(
-                                "duplicatedTemplates",
-                                JSON.stringify(existingTemplates),
-                              );
-                              console.log(
-                                "Saved to localStorage:",
-                                existingTemplates.length,
-                              );
-                            } catch (storageError) {
-                              console.error(
-                                "localStorage error:",
-                                storageError,
-                              );
-                            }
-
-                            // Force re-render by updating a different state
-                            setActiveTab((prev) =>
-                              prev === "templates" ? "templates" : "templates",
-                            );
-
-                            toast({
-                              title: "Template Successfully Duplicated",
-                              description: `"${duplicatedTemplate.name}" has been created and added to your templates list. Scroll down to see it.`,
-                            });
-                          } catch (error) {
-                            console.error("Duplication error:", error);
-                            toast({
-                              title: "Duplication Failed",
-                              description:
-                                "There was an error duplicating the template. Please try again.",
-                              variant: "destructive",
-                            });
+                          const baseName = template.name
+                            .replace(/\s*\(Copy\)\s*$/i, "")
+                            .replace(/\s+\d+$/, "")
+                            .trim() || template.name;
+                          const existingNames = localTemplates.map((t) => t.name);
+                          let nextNum = 1;
+                          const matchNum = new RegExp(
+                            `^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(\\d+)$`,
+                          );
+                          for (const name of existingNames) {
+                            const m = name.match(matchNum);
+                            if (m) nextNum = Math.max(nextNum, parseInt(m[1], 10) + 1);
                           }
+                          setDuplicateTemplateTitle(`${baseName} ${nextNum}`);
+                          setTemplateToDuplicate(template);
                         }}
                       >
                         Duplicate
@@ -3470,6 +3419,86 @@ export default function VoiceDocumentation() {
                 </Card>
               ))}
             </div>
+
+            {/* Duplicate Template: popup to set title (e.g. SOAP Note 1, SOAP Note 2) */}
+            <Dialog
+              open={!!templateToDuplicate}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setTemplateToDuplicate(null);
+                  setDuplicateTemplateTitle("");
+                }
+              }}
+            >
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Duplicate Template</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <label htmlFor="duplicate-template-title" className="text-sm font-medium">Title</label>
+                    <Input
+                      id="duplicate-template-title"
+                      value={duplicateTemplateTitle}
+                      onChange={(e) => setDuplicateTemplateTitle(e.target.value)}
+                      placeholder="e.g. SOAP Note 1, SOAP Note 2"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setTemplateToDuplicate(null);
+                        setDuplicateTemplateTitle("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        if (!templateToDuplicate) return;
+                        const title = duplicateTemplateTitle.trim() || `${templateToDuplicate.name} (Copy)`;
+                        try {
+                          const timestamp = Date.now();
+                          const duplicatedTemplate: SmartTemplate = {
+                            ...templateToDuplicate,
+                            id: `template_copy_${timestamp}`,
+                            name: title,
+                            usageCount: 0,
+                          };
+                          setLocalTemplates((prev) => [...prev, duplicatedTemplate]);
+                          try {
+                            const existingTemplates = JSON.parse(
+                              localStorage.getItem("duplicatedTemplates") || "[]",
+                            );
+                            existingTemplates.push(duplicatedTemplate);
+                            localStorage.setItem("duplicatedTemplates", JSON.stringify(existingTemplates));
+                          } catch (storageError) {
+                            console.error("localStorage error:", storageError);
+                          }
+                          setActiveTab((prev) => (prev === "templates" ? "templates" : "templates"));
+                          toast({
+                            title: "Template Successfully Duplicated",
+                            description: `"${duplicatedTemplate.name}" has been created and added to your templates list. Scroll down to see it.`,
+                          });
+                          setTemplateToDuplicate(null);
+                          setDuplicateTemplateTitle("");
+                        } catch (error) {
+                          console.error("Duplication error:", error);
+                          toast({
+                            title: "Duplication Failed",
+                            description: "There was an error duplicating the template. Please try again.",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                    >
+                      Duplicate
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           <TabsContent value="photos" className="space-y-4">
@@ -3662,6 +3691,7 @@ export default function VoiceDocumentation() {
             </div>
           </TabsContent>
 
+          {false && (
           <TabsContent value="coding" className="space-y-4">
             <Card>
               <CardHeader>
@@ -3728,6 +3758,7 @@ export default function VoiceDocumentation() {
               </CardContent>
             </Card>
           </TabsContent>
+          )}
         </Tabs>
 
         {/* Edit Note Dialog */}

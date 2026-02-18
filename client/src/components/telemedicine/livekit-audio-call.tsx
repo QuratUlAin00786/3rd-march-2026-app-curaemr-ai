@@ -13,6 +13,7 @@ interface LiveKitAudioCallProps {
   serverUrl?: string;
   onDisconnect?: () => void;
   showControls?: boolean;
+  audioEnabled?: boolean;
 }
 
 export function LiveKitAudioCall({
@@ -22,6 +23,7 @@ export function LiveKitAudioCall({
   serverUrl,
   onDisconnect,
   showControls = true,
+  audioEnabled = true,
 }: LiveKitAudioCallProps) {
   const {
     room,
@@ -44,7 +46,7 @@ export function LiveKitAudioCall({
       connect({
         roomName,
         participantName,
-        audioEnabled: true,
+        audioEnabled,
         videoEnabled: false,
         token,
         url: serverUrl,
@@ -55,6 +57,7 @@ export function LiveKitAudioCall({
     participantName,
     token,
     serverUrl,
+    audioEnabled,
     isConnected,
     isConnecting,
     connect,
