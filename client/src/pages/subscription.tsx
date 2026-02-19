@@ -387,6 +387,29 @@ export default function Subscription() {
       />
       <div className="w-full flex-1 overflow-auto bg-white dark:bg-gray-900 px-3 sm:px-4 lg:px-5 py-4">
         <div className="space-y-4">
+          {/* Subscription name and active dates at top */}
+          {(subscription?.status === "active" || subscription?.status === "trial") && subscription?.planName && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div className="flex items-center gap-2">
+                <Crown className="h-5 w-5 text-emerald-600 dark:text-emerald-500" />
+                <span className="font-semibold text-emerald-900 dark:text-emerald-100 capitalize">
+                  {subscription.planName}
+                </span>
+                <Badge className="bg-emerald-600 text-white">
+                  {subscription.status === "trial" ? "Trial" : "Active"}
+                </Badge>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 text-sm text-emerald-800 dark:text-emerald-200">
+                <span>
+                  <strong>Active from:</strong> {formatDate(subscription.currentPeriodStart ?? subscription.createdAt)}
+                </span>
+                <span>
+                  <strong>Current period ends:</strong> {formatDate(subscription.nextBillingAt ?? subscription.expiresAt)}
+                </span>
+              </div>
+            </div>
+          )}
+
           {postCheckoutLoading && (
             <Alert>
               <AlertTitle className="text-sm">Confirming your subscription</AlertTitle>

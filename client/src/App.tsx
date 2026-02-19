@@ -462,6 +462,7 @@ function ProtectedApp() {
           <Route path="/account-settings" component={LegacyRouteRedirect} />
           <Route path="/user-manual" component={LegacyRouteRedirect} />
           <Route path="/gdpr-compliance" component={LegacyRouteRedirect} />
+          <Route path="/subscription" component={LegacyRouteRedirect} />
 
           {/* Root redirect */}
           <Route path="/" component={LegacyRouteRedirect} />

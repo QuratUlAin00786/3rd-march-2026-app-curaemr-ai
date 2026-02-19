@@ -19962,6 +19962,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const protocol = req.headers["x-forwarded-proto"] || "https";
       const host = req.headers.host;
       const baseUrl = `${protocol}://${host}`;
+      const subdomain = (req.headers["x-tenant-subdomain"] as string) || "demo";
+      const subscriptionPath = `/${subdomain}/subscription`;
 
       const session = await stripe.checkout.sessions.create({
         mode: "subscription",
@@ -19973,8 +19975,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
           },
         ],
         payment_method_types: ["card"],
-        success_url: `${baseUrl}/subscription?success=true&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${baseUrl}/subscription?canceled=true`,
+        success_url: `${baseUrl}${subscriptionPath}?success=true&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}${subscriptionPath}?canceled=true`,
         metadata: {
           packageId: pkg.id.toString(),
           organizationId: organizationId.toString(),
@@ -20013,6 +20015,22 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       const sessionOrgId = session.metadata?.organizationId ? Number(session.metadata.organizationId) : null;
       if (!req.organizationId || !sessionOrgId || sessionOrgId !== req.organizationId) {
         return res.status(403).json({ error: "Session does not belong to your organization" });
+      }
+
+      // Sync subscription to database when user returns from Stripe (in case webhook hasn't run yet)
+      const packageId = Number(session.metadata?.packageId || session.metadata?.planId);
+      const organizationId = sessionOrgId;
+      if (session.subscription && packageId && organizationId) {
+        try {
+          const stripeSubscription = typeof session.subscription === "string"
+            ? await stripe.subscriptions.retrieve(session.subscription)
+            : session.subscription;
+          if (stripeSubscription && stripeSubscription.id) {
+            await upsertSubscriptionFromStripe(stripeSubscription, organizationId, packageId);
+          }
+        } catch (syncErr: any) {
+          console.error("[STRIPE CHECKOUT] Failed to sync subscription from session:", syncErr?.message);
+        }
       }
 
       res.json(session);
