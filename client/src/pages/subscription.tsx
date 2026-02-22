@@ -117,6 +117,16 @@ const formatDateTime = (value?: string | Date | null) => {
   return `${parts.day.toString().padStart(2, "0")} ${monthNames[parts.month]} ${parts.year}, ${hour12}:${minute} ${period}`;
 };
 
+/** Safe label for Stripe session fields (subscription/invoice) - never render objects as React children */
+function safeSessionLabel(val: unknown): string {
+  if (val == null) return "—";
+  if (typeof val === "string") return val;
+  if (typeof val === "object" && val !== null && "id" in val && typeof (val as { id?: unknown }).id === "string") {
+    return (val as { id: string }).id;
+  }
+  return "—";
+}
+
 export default function Subscription() {
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
@@ -387,7 +397,7 @@ export default function Subscription() {
       />
       <div className="w-full flex-1 overflow-auto bg-white dark:bg-gray-900 px-3 sm:px-4 lg:px-5 py-4">
         <div className="space-y-4">
-          {/* Subscription name and active dates at top */}
+          {/* Subscription name and active dates at top (from saas_subscriptions: plan name, active dates, expires_at as end date) */}
           {(subscription?.status === "active" || subscription?.status === "trial") && subscription?.planName && (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
               <div className="flex items-center gap-2">
@@ -404,7 +414,7 @@ export default function Subscription() {
                   <strong>Active from:</strong> {formatDate(subscription.currentPeriodStart ?? subscription.createdAt)}
                 </span>
                 <span>
-                  <strong>Current period ends:</strong> {formatDate(subscription.nextBillingAt ?? subscription.expiresAt)}
+                  <strong>End date:</strong> {formatDate(subscription.expiresAt ?? subscription.nextBillingAt)}
                 </span>
               </div>
             </div>
@@ -428,10 +438,9 @@ export default function Subscription() {
 
           {postCheckoutSession && (
             <Alert variant="default" className="border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30">
-              <AlertTitle className="text-sm">Stripe session verified</AlertTitle>
+              <AlertTitle className="text-sm">Payment successful</AlertTitle>
               <AlertDescription className="text-sm">
-                Subscription {postCheckoutSession.subscription ? (typeof postCheckoutSession.subscription === 'object' ? postCheckoutSession.subscription.id : postCheckoutSession.subscription) : "in progress"} · Invoice{" "}
-                {postCheckoutSession.invoice ? (typeof postCheckoutSession.invoice === 'object' ? postCheckoutSession.invoice.id : postCheckoutSession.invoice) : "pending"} · Checkout ID {postCheckoutSession.id}.
+                Your subscription has been activated. Subscription ID: {safeSessionLabel(postCheckoutSession.subscription)}. Invoice: {safeSessionLabel(postCheckoutSession.invoice)}.
               </AlertDescription>
             </Alert>
           )}
@@ -445,8 +454,8 @@ export default function Subscription() {
                     {isTrial ? "Trial active" : "Subscription active"}
                   </AlertTitle>
                   <AlertDescription className="text-sm text-muted-foreground">
-                    Activated: {formatDateTime(subscription.currentPeriodStart ?? subscription.createdAt)} ·
-                    Expires: {formatDateTime(subscription.expiresAt ?? subscription.nextBillingAt)}
+                    Active from: {formatDateTime(subscription.currentPeriodStart ?? subscription.createdAt)} ·
+                    End date: {formatDateTime(subscription.expiresAt ?? subscription.nextBillingAt)}
                   </AlertDescription>
                 </div>
               </Alert>
