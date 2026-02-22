@@ -29160,6 +29160,83 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         });
       }
 
+      // Check connected account capabilities before creating checkout session
+      console.log('🔍 [STRIPE-CHECKOUT] Checking account capabilities for:', organization.stripeAccountId);
+      let accountCapabilities: any = null;
+      let chargesEnabled = false;
+      
+      try {
+        const connectedAccount = await stripe.accounts.retrieve(organization.stripeAccountId);
+        accountCapabilities = connectedAccount.capabilities;
+        chargesEnabled = connectedAccount.charges_enabled || false;
+        
+        console.log('📊 [STRIPE-CHECKOUT] Account status:', {
+          id: connectedAccount.id,
+          chargesEnabled: chargesEnabled,
+          payoutsEnabled: connectedAccount.payouts_enabled,
+          detailsSubmitted: connectedAccount.details_submitted,
+          capabilities: accountCapabilities
+        });
+
+        // Check if card_payments capability is active
+        const cardPaymentsStatus = accountCapabilities?.card_payments;
+        if (cardPaymentsStatus !== 'active' || !chargesEnabled) {
+          const baseUrl = process.env.FRONTEND_URL || req.protocol + '://' + req.get('host');
+          
+          // Generate onboarding link if account needs setup
+          let onboardingUrl = null;
+          try {
+            const accountLink = await stripe.accountLinks.create({
+              account: organization.stripeAccountId,
+              refresh_url: `${baseUrl}/billing?stripe_refresh=true&invoice_id=${invoiceId}`,
+              return_url: `${baseUrl}/billing?stripe_success=true&invoice_id=${invoiceId}`,
+              type: "account_onboarding",
+            });
+            onboardingUrl = accountLink.url;
+            console.log('🔗 [STRIPE-CHECKOUT] Generated onboarding link for incomplete account');
+          } catch (linkError: any) {
+            console.error('⚠️ [STRIPE-CHECKOUT] Could not generate onboarding link:', linkError.message);
+          }
+
+          const statusMessages: Record<string, string> = {
+            'inactive': 'Card payments capability is not enabled. Please complete Stripe onboarding.',
+            'pending': 'Card payments capability is pending review. Please wait for Stripe to activate it.',
+            'unrequested': 'Card payments capability has not been requested. Please complete Stripe onboarding.'
+          };
+
+          const statusMessage = statusMessages[cardPaymentsStatus] || 'Card payments capability is not active. Please complete Stripe onboarding.';
+
+          return res.status(400).json({
+            error: "Stripe account is not ready to accept payments",
+            message: statusMessage,
+            details: `The connected Stripe account (${organization.stripeAccountId}) does not have card payments enabled. ${chargesEnabled ? '' : 'Charges are disabled on this account.'}`,
+            accountStatus: {
+              chargesEnabled: chargesEnabled,
+              cardPaymentsCapability: cardPaymentsStatus,
+              payoutsEnabled: connectedAccount.payouts_enabled,
+              detailsSubmitted: connectedAccount.details_submitted,
+              requirements: connectedAccount.requirements
+            },
+            onboardingUrl: onboardingUrl,
+            helpUrl: "https://dashboard.stripe.com/connect/accounts/overview",
+            action: onboardingUrl ? "Complete Stripe onboarding to enable payments" : "Contact support or check Stripe Dashboard for account requirements"
+          });
+        }
+      } catch (accountError: any) {
+        console.error('❌ [STRIPE-CHECKOUT] Error retrieving connected account:', {
+          message: accountError.message,
+          type: accountError.type,
+          code: accountError.code
+        });
+        
+        return res.status(400).json({
+          error: "Failed to verify Stripe account",
+          message: "Could not retrieve connected account details. The Stripe account may not exist or may have been deleted.",
+          details: accountError.message,
+          stripeError: accountError.message
+        });
+      }
+
       // Get invoice details
       const invoice = await storage.getInvoice(invoiceId, req.tenant!.id);
       if (!invoice) {
@@ -29172,56 +29249,189 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       }
 
       // Build line items for Stripe Checkout
-      const lineItems = invoice.items.map((item: any) => ({
-        price_data: {
-          currency: 'inr', // INR as per user requirement
-          product_data: {
-            name: item.description || 'Service',
-            description: `${organization.name} - ${item.description || 'Service'}`,
-          },
-          unit_amount: Math.round(item.total * 100), // Convert to paise (smallest currency unit)
-        },
-        quantity: item.quantity || 1,
-      }));
+      console.log('📋 [STRIPE-CHECKOUT] Invoice details:', {
+        invoiceId,
+        items: invoice.items,
+        totalAmount: invoice.totalAmount,
+        itemsLength: invoice.items?.length || 0
+      });
 
-      // If invoice has a single total, use that instead
-      if (lineItems.length === 0 && invoice.totalAmount) {
-        lineItems.push({
-          price_data: {
-            currency: 'inr',
-            product_data: {
-              name: `Invoice ${invoice.invoiceNumber}`,
-              description: `${organization.name} - Invoice Payment`,
-            },
-            unit_amount: Math.round(parseFloat(String(invoice.totalAmount)) * 100),
-          },
-          quantity: 1,
+      // Determine currency - use invoice currency if available, otherwise detect from platform
+      // Check if invoice has a currency field
+      let currency = (invoice as any).currency || null;
+      
+      // If no invoice currency, get from organization's Stripe account country
+      if (!currency) {
+        try {
+          const platformAccount = await stripe.accounts.retrieve();
+          const platformCountry = platformAccount.country?.toLowerCase() || 'gb';
+          // Map country to currency
+          const countryCurrencyMap: Record<string, string> = {
+            'gb': 'gbp',
+            'us': 'usd',
+            'in': 'inr',
+            'ca': 'cad',
+            'au': 'aud',
+            'eu': 'eur'
+          };
+          currency = countryCurrencyMap[platformCountry] || 'gbp';
+          console.log('💱 [STRIPE-CHECKOUT] Using platform currency:', currency, 'for country:', platformCountry);
+        } catch (accountError: any) {
+          console.warn('⚠️ [STRIPE-CHECKOUT] Could not determine currency, defaulting to GBP:', accountError.message);
+          currency = 'gbp';
+        }
+      } else {
+        console.log('💱 [STRIPE-CHECKOUT] Using invoice currency:', currency);
+      }
+      
+      // Validate minimum amount based on currency
+      const currencyMinimums: Record<string, number> = {
+        'gbp': 0.30,  // 30 pence
+        'usd': 0.50,  // 50 cents
+        'inr': 1.00,  // 1 rupee
+        'eur': 0.30,  // 30 cents
+        'cad': 0.50,  // 50 cents
+        'aud': 0.50,  // 50 cents
+      };
+      
+      const minimumAmount = currencyMinimums[currency.toLowerCase()] || 0.30;
+      console.log('💰 [STRIPE-CHECKOUT] Currency minimum:', minimumAmount, currency);
+
+      const lineItems: any[] = [];
+      
+      // Build line items from invoice items
+      if (invoice.items && Array.isArray(invoice.items) && invoice.items.length > 0) {
+        invoice.items.forEach((item: any) => {
+          const itemTotal = parseFloat(String(item.total || item.amount || 0));
+          if (itemTotal > 0) {
+            lineItems.push({
+              price_data: {
+                currency: currency,
+                product_data: {
+                  name: item.description || item.name || 'Service',
+                  description: `${organization.name} - ${item.description || item.name || 'Service'}`,
+                },
+                unit_amount: Math.round(itemTotal * 100), // Convert to smallest currency unit
+              },
+              quantity: item.quantity || 1,
+            });
+          }
         });
       }
+
+      // If no line items from invoice.items, use totalAmount
+      if (lineItems.length === 0) {
+        const totalAmount = parseFloat(String(invoice.totalAmount || 0));
+        if (totalAmount > 0) {
+          lineItems.push({
+            price_data: {
+              currency: currency,
+              product_data: {
+                name: `Invoice ${invoice.invoiceNumber || invoiceId}`,
+                description: `${organization.name} - Invoice Payment`,
+              },
+              unit_amount: Math.round(totalAmount * 100),
+            },
+            quantity: 1,
+          });
+        }
+      }
+
+      // Validate we have line items
+      if (lineItems.length === 0) {
+        console.error('❌ [STRIPE-CHECKOUT] No valid line items found for invoice:', invoiceId);
+        return res.status(400).json({ 
+          error: "Invoice has no items or amount to charge. Please add items to the invoice.",
+          details: "The invoice must have either line items with amounts or a total amount."
+        });
+      }
+
+      // Calculate total amount and validate minimum
+      const totalAmount = lineItems.reduce((sum, item) => {
+        return sum + (item.price_data.unit_amount * item.quantity);
+      }, 0) / 100; // Convert from smallest currency unit to regular amount
+      
+      console.log('💰 [STRIPE-CHECKOUT] Total amount:', totalAmount, currency, 'Minimum required:', minimumAmount, currency);
+      
+      if (totalAmount < minimumAmount) {
+        const minimumFormatted = new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: currency.toUpperCase(),
+          minimumFractionDigits: 2
+        }).format(minimumAmount);
+        
+        const currentFormatted = new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: currency.toUpperCase(),
+          minimumFractionDigits: 2
+        }).format(totalAmount);
+        
+        console.error('❌ [STRIPE-CHECKOUT] Amount below minimum:', {
+          current: currentFormatted,
+          minimum: minimumFormatted,
+          currency
+        });
+        
+        return res.status(400).json({ 
+          error: `Invoice amount is too low. Minimum payment amount is ${minimumFormatted}.`,
+          details: `Current amount: ${currentFormatted}. Stripe requires a minimum of ${minimumFormatted} for ${currency.toUpperCase()} transactions. Please increase the invoice amount or use a different payment method.`,
+          currentAmount: totalAmount,
+          minimumAmount: minimumAmount,
+          currency: currency
+        });
+      }
+
+      console.log('✅ [STRIPE-CHECKOUT] Line items prepared:', lineItems.length, 'items');
 
       // Get base URL for success/cancel URLs
       const baseUrl = process.env.FRONTEND_URL || req.protocol + '://' + req.get('host');
 
       // Create Stripe Checkout session
-      const session = await stripe.checkout.sessions.create(
-        {
-          payment_method_types: ['card'],
-          line_items: lineItems,
-          mode: 'payment',
-          success_url: `${baseUrl}/billing?session_id={CHECKOUT_SESSION_ID}&invoice_id=${invoiceId}&status=success`,
-          cancel_url: `${baseUrl}/billing?invoice_id=${invoiceId}&status=cancelled`,
-          metadata: {
-            organization_id: String(organization.id),
-            invoice_id: String(invoiceId),
-            patient_id: patientId,
-            invoice_number: invoice.invoiceNumber || String(invoiceId),
+      console.log('🔗 [STRIPE-CHECKOUT] Creating session for account:', organization.stripeAccountId);
+      
+      try {
+        const session = await stripe.checkout.sessions.create(
+          {
+            payment_method_types: ['card'],
+            line_items: lineItems,
+            mode: 'payment',
+            success_url: `${baseUrl}/billing?session_id={CHECKOUT_SESSION_ID}&invoice_id=${invoiceId}&status=success`,
+            cancel_url: `${baseUrl}/billing?invoice_id=${invoiceId}&status=cancelled`,
+            metadata: {
+              organization_id: String(organization.id),
+              invoice_id: String(invoiceId),
+              patient_id: patientId,
+              invoice_number: invoice.invoiceNumber || String(invoiceId),
+            },
           },
-        },
-        {
-          // Charge on organization's Stripe account
-          stripeAccount: organization.stripeAccountId,
-        }
-      );
+          {
+            // Charge on organization's Stripe account
+            stripeAccount: organization.stripeAccountId,
+          }
+        );
+
+        console.log('✅ [STRIPE-CHECKOUT] Session created:', session.id, 'for invoice:', invoiceId);
+
+        res.json({ 
+          url: session.url,
+          sessionId: session.id 
+        });
+      } catch (stripeError: any) {
+        console.error('❌ [STRIPE-CHECKOUT] Stripe API error:', {
+          message: stripeError.message,
+          type: stripeError.type,
+          code: stripeError.code,
+          statusCode: stripeError.statusCode,
+        });
+        
+        // Return detailed Stripe error
+        return res.status(400).json({
+          error: stripeError.message || "Failed to create Stripe Checkout session",
+          stripeError: stripeError.message,
+          errorCode: stripeError.code || stripeError.type,
+          details: "Check server logs for full error details"
+        });
+      }
 
       console.log('✅ [STRIPE-CHECKOUT] Session created:', session.id, 'for invoice:', invoiceId);
 
@@ -29242,11 +29452,19 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       }
       
       // Handle Stripe-specific errors
-      if (error.type && error.type.startsWith('Stripe')) {
+      if (error.type && error.type.startsWith('Stripe') || error.type === 'StripeInvalidRequestError') {
+        console.error('❌ [STRIPE-CHECKOUT] Stripe API error details:', {
+          message: error.message,
+          type: error.type,
+          code: error.code,
+          statusCode: error.statusCode
+        });
         return res.status(400).json({ 
-          error: "Stripe error",
+          error: error.message || "Stripe error",
           message: error.message || "Failed to create payment session",
-          stripeError: error.message
+          stripeError: error.message,
+          errorCode: error.code || error.type,
+          details: "Check server logs for full Stripe error details"
         });
       }
       

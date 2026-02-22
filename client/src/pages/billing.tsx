@@ -4992,7 +4992,23 @@ export default function BillingPage() {
             if (contentType.includes('application/json')) {
               try {
                 const errorData = await checkoutResponse.json();
-                errorMessage = errorData.error || errorData.message || errorMessage;
+                // Show the actual error message from Stripe or server
+                errorMessage = errorData.error || errorData.message || errorData.stripeError || errorMessage;
+                // Include details if available
+                if (errorData.details) {
+                  errorMessage += `\n\n${errorData.details}`;
+                }
+                // If onboarding URL is provided, suggest completing onboarding
+                if (errorData.onboardingUrl) {
+                  errorMessage += `\n\nPlease complete Stripe onboarding to enable payments.`;
+                  // Optionally redirect to onboarding
+                  const shouldRedirect = confirm('Your Stripe account needs to complete onboarding. Would you like to complete it now?');
+                  if (shouldRedirect) {
+                    window.location.href = errorData.onboardingUrl;
+                    return; // Exit early if redirecting
+                  }
+                }
+                console.error('❌ [BILLING] Checkout error details:', errorData);
               } catch (e) {
                 // If JSON parsing fails, use status text
                 errorMessage = `Server error (${checkoutResponse.status}): ${checkoutResponse.statusText}`;

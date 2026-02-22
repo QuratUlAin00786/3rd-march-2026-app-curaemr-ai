@@ -6447,10 +6447,24 @@ export class DatabaseStorage implements IStorage {
         
         if (stripe) {
           console.log('💳 [CUSTOMER-CREATE] Creating Stripe Express account...');
+          
+          // Get platform's country from Stripe account to match connected account country
+          let platformCountry = process.env.STRIPE_ACCOUNT_COUNTRY || null;
+          if (!platformCountry) {
+            try {
+              const platformAccount = await stripe.accounts.retrieve();
+              platformCountry = platformAccount.country || 'GB'; // Default to GB if not found
+              console.log('🌍 [CUSTOMER-CREATE] Platform country detected:', platformCountry);
+            } catch (accountError: any) {
+              console.warn('⚠️ [CUSTOMER-CREATE] Could not retrieve platform account, defaulting to GB:', accountError.message);
+              platformCountry = 'GB'; // Default fallback
+            }
+          }
+          
           const stripeAccount = await stripe.accounts.create({
             type: "express",
             email: customerData.adminEmail,
-            country: "IN",
+            country: platformCountry, // Use platform's country to avoid cross-border restrictions
             metadata: {
               organization_name: customerData.name,
               subdomain: customerData.subdomain,

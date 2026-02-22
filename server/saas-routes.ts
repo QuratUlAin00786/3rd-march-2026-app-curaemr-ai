@@ -1630,6 +1630,21 @@ The Cura EMR Team`,
           return res.status(500).json({ message: "Stripe is not configured" });
         }
 
+        // Get platform's country from Stripe account to match connected account country
+        // This prevents cross-border account creation errors
+        let platformCountry = process.env.STRIPE_ACCOUNT_COUNTRY || null;
+        if (!platformCountry) {
+          try {
+            const platformAccount = await stripe.accounts.retrieve();
+            platformCountry = platformAccount.country || 'GB'; // Default to GB if not found
+            console.log('🌍 [STRIPE-CONNECT] Platform country detected:', platformCountry);
+          } catch (accountError: any) {
+            console.warn('⚠️ [STRIPE-CONNECT] Could not retrieve platform account, defaulting to GB:', accountError.message);
+            platformCountry = 'GB'; // Default fallback
+          }
+        }
+        console.log('🌍 [STRIPE-CONNECT] Using country for connected account:', platformCountry);
+
         // Check if organization already has a Stripe account in the database
         console.log('💳 [STRIPE-CONNECT] Checking existing Stripe account for organization:', organizationId, 'Current stripeAccountId:', organization.stripeAccountId);
         
@@ -1666,7 +1681,7 @@ The Cura EMR Team`,
           const stripeAccount = await stripe.accounts.create({
             type: "express",
             email: organization.email,
-            country: "IN",
+            country: platformCountry, // Use platform's country to avoid cross-border restrictions
             metadata: {
               organization_name: organization.name,
               subdomain: organization.subdomain,
