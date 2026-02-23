@@ -11000,15 +11000,26 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       return res.json(result);
     } catch (error: any) {
       console.error("[DRUG-INTERACTION] Request Failed:", error);
-      const isConfigError = error?.message?.includes("API key") || error?.status === 401;
-      const status = isConfigError ? 503 : 500;
-      const message = isConfigError
-        ? "AI Service is not configured. Please enter interaction details manually."
-        : `AI analysis error: ${error.message || "Unknown error"}`;
+      
+      // Check for API key related errors
+      const isApiKeyError = error?.message?.includes("API key") || 
+                           error?.message?.includes("Incorrect API key") ||
+                           error?.status === 401 ||
+                           error?.code === "invalid_api_key";
+      
+      const status = isApiKeyError ? 503 : 500;
+      
+      // Provide more helpful error message for API key issues
+      let message = "AI Service is not configured. Please enter interaction details manually.";
+      if (isApiKeyError) {
+        message = error.message || "OpenAI API key is invalid or not configured. Please check your environment variables and ensure OPENAI_API_KEY is set correctly. Get a valid key from https://platform.openai.com/account/api-keys";
+      } else {
+        message = `AI analysis error: ${error.message || "Unknown error"}`;
+      }
 
       return res.status(status).json({
         error: message,
-        details: error.message
+        details: error.message || "Please configure a valid OpenAI API key in your environment variables."
       });
     }
   });

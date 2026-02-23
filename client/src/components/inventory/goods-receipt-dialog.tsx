@@ -606,24 +606,24 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items, defaultP
           </Form>
 
           <div className="grid gap-1.5 md:grid-cols-3">
-            <Card className="shadow-sm bg-white/90">
+            <Card className="shadow-sm bg-white/90 dark:bg-gray-800/90 dark:border-gray-700">
               <CardHeader className="pb-1 pt-2 px-2">
-                <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 uppercase" style={{ fontSize: '12px' }}>
+                <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 dark:text-gray-400 uppercase" style={{ fontSize: '12px' }}>
                   Purchase Order
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-0.5 py-1 px-2">
-                <p className="font-semibold text-gray-900" style={{ fontSize: '12px' }}>
+                <p className="font-semibold text-gray-900 dark:text-white" style={{ fontSize: '12px' }}>
                   {selectedPO?.poNumber || "Select a purchase order"}
                 </p>
-                <p className="text-gray-500 truncate" style={{ fontSize: '12px' }}>
+                <p className="text-gray-500 dark:text-gray-400 truncate" style={{ fontSize: '12px' }}>
                   {selectedPO?.supplierName || "Supplier will populate here"}
                 </p>
-                <Badge variant="secondary" className="capitalize" style={{ fontSize: '12px' }}>
+                <Badge variant="secondary" className="capitalize dark:bg-gray-700 dark:text-gray-200" style={{ fontSize: '12px' }}>
                   {selectedPO?.status?.replace("_", " ") || "status pending"}
                 </Badge>
                 {selectedPO?.expectedDeliveryDate && (
-                  <p className="text-gray-500" style={{ fontSize: '12px' }}>
+                  <p className="text-gray-500 dark:text-gray-400" style={{ fontSize: '12px' }}>
                     Expected delivery: {format(new Date(selectedPO.expectedDeliveryDate), "MMM dd, yyyy")}
                   </p>
                 )}
@@ -668,51 +668,51 @@ export default function GoodsReceiptDialog({ open, onOpenChange, items, defaultP
           </div>
 
         {selectedPO && (
-          <Card className="border shadow-sm bg-white">
+          <Card className="border shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700">
             <CardHeader className="space-y-0.5 pb-1 pt-2 px-2">
-              <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 uppercase" style={{ fontSize: '12px' }}>
+              <CardTitle className="font-semibold tracking-[0.2em] text-gray-500 dark:text-gray-400 uppercase" style={{ fontSize: '12px' }}>
                 Purchase Order Details
               </CardTitle>
-              <p className="text-gray-600" style={{ fontSize: '12px' }}>
+              <p className="text-gray-600 dark:text-gray-300" style={{ fontSize: '12px' }}>
                 {computedPurchaseOrderMeta.status.replace("_", " ")} · Created on{" "}
                 {format(new Date(computedPurchaseOrderMeta.orderDate), "PPP")}
               </p>
             </CardHeader>
             <CardContent className="space-y-1 py-1 px-2">
-              <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4 text-gray-600" style={{ fontSize: '12px' }}>
+              <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4 text-gray-600 dark:text-gray-300" style={{ fontSize: '12px' }}>
                 <div>
-                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>PO Number</p>
-                  <p className="font-semibold text-gray-900" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.poNumber}</p>
+                  <p className="uppercase tracking-[0.3em] text-gray-400 dark:text-gray-500" style={{ fontSize: '12px' }}>PO Number</p>
+                  <p className="font-semibold text-gray-900 dark:text-white" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.poNumber}</p>
                 </div>
                 <div>
-                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Supplier</p>
-                  <p className="font-medium" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.supplierName}</p>
-                  <p className="text-gray-500" style={{ fontSize: '12px' }}>
+                  <p className="uppercase tracking-[0.3em] text-gray-400 dark:text-gray-500" style={{ fontSize: '12px' }}>Supplier</p>
+                  <p className="font-medium dark:text-gray-200" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.supplierName}</p>
+                  <p className="text-gray-500 dark:text-gray-400" style={{ fontSize: '12px' }}>
                     {computedPurchaseOrderMeta.supplierEmail || "No email"}
                   </p>
                 </div>
                 <div>
-                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Expected Delivery</p>
-                  <p className="font-semibold" style={{ fontSize: '12px' }}>
+                  <p className="uppercase tracking-[0.3em] text-gray-400 dark:text-gray-500" style={{ fontSize: '12px' }}>Expected Delivery</p>
+                  <p className="font-semibold dark:text-gray-200" style={{ fontSize: '12px' }}>
                     {computedPurchaseOrderMeta.expectedDeliveryDate
                       ? format(new Date(computedPurchaseOrderMeta.expectedDeliveryDate), "PPP")
                       : "Not set"}
                   </p>
                 </div>
                 <div>
-                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Status</p>
-                  <p className="font-semibold text-emerald-600" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.status}</p>
+                  <p className="uppercase tracking-[0.3em] text-gray-400 dark:text-gray-500" style={{ fontSize: '12px' }}>Status</p>
+                  <p className="font-semibold text-emerald-600 dark:text-emerald-400" style={{ fontSize: '12px' }}>{computedPurchaseOrderMeta.status}</p>
                 </div>
               </div>
 
-              <div className="grid gap-1 sm:grid-cols-2 text-gray-600" style={{ fontSize: '12px' }}>
+              <div className="grid gap-1 sm:grid-cols-2 text-gray-600 dark:text-gray-300" style={{ fontSize: '12px' }}>
                 <div>
-                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Total Amount</p>
-                  <p className="font-semibold" style={{ fontSize: '12px' }}>£{parseFloat(computedPurchaseOrderMeta.totalAmount || "0").toFixed(2)}</p>
+                  <p className="uppercase tracking-[0.3em] text-gray-400 dark:text-gray-500" style={{ fontSize: '12px' }}>Total Amount</p>
+                  <p className="font-semibold dark:text-gray-200" style={{ fontSize: '12px' }}>£{parseFloat(computedPurchaseOrderMeta.totalAmount || "0").toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="uppercase tracking-[0.3em] text-gray-400" style={{ fontSize: '12px' }}>Tax / Discount</p>
-                  <p className="text-gray-500" style={{ fontSize: '12px' }}>
+                  <p className="uppercase tracking-[0.3em] text-gray-400 dark:text-gray-500" style={{ fontSize: '12px' }}>Tax / Discount</p>
+                  <p className="text-gray-500 dark:text-gray-400" style={{ fontSize: '12px' }}>
                     Tax: £{parseFloat(computedPurchaseOrderMeta.taxAmount || "0").toFixed(2)} · Discount: £{parseFloat(computedPurchaseOrderMeta.discountAmount || "0").toFixed(2)}
                   </p>
                 </div>

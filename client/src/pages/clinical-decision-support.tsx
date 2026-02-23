@@ -2595,6 +2595,8 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
   const [notes, setNotes] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [isGenerating, setIsGenerating] = React.useState(false);
+  const [apiKeyErrorDialogOpen, setApiKeyErrorDialogOpen] = React.useState(false);
+  const [apiKeyErrorMessage, setApiKeyErrorMessage] = React.useState("");
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -2626,44 +2628,81 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
       });
       return;
     }
+    
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      toast({
+        title: "Authentication required",
+        description: "Please log in to generate drug interaction analysis.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     setIsGenerating(true);
     try {
-      const response = await fetch(buildUrl('/api/clinical/drug-interaction-analyze'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-          'X-Tenant-Subdomain': getActiveSubdomain()
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          medication1Name: medication1Name.trim(),
-          medication1Dosage: medication1Dosage.trim() || undefined,
-          medication1Frequency: medication1Frequency.trim() || undefined,
-          medication2Name: medication2Name.trim(),
-          medication2Dosage: medication2Dosage.trim() || undefined,
-          medication2Frequency: medication2Frequency.trim() || undefined
-        })
+      const response = await apiRequest('POST', '/api/clinical/drug-interaction-analyze', {
+        medication1Name: medication1Name.trim(),
+        medication1Dosage: medication1Dosage.trim() || undefined,
+        medication1Frequency: medication1Frequency.trim() || undefined,
+        medication2Name: medication2Name.trim(),
+        medication2Dosage: medication2Dosage.trim() || undefined,
+        medication2Frequency: medication2Frequency.trim() || undefined
       });
-      const text = await response.text();
+      
       if (!response.ok) {
-        let message = 'Failed to analyze drug interaction';
+        let errorMessage = 'Failed to analyze drug interaction';
+        let errorDetails = '';
         try {
-          const err = JSON.parse(text);
-          if (err && typeof err.error === 'string') message = err.error;
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+          errorDetails = errorData.details || '';
         } catch {
-          if (text.startsWith('<!')) message = 'Server error. Please check the API is running and try again.';
-          else if (text) message = text.slice(0, 200);
+          // If response is not JSON, use default message
         }
-        throw new Error(message);
+        
+        // Check if it's an API key error (503 status or error message contains API key info)
+        const isApiKeyError = response.status === 503 || 
+                              errorMessage.toLowerCase().includes('api key') ||
+                              errorMessage.toLowerCase().includes('openai') ||
+                              errorMessage.toLowerCase().includes('incorrect api key');
+        
+        if (isApiKeyError) {
+          // Extract user-friendly message (remove technical details like status codes and masked keys)
+          let userFriendlyMessage = errorMessage;
+          
+          // Remove status code prefix if present (e.g., "503: {...}")
+          if (userFriendlyMessage.includes('503:')) {
+            try {
+              const jsonMatch = userFriendlyMessage.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                userFriendlyMessage = parsed.error || userFriendlyMessage;
+              }
+            } catch {
+              // If parsing fails, use the original message
+            }
+          }
+          
+          // Remove masked API key references for cleaner message
+          userFriendlyMessage = userFriendlyMessage.replace(/Current key: [^\s]+/gi, '');
+          userFriendlyMessage = userFriendlyMessage.replace(/sk-[^\s]+/gi, '[API Key Hidden]');
+          
+          // Clean up the message
+          userFriendlyMessage = userFriendlyMessage.trim();
+          if (!userFriendlyMessage) {
+            userFriendlyMessage = 'OpenAI API key is not configured correctly. Please contact your system administrator to configure a valid API key.';
+          }
+          
+          setApiKeyErrorMessage(userFriendlyMessage);
+          setApiKeyErrorDialogOpen(true);
+          return;
+        }
+        
+        throw new Error(errorMessage);
       }
-      let result: { severity?: string; description?: string; warnings?: string[]; recommendations?: string[]; notes?: string };
-      try {
-        result = JSON.parse(text);
-      } catch {
-        throw new Error('Server returned an invalid response. Please try again.');
-      }
+      
+      const result: { severity?: string; description?: string; warnings?: string[]; recommendations?: string[]; notes?: string } = await response.json();
       // Only fill from AI response — no hardcoded values
       setSeverity(result.severity ?? 'medium');
       setDescription(result.description ?? '');
@@ -2672,11 +2711,49 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
       setNotes(result.notes ?? '');
       toast({ title: "Analysis complete", description: "AI-generated fields have been filled. You can edit and then add the interaction." });
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to generate analysis",
-        variant: "destructive"
-      });
+      // Check if it's an API key error from the error message
+      let errorMessage = error.message || "Failed to generate analysis";
+      
+      const isApiKeyError = errorMessage.toLowerCase().includes('api key') ||
+                           errorMessage.toLowerCase().includes('openai') ||
+                           errorMessage.toLowerCase().includes('incorrect api key') ||
+                           errorMessage.toLowerCase().includes('503');
+      
+      if (isApiKeyError) {
+        // Clean up the error message for display
+        let userFriendlyMessage = errorMessage;
+        
+        // Remove status code prefix if present (e.g., "503: {...}")
+        if (userFriendlyMessage.includes('503:')) {
+          try {
+            const jsonMatch = userFriendlyMessage.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              userFriendlyMessage = parsed.error || userFriendlyMessage;
+            }
+          } catch {
+            // If parsing fails, use the original message
+          }
+        }
+        
+        // Remove masked API key references for cleaner message
+        userFriendlyMessage = userFriendlyMessage.replace(/Current key: [^\s]+/gi, '');
+        userFriendlyMessage = userFriendlyMessage.replace(/sk-[^\s]+/gi, '[API Key Hidden]');
+        userFriendlyMessage = userFriendlyMessage.trim();
+        
+        if (!userFriendlyMessage) {
+          userFriendlyMessage = 'OpenAI API key is not configured correctly. Please contact your system administrator to configure a valid API key.';
+        }
+        
+        setApiKeyErrorMessage(userFriendlyMessage);
+        setApiKeyErrorDialogOpen(true);
+      } else {
+        toast({
+          title: "Error",
+          description: errorMessage,
+          variant: "destructive"
+        });
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -3021,6 +3098,45 @@ const AddDrugInteractionDialog: React.FC<AddDrugInteractionDialogProps> = ({ ope
           </div>
         </form>
       </DialogContent>
+      
+      {/* API Key Error Modal */}
+      <Dialog open={apiKeyErrorDialogOpen} onOpenChange={setApiKeyErrorDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600 dark:text-red-400">
+              <AlertTriangle className="h-5 w-5" />
+              OpenAI API Configuration Required
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>API Key Configuration Error</AlertTitle>
+              <AlertDescription className="mt-2">
+                {apiKeyErrorMessage || "The OpenAI API key is not configured correctly. Please contact your system administrator to configure a valid API key."}
+              </AlertDescription>
+            </Alert>
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+              <p className="text-sm text-blue-800 dark:text-blue-200 mb-2">
+                <strong>To resolve this issue:</strong>
+              </p>
+              <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1 list-disc list-inside">
+                <li>Contact your system administrator</li>
+                <li>Ensure a valid OpenAI API key is configured in the server environment variables</li>
+                <li>Get a valid API key from <a href="https://platform.openai.com/account/api-keys" target="_blank" rel="noopener noreferrer" className="underline">OpenAI Platform</a></li>
+              </ul>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              You can still add drug interactions manually by filling in the form fields below.
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={() => setApiKeyErrorDialogOpen(false)}>
+              I Understand
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 };

@@ -450,19 +450,19 @@ export default function PurchaseOrderDialog({ open, onOpenChange, items, onPurch
       <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold text-green-600">Success</DialogTitle>
+            <DialogTitle className="text-xl font-bold text-green-600 dark:text-green-400">Success</DialogTitle>
           </DialogHeader>
 
           <div className="flex flex-col items-center gap-3 py-4 text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
               <Check className="h-6 w-6" />
             </span>
-            <p className="text-lg font-semibold text-gray-900">
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">
               {createdPONumber
                 ? `Purchase order ${createdPONumber} created successfully`
                 : "Purchase order created successfully"}
             </p>
-            <p className="text-sm text-gray-500">{successMessage}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{successMessage}</p>
           </div>
 
           <div className="flex justify-end">

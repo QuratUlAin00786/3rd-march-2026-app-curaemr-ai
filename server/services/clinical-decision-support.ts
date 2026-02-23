@@ -121,10 +121,18 @@ Analyze for drug interactions and provide clinical alerts in this JSON format:
     const med2Str = [medication2.name, medication2.dosage, medication2.frequency].filter(Boolean).join(", ");
 
     try {
-      if (!process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY_ENV_VAR) {
-        throw new Error("OpenAI API key is missing. Please configure it in your environment variables.");
+      // Validate API key before making request
+      const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR;
+      if (!apiKey || apiKey === "default_key") {
+        throw new Error("OpenAI API key is not configured. Please set OPENAI_API_KEY or OPENAI_API_KEY_ENV_VAR in your environment variables.");
+      }
+      
+      // Validate API key format (OpenAI keys should start with "sk-")
+      if (!apiKey.startsWith("sk-")) {
+        throw new Error(`Invalid OpenAI API key format. The key should start with "sk-". Please check your OPENAI_API_KEY environment variable. Get a valid key from https://platform.openai.com/account/api-keys`);
       }
 
+      // Uses same OpenAI client configuration as aiService (process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key")
       const response = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
@@ -182,6 +190,19 @@ Analyze the potential drug interaction and return JSON only in this exact format
       };
     } catch (error: any) {
       console.error("[ClinicalDecisionSupport] AI Error:", error);
+      
+      // Handle OpenAI API key errors specifically
+      if (error?.status === 401 || error?.message?.includes("Incorrect API key") || error?.message?.includes("401")) {
+        const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR;
+        const maskedKey = apiKey ? `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}` : "not set";
+        throw new Error(`OpenAI API key is invalid or incorrect. Please verify your OPENAI_API_KEY environment variable. Current key: ${maskedKey}. Get a valid key from https://platform.openai.com/account/api-keys`);
+      }
+      
+      // Handle other OpenAI errors
+      if (error?.message?.includes("API key") || error?.status === 401) {
+        throw new Error(`OpenAI API authentication failed. Please check your API key configuration. Error: ${error.message || "Unknown error"}`);
+      }
+      
       throw error;
     }
   }
