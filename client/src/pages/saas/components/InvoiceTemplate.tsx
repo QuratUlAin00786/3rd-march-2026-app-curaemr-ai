@@ -69,7 +69,7 @@ const InvoiceTemplate = forwardRef<HTMLDivElement, InvoiceTemplateProps>(
     const totalAmount = subtotal + vatAmount;
 
     return (
-      <div ref={ref} className="max-w-4xl mx-auto bg-white p-8 print:p-0">
+      <div ref={ref} className="max-w-4xl mx-auto bg-white p-8 print:p-0" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
         {/* Company Header */}
         <div className="flex justify-between items-start mb-8">
           <div className="flex items-center space-x-4">
@@ -121,19 +121,25 @@ const InvoiceTemplate = forwardRef<HTMLDivElement, InvoiceTemplateProps>(
             <h3 className="font-semibold text-gray-900 mb-2">Bill To:</h3>
             <div className="text-gray-700">
               <p className="font-medium">{invoice.organizationName}</p>
-              {invoice.organizationAddress && (
+              {invoice.organizationAddress ? (
                 <div className="whitespace-pre-line">
                   {invoice.organizationAddress}
                 </div>
+              ) : (
+                <>
+                  <p className="font-medium">{invoice.organizationName}</p>
+                  <p>Healthcare Organization</p>
+                  <p>United Kingdom</p>
+                </>
               )}
             </div>
 
             <div className="mt-4 p-3 bg-gray-50 rounded">
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center mb-2">
                 <span className="font-medium">Payment Status:</span>
                 {getStatusBadge(invoice.paymentStatus)}
               </div>
-              <div className="flex justify-between items-center mt-1">
+              <div className="flex justify-between items-center">
                 <span className="font-medium">Payment Method:</span>
                 <span className="capitalize">
                   {invoice.paymentMethod.replace("_", " ")}

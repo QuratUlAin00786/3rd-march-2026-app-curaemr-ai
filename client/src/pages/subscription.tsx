@@ -12,6 +12,7 @@ import { Crown, Users, Calendar, Zap, Check, X, Package, Heart, Brain, Shield, S
 import { PaymentMethodDialog } from "@/components/payment-method-dialog";
 import { getTenantSubdomain, queryClient, apiRequest } from "@/lib/queryClient";
 import InvoiceTemplate from "@/pages/saas/components/InvoiceTemplate";
+import { useToast } from "@/hooks/use-toast";
 import type { Subscription } from "@/types";
 import type { SaaSPackage } from "@shared/schema";
 
@@ -195,6 +196,7 @@ function safeSessionLabel(val: unknown): string {
 }
 
 export default function Subscription() {
+  const { toast } = useToast();
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCurrentPlanDialog, setShowCurrentPlanDialog] = useState(false);
@@ -1890,25 +1892,289 @@ export default function Subscription() {
             <DialogTitle>Invoice #{selectedInvoice?.invoiceNumber}</DialogTitle>
             <div className="flex items-center gap-2">
               <Button
+                onClick={async () => {
+                  if (invoiceRef.current && selectedInvoice) {
+                    try {
+                      const { jsPDF } = await import("jspdf");
+                      const html2canvas = (await import("html2canvas")).default;
+                      
+                      // Convert invoice content to canvas
+                      const canvas = await html2canvas(invoiceRef.current, {
+                        scale: 2,
+                        useCORS: true,
+                        logging: false,
+                        backgroundColor: '#ffffff'
+                      });
+                      
+                      const imgData = canvas.toDataURL('image/png');
+                      
+                      // Create PDF
+                      const pdf = new jsPDF({
+                        orientation: 'portrait',
+                        unit: 'mm',
+                        format: 'a4'
+                      });
+                      
+                      const pdfWidth = pdf.internal.pageSize.getWidth();
+                      const pdfHeight = pdf.internal.pageSize.getHeight();
+                      const imgWidth = canvas.width;
+                      const imgHeight = canvas.height;
+                      const ratio = Math.min((pdfWidth - 20) / imgWidth, (pdfHeight - 20) / imgHeight);
+                      const imgScaledWidth = imgWidth * ratio;
+                      const imgScaledHeight = imgHeight * ratio;
+                      const xOffset = (pdfWidth - imgScaledWidth) / 2;
+                      
+                      pdf.addImage(imgData, 'PNG', xOffset, 10, imgScaledWidth, imgScaledHeight);
+                      
+                      // Download PDF
+                      pdf.save(`Invoice-${selectedInvoice.invoiceNumber}.pdf`);
+                    } catch (error) {
+                      console.error('Error generating PDF:', error);
+                      toast({
+                        title: "Error",
+                        description: "Failed to generate PDF. Please try again.",
+                        variant: "destructive",
+                      });
+                    }
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                data-testid="button-download-invoice"
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </Button>
+              <Button
                 onClick={() => {
                   if (invoiceRef.current) {
                     const printContent = invoiceRef.current.innerHTML;
                     const printWindow = window.open('', '_blank');
                     if (printWindow) {
                       printWindow.document.write(`
+                        <!DOCTYPE html>
                         <html>
                           <head>
                             <title>Invoice ${selectedInvoice?.invoiceNumber}</title>
+                            <meta charset="UTF-8">
                             <style>
-                              body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 20px; }
-                              @media print { body { padding: 0; } }
+                              * {
+                                margin: 0;
+                                padding: 0;
+                                box-sizing: border-box;
+                              }
+                              body {
+                                font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                                font-size: 14px;
+                                line-height: 1.6;
+                                color: #000;
+                                background: #fff;
+                                padding: 20px;
+                              }
+                              @media print {
+                                body {
+                                  padding: 0;
+                                  margin: 0;
+                                }
+                                @page {
+                                  size: A4;
+                                  margin: 1cm;
+                                }
+                              }
+                              .max-w-4xl {
+                                max-width: 100%;
+                                margin: 0 auto;
+                                background: #fff;
+                              }
+                              .flex {
+                                display: flex;
+                              }
+                              .justify-between {
+                                justify-content: space-between;
+                              }
+                              .items-start {
+                                align-items: flex-start;
+                              }
+                              .items-center {
+                                align-items: center;
+                              }
+                              .space-x-4 > * + * {
+                                margin-left: 1rem;
+                              }
+                              .mb-8 {
+                                margin-bottom: 2rem;
+                              }
+                              .mb-2 {
+                                margin-bottom: 0.5rem;
+                              }
+                              .mb-4 {
+                                margin-bottom: 1rem;
+                              }
+                              .mt-2 {
+                                margin-top: 0.5rem;
+                              }
+                              .mt-4 {
+                                margin-top: 1rem;
+                              }
+                              .p-8 {
+                                padding: 2rem;
+                              }
+                              .p-6 {
+                                padding: 1.5rem;
+                              }
+                              .p-4 {
+                                padding: 1rem;
+                              }
+                              .p-3 {
+                                padding: 0.75rem;
+                              }
+                              .text-2xl {
+                                font-size: 1.5rem;
+                                line-height: 2rem;
+                              }
+                              .text-3xl {
+                                font-size: 1.875rem;
+                                line-height: 2.25rem;
+                              }
+                              .text-lg {
+                                font-size: 1.125rem;
+                                line-height: 1.75rem;
+                              }
+                              .text-sm {
+                                font-size: 0.875rem;
+                                line-height: 1.25rem;
+                              }
+                              .font-bold {
+                                font-weight: 700;
+                              }
+                              .font-semibold {
+                                font-weight: 600;
+                              }
+                              .font-medium {
+                                font-weight: 500;
+                              }
+                              .text-gray-900 {
+                                color: #111827;
+                              }
+                              .text-gray-700 {
+                                color: #374151;
+                              }
+                              .text-gray-600 {
+                                color: #4b5563;
+                              }
+                              .text-gray-500 {
+                                color: #6b7280;
+                              }
+                              .bg-white {
+                                background-color: #fff;
+                              }
+                              .bg-gray-50 {
+                                background-color: #f9fafb;
+                              }
+                              .bg-green-100 {
+                                background-color: #dcfce7;
+                              }
+                              .text-green-800 {
+                                color: #166534;
+                              }
+                              .rounded-lg {
+                                border-radius: 0.5rem;
+                              }
+                              .rounded {
+                                border-radius: 0.25rem;
+                              }
+                              .border-b {
+                                border-bottom-width: 1px;
+                              }
+                              .border-gray-200 {
+                                border-color: #e5e7eb;
+                              }
+                              .border-gray-100 {
+                                border-color: #f3f4f6;
+                              }
+                              .grid {
+                                display: grid;
+                              }
+                              .grid-cols-2 {
+                                grid-template-columns: repeat(2, minmax(0, 1fr));
+                              }
+                              .gap-8 {
+                                gap: 2rem;
+                              }
+                              .gap-4 {
+                                gap: 1rem;
+                              }
+                              .w-full {
+                                width: 100%;
+                              }
+                              .w-80 {
+                                width: 20rem;
+                              }
+                              .w-20 {
+                                width: 5rem;
+                              }
+                              .h-16 {
+                                height: 4rem;
+                              }
+                              .text-left {
+                                text-align: left;
+                              }
+                              .text-right {
+                                text-align: right;
+                              }
+                              .text-center {
+                                text-align: center;
+                              }
+                              table {
+                                width: 100%;
+                                border-collapse: collapse;
+                              }
+                              th, td {
+                                padding: 0.75rem;
+                                text-align: left;
+                              }
+                              th {
+                                font-weight: 600;
+                                border-bottom: 1px solid #e5e7eb;
+                              }
+                              td {
+                                border-bottom: 1px solid #f3f4f6;
+                              }
+                              .w-24 {
+                                width: 6rem;
+                              }
+                              .w-32 {
+                                width: 8rem;
+                              }
+                              .object-contain {
+                                object-fit: contain;
+                              }
+                              .whitespace-pre-line {
+                                white-space: pre-line;
+                              }
+                              img {
+                                max-width: 100%;
+                                height: auto;
+                              }
+                              @media print {
+                                .print\\:p-0 {
+                                  padding: 0;
+                                }
+                                body {
+                                  padding: 0;
+                                  margin: 0;
+                                }
+                              }
                             </style>
                           </head>
                           <body>${printContent}</body>
                         </html>
                       `);
                       printWindow.document.close();
-                      printWindow.print();
+                      setTimeout(() => {
+                        printWindow.print();
+                      }, 250);
                     }
                   }
                 }}

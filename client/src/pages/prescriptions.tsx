@@ -2307,16 +2307,21 @@ export default function PrescriptionsPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     
-    // Clear canvas and set background
+    // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Set white background for canvas (works for both themes - dark theme container provides dark background)
-    ctx.fillStyle = "#ffffff";
+    // Set canvas background based on theme - dark for dark theme, white for light theme
+    const isDark = isSignatureDarkTheme();
+    const backgroundColor = isDark ? "#1a1a1a" : "#ffffff";
+    ctx.fillStyle = backgroundColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Set stroke color based on theme
-    ctx.strokeStyle = isSignatureDarkTheme() ? "#ffffff" : "#000000";
-    ctx.fillStyle = isSignatureDarkTheme() ? "#ffffff" : "#000000";
+    // Set stroke color based on theme - white for dark theme, black for light theme
+    const strokeColor = isDark ? "#ffffff" : "#000000";
+    ctx.strokeStyle = strokeColor;
+    ctx.fillStyle = strokeColor;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
     
     setSignature("");
     setSignatureSaved(false);
@@ -2439,13 +2444,15 @@ export default function PrescriptionsPage() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       
-      // Set white background for canvas (container provides dark background in dark theme)
-      ctx.fillStyle = "#ffffff";
+      // Set canvas background based on theme - dark for dark theme, white for light theme
+      const isDark = isSignatureDarkTheme();
+      const backgroundColor = isDark ? "#1a1a1a" : "#ffffff";
+      ctx.fillStyle = backgroundColor;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
       // Set stroke color based on theme - white in dark theme, black in light theme
-      ctx.strokeStyle = isSignatureDarkTheme() ? "#ffffff" : "#000000";
-      ctx.fillStyle = isSignatureDarkTheme() ? "#ffffff" : "#000000";
+      ctx.strokeStyle = isDark ? "#ffffff" : "#000000";
+      ctx.fillStyle = isDark ? "#ffffff" : "#000000";
     }
   }, [showESignDialog]);
 
