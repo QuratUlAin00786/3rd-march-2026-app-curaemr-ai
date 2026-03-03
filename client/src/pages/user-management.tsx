@@ -63,6 +63,56 @@ import { getActiveSubdomain } from "@/lib/subdomain-utils";
 import { isDoctorLike } from "@/lib/role-utils";
 import { useAuth } from "@/hooks/use-auth";
 
+// Date formatting helper to match subscription.tsx format (UTC-based)
+const parseDateParts = (value?: string | Date | null) => {
+  if (!value) return null;
+  let date: Date;
+  if (value instanceof Date) {
+    date = value;
+  } else {
+    const str = String(value).trim();
+    const hasTimezone = /[Z+-]\d{2}:?\d{2}$/.test(str);
+    if (hasTimezone) {
+      date = new Date(str);
+    } else {
+      const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?/);
+      if (isoMatch) {
+        const [, y, mo, d, hh, mm, ss, ms] = isoMatch;
+        date = new Date(Date.UTC(
+          Number(y),
+          Number(mo) - 1,
+          Number(d),
+          Number(hh),
+          Number(mm),
+          ss ? Number(ss) : 0,
+          ms ? Number(ms.substring(0, 3)) : 0
+        ));
+      } else {
+        date = new Date(str);
+      }
+    }
+  }
+  if (Number.isNaN(date.getTime())) return null;
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth(),
+    day: date.getUTCDate(),
+    hour: date.getUTCHours(),
+    minute: date.getUTCMinutes(),
+  };
+};
+
+const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const formatDateTime = (value?: string | Date | null) => {
+  const parts = parseDateParts(value);
+  if (!parts) return "Not set";
+  const hour12 = parts.hour % 12 === 0 ? 12 : parts.hour % 12;
+  const period = parts.hour >= 12 ? "pm" : "am";
+  const minute = parts.minute.toString().padStart(2, "0");
+  return `${parts.day.toString().padStart(2, "0")} ${monthNames[parts.month]} ${parts.year}, ${hour12}:${minute} ${period}`;
+};
+
 // Comprehensive country codes with ISO codes for flag API
 const COUNTRY_CODES = [
   { code: "+93", name: "Afghanistan", iso: "af" },
@@ -1277,6 +1327,8 @@ export default function UserManagement() {
 
   const [showSubscribeRequiredModal, setShowSubscribeRequiredModal] = useState(false);
   const [hasDismissedSubscribePrompt, setHasDismissedSubscribePrompt] = useState(false);
+  const [showLimitReachedModal, setShowLimitReachedModal] = useState(false);
+  const [limitReachedMessage, setLimitReachedMessage] = useState("");
 
   useEffect(() => {
     if (
@@ -2198,28 +2250,30 @@ export default function UserManagement() {
 
   const createUserMutation = useMutation({
     mutationFn: async (userData: UserFormData) => {
-      // Check subscription limit before creating user
+      // Check subscription limit before creating user (only block when remaining slots = 0)
       console.log("Checking subscription limit before user creation...");
       try {
         const limitCheckResponse = await apiRequest("GET", "/api/users/check-subscription-limit");
         const limitData = await limitCheckResponse.json();
         console.log("Subscription limit check:", limitData);
         
-        // Role-specific limit validation
+        // Role-specific limit validation - only block when remaining slots = 0
         if (userData.role === 'patient') {
-          // Check patient limits
+          // Check patient limits - block when remainingPatients = 0
           if (limitData.remainingPatients <= 0) {
             throw new Error(
               `Patient limit reached. Your subscription allows ${limitData.maxPatients} patients, and you currently have ${limitData.currentPatientCount} patients. Please upgrade your subscription to add more patients.`
             );
           }
+          // Allow when remainingPatients > 0
         } else {
-          // Check user limits for non-patient roles
+          // Check user limits for non-patient roles - block when remainingUsers = 0
           if (limitData.remainingUsers <= 0) {
             throw new Error(
               `User limit reached. Your subscription allows ${limitData.maxUsers} users, and you currently have ${limitData.currentUserCount} users. Please upgrade your subscription to add more users.`
             );
           }
+          // Allow when remainingUsers > 0
         }
       } catch (error: any) {
         if (error.message.includes("limit reached")) {
@@ -2537,6 +2591,32 @@ export default function UserManagement() {
     console.log("📝 FORM SUBMITTED - onSubmit called");
     console.log("  Form data:", data);
     console.log("  Editing user:", editingUser?.id);
+    
+    // Check subscription limits before proceeding (only for new users, not edits)
+    // Allow creation when Remaining Slots > 0, block and show popup when Remaining Slots = 0
+    if (!editingUser && subscriptionLimitData) {
+      if (data.role === 'patient') {
+        // Block when remainingPatients = 0
+        if (subscriptionLimitData.remainingPatients <= 0) {
+          setLimitReachedMessage(
+            `You have reached your patient limit. Your subscription allows ${subscriptionLimitData.maxPatients} patients, and you currently have ${subscriptionLimitData.currentPatientCount} patients. Please upgrade your subscription to add more patients.`
+          );
+          setShowLimitReachedModal(true);
+          return; // Prevent form submission
+        }
+        // Allow when remainingPatients > 0 - continue with form submission
+      } else {
+        // Block when remainingUsers = 0
+        if (subscriptionLimitData.remainingUsers <= 0) {
+          setLimitReachedMessage(
+            `You have reached your user limit. Your subscription allows ${subscriptionLimitData.maxUsers} users, and you currently have ${subscriptionLimitData.currentUserCount} users. Please upgrade your subscription to add more users.`
+          );
+          setShowLimitReachedModal(true);
+          return; // Prevent form submission
+        }
+        // Allow when remainingUsers > 0 - continue with form submission
+      }
+    }
     
     // Validate Patient-specific required fields FIRST (before any other checks)
     if (data.role === 'patient') {
@@ -3012,6 +3092,13 @@ export default function UserManagement() {
     }
   );
   
+  // Sort filtered users alphabetically by name (for grid view)
+  const sortedFilteredUsers = [...filteredUsers].sort((a, b) => {
+    const nameA = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
+    const nameB = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
+    return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+  });
+  
   // Group users by role
   const groupedUsers = filteredUsers.reduce((acc, user) => {
     const role = user.role;
@@ -3021,6 +3108,15 @@ export default function UserManagement() {
     acc[role].push(user);
     return acc;
   }, {} as Record<string, typeof filteredUsers>);
+  
+  // Sort users alphabetically by name within each role group
+  Object.keys(groupedUsers).forEach((role) => {
+    groupedUsers[role].sort((a, b) => {
+      const nameA = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
+      const nameB = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+    });
+  });
   
   // Role display names
   const roleDisplayNames: Record<string, string> = {
@@ -3237,6 +3333,30 @@ export default function UserManagement() {
                         <h4 className="text-sm font-semibold text-yellow-900 dark:text-yellow-100">
                           Subscription Status
                         </h4>
+                        
+                        {/* Subscription Details */}
+                        {(subscriptionLimitData.planName || subscriptionLimitData.expiresAt) && (
+                          <div className="pb-2 border-b border-yellow-200 dark:border-yellow-800">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                              {subscriptionLimitData.planName && (
+                                <div>
+                                  <span className="text-gray-600 dark:text-gray-400">Subscription Plan:</span>
+                                  <span className="ml-2 font-semibold text-yellow-900 dark:text-yellow-100">
+                                    {subscriptionLimitData.planName}
+                                  </span>
+                                </div>
+                              )}
+                              {subscriptionLimitData.expiresAt && (
+                                <div>
+                                  <span className="text-gray-600 dark:text-gray-400">Expires At:</span>
+                                  <span className="ml-2 font-semibold text-yellow-900 dark:text-yellow-100">
+                                    {formatDateTime(subscriptionLimitData.expiresAt)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                         
                         {/* User Limits */}
                         <div>
@@ -4873,6 +4993,7 @@ export default function UserManagement() {
                       emailValidationStatus === 'exists' ||
                       emailValidationStatus === 'checking' ||
                       (editingUser && !isEditFormValid) ||
+                      // Disable button when Remaining Slots = 0 (allow when > 0)
                       (!editingUser && subscriptionLimitData && (
                         selectedRole === 'patient' 
                           ? subscriptionLimitData.remainingPatients <= 0 
@@ -5075,7 +5196,7 @@ export default function UserManagement() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredUsers.map((user) => (
+                {sortedFilteredUsers.map((user) => (
                   <Card key={`user-grid-${user.id}-${user.email}`} className="hover:shadow-lg transition-shadow" data-testid={`user-grid-card-${user.id}`}>
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between mb-3">
@@ -5716,6 +5837,50 @@ export default function UserManagement() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Limit Reached Modal */}
+      <Dialog open={showLimitReachedModal} onOpenChange={setShowLimitReachedModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 dark:text-red-400">
+              Subscription Limit Reached
+            </DialogTitle>
+            <DialogDescription className="pt-4">
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 mt-0.5">
+                    <svg className="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 flex-1">
+                    {limitReachedMessage}
+                  </p>
+                </div>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowLimitReachedModal(false)}
+            >
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                setShowLimitReachedModal(false);
+                // Optionally redirect to subscription page
+                const subdomain = getTenantSubdomain();
+                window.location.href = `/${subdomain}/subscription`;
+              }}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Upgrade Subscription
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

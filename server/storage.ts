@@ -2054,7 +2054,8 @@ export class DatabaseStorage implements IStorage {
           planName: saasPackages.name,
           status: saasSubscriptions.status,
           paymentStatus: saasSubscriptions.paymentStatus,
-          userLimit: saasSubscriptions.maxUsers,
+          userLimit: saasSubscriptions.maxUsers, // This is the actual maxUsers from saasSubscriptions table
+          maxPatients: saasSubscriptions.maxPatients, // This is the actual maxPatients from saasSubscriptions table
           currentUsers: sql<number>`0`.as('currentUsers'),
           monthlyPrice: saasPackages.price,
           trialEndsAt: saasSubscriptions.trialEnd,
@@ -2121,17 +2122,28 @@ export class DatabaseStorage implements IStorage {
       
       const actualPatientCount = patientCountResult[0]?.count || 0;
       
-      // Get package features to extract maxUsers and maxPatients
+      // Get maxUsers and maxPatients - prioritize saasSubscriptions columns, fallback to package features JSON
       const packageFeatures = subscription.features as any || {};
-      const maxUsers = packageFeatures.maxUsers || 0;
-      const maxPatients = packageFeatures.maxPatients || 0;
+      // First try saasSubscriptions.maxUsers/maxPatients (actual columns from database), then fallback to package features JSON
+      const maxUsers = subscription.userLimit || packageFeatures.maxUsers || 0;
+      const maxPatients = (subscription as any).maxPatients || packageFeatures.maxPatients || 0;
+      
+      console.log('[getSubscription] Subscription limits:', {
+        userLimit_from_subscription: subscription.userLimit,
+        maxPatients_from_subscription: (subscription as any).maxPatients,
+        maxUsers_from_features: packageFeatures.maxUsers,
+        maxPatients_from_features: packageFeatures.maxPatients,
+        final_maxUsers: maxUsers,
+        final_maxPatients: maxPatients
+      });
       
       // Transform data to match frontend type expectations
       return {
         ...subscription,
         currentUsers: actualUserCount,
         currentPatients: actualPatientCount,
-        userLimit: maxUsers, // Use maxUsers from package features instead of saasSubscriptions.maxUsers
+        userLimit: maxUsers, // Use maxUsers from saasSubscriptions.maxUsers (column) or package features JSON
+        maxPatients: maxPatients, // Include maxPatients in the returned object
         monthlyPrice: subscription.monthlyPrice ? String(subscription.monthlyPrice) : null,
         features: subscription.features || {
           aiInsights: true,

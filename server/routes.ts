@@ -9590,24 +9590,35 @@ This treatment plan should be reviewed and adjusted based on individual patient 
     try {
       const organizationId = req.tenant!.id;
 
-      // Get active subscription for the organization
-      const [activeSubscription] = await db.select({
-        maxUsers: saasSubscriptions.maxUsers,
-        maxPatients: saasSubscriptions.maxPatients,
-        status: saasSubscriptions.status
-      })
-        .from(saasSubscriptions)
-        .where(eq(saasSubscriptions.organizationId, organizationId))
-        .limit(1);
+      // Get active subscription for the organization using storage.getSubscription()
+      // This method already filters by expiresAt (only returns subscriptions where expiresAt > current date)
+      const subscription = await storage.getSubscription(organizationId);
 
-      if (!activeSubscription) {
+      if (!subscription) {
         return res.status(403).json({
           error: "No active subscription found for this organization",
           canCreateUser: false
         });
       }
 
+      // Extract maxUsers and maxPatients from subscription
+      // subscription.userLimit comes from saasSubscriptions.maxUsers column
+      // subscription.maxPatients comes from saasSubscriptions.maxPatients column (now included in getSubscription return)
+      const packageFeatures = subscription.features as any || {};
+      const maxUsers = subscription.userLimit || packageFeatures.maxUsers || 0;
+      const maxPatients = (subscription as any).maxPatients || packageFeatures.maxPatients || 0;
+      
+      console.log('[check-subscription-limit] Subscription limits:', {
+        userLimit_from_subscription: subscription.userLimit,
+        maxPatients_from_subscription: (subscription as any).maxPatients,
+        maxUsers_from_features: packageFeatures.maxUsers,
+        maxPatients_from_features: packageFeatures.maxPatients,
+        final_maxUsers: maxUsers,
+        final_maxPatients: maxPatients
+      });
+
       // Count existing non-patient users for the organization
+      // Exclude SaaS owners, inactive users, and patient role
       const [nonPatientUserCount] = await db.select({
         count: sql<number>`count(*)::int`
       })
@@ -9615,7 +9626,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         .where(
           and(
             eq(users.organizationId, organizationId),
-            ne(users.role, 'patient')
+            ne(users.role, 'patient'),
+            eq(users.isSaaSOwner, false),
+            eq(users.isActive, true)
           )
         );
 
@@ -9627,16 +9640,15 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         .where(
           and(
             eq(users.organizationId, organizationId),
-            eq(users.role, 'patient')
+            eq(users.role, 'patient'),
+            eq(users.isActive, true)
           )
         );
 
       const currentUserCount = nonPatientUserCount?.count || 0;
-      const maxUsers = activeSubscription.maxUsers || 0;
       const remainingUsers = maxUsers - currentUserCount;
 
       const currentPatientCount = patientCount?.count || 0;
-      const maxPatients = activeSubscription.maxPatients || 0;
       const remainingPatients = maxPatients - currentPatientCount;
 
       res.json({
@@ -9647,7 +9659,9 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         maxPatients,
         currentPatientCount,
         remainingPatients,
-        subscriptionStatus: activeSubscription.status
+        subscriptionStatus: subscription.status,
+        planName: subscription.planName || subscription.plan || 'N/A',
+        expiresAt: subscription.expiresAt ? new Date(subscription.expiresAt).toISOString() : null
       });
     } catch (error) {
       console.error("Error checking subscription limit:", error);
@@ -9701,67 +9715,82 @@ This treatment plan should be reviewed and adjusted based on individual patient 
       }).parse(req.body);
 
       // Check subscription limits based on role
+      // Only block when remaining slots = 0, allow when remaining slots > 0
       const organizationId = req.tenant!.id;
 
-      // Get active subscription for the organization
-      const [activeSubscription] = await db.select({
-        maxUsers: saasSubscriptions.maxUsers,
-        maxPatients: saasSubscriptions.maxPatients,
-        status: saasSubscriptions.status
-      })
-        .from(saasSubscriptions)
-        .where(eq(saasSubscriptions.organizationId, organizationId))
-        .limit(1);
+      // Get active subscription for the organization using storage.getSubscription()
+      // This method already filters by expiresAt (only returns subscriptions where expiresAt > current date)
+      const subscription = await storage.getSubscription(organizationId);
 
-      if (!activeSubscription) {
-        return res.status(403).json({
-          error: "No active subscription found for this organization"
+      if (subscription) {
+        // Extract maxUsers and maxPatients from subscription
+        // subscription.userLimit comes from saasSubscriptions.maxUsers column
+        // subscription.maxPatients comes from saasSubscriptions.maxPatients column (if selected)
+        const packageFeatures = subscription.features as any || {};
+        const maxUsers = subscription.userLimit || packageFeatures.maxUsers || 0;
+        const maxPatients = (subscription as any).maxPatients || packageFeatures.maxPatients || 0;
+        
+        console.log('[POST /api/users] Subscription limits check:', {
+          userLimit_from_subscription: subscription.userLimit,
+          maxPatients_from_subscription: (subscription as any).maxPatients,
+          maxUsers_from_features: packageFeatures.maxUsers,
+          maxPatients_from_features: packageFeatures.maxPatients,
+          final_maxUsers: maxUsers,
+          final_maxPatients: maxPatients
         });
-      }
 
-      // If creating a patient, check patient limits only
-      if (userData.role === 'patient') {
-        const [patientCount] = await db.select({
-          count: sql<number>`count(*)::int`
-        })
-          .from(users)
-          .where(
-            and(
-              eq(users.organizationId, organizationId),
-              eq(users.role, 'patient')
-            )
-          );
+        // If creating a patient, check patient limits only
+        if (userData.role === 'patient') {
+          // Count existing patients (users with role='patient' and isActive=true)
+          const [patientCount] = await db.select({
+            count: sql<number>`count(*)::int`
+          })
+            .from(users)
+            .where(
+              and(
+                eq(users.organizationId, organizationId),
+                eq(users.role, 'patient'),
+                eq(users.isActive, true)
+              )
+            );
 
-        const currentPatientCount = patientCount?.count || 0;
-        const maxPatients = activeSubscription.maxPatients || 0;
+          const currentPatientCount = patientCount?.count || 0;
+          const remainingPatients = maxPatients - currentPatientCount;
 
-        if (currentPatientCount >= maxPatients) {
-          return res.status(403).json({
-            error: `Patient limit reached. Your subscription allows ${maxPatients} patients, and you currently have ${currentPatientCount} patients. Please upgrade your subscription to add more patients.`
-          });
+          // Only block when remaining slots = 0 (allow when > 0)
+          if (remainingPatients <= 0) {
+            return res.status(403).json({
+              error: `Patient limit reached. Your subscription allows ${maxPatients} patients, and you currently have ${currentPatientCount} patients. Please upgrade your subscription to add more patients.`
+            });
+          }
+        } else {
+          // For non-patient roles, check non-patient user limits
+          // Exclude SaaS owners, inactive users, and patient role
+          const [nonPatientUserCount] = await db.select({
+            count: sql<number>`count(*)::int`
+          })
+            .from(users)
+            .where(
+              and(
+                eq(users.organizationId, organizationId),
+                ne(users.role, 'patient'),
+                eq(users.isSaaSOwner, false),
+                eq(users.isActive, true)
+              )
+            );
+
+          const currentNonPatientUserCount = nonPatientUserCount?.count || 0;
+          const remainingUsers = maxUsers - currentNonPatientUserCount;
+
+          // Only block when remaining slots = 0 (allow when > 0)
+          if (remainingUsers <= 0) {
+            return res.status(403).json({
+              error: `User limit reached. Your subscription allows ${maxUsers} users, and you currently have ${currentNonPatientUserCount} users. Please upgrade your subscription to add more users.`
+            });
+          }
         }
-      } else {
-        // For non-patient roles, check non-patient user limits
-        const [nonPatientUserCount] = await db.select({
-          count: sql<number>`count(*)::int`
-        })
-          .from(users)
-          .where(
-            and(
-              eq(users.organizationId, organizationId),
-              ne(users.role, 'patient')
-            )
-          );
-
-        const currentNonPatientUserCount = nonPatientUserCount?.count || 0;
-        const maxUsers = activeSubscription.maxUsers || 0;
-
-        if (currentNonPatientUserCount >= maxUsers) {
-          return res.status(403).json({
-            error: `User limit reached. Your subscription allows ${maxUsers} users, and you currently have ${currentNonPatientUserCount} users. Please upgrade your subscription to add more users.`
-          });
-        }
       }
+      // If no subscription found, allow creation (don't block)
 
       // Hash password
       const hashedPassword = await authService.hashPassword(userData.password);
