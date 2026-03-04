@@ -3145,6 +3145,16 @@ export default function MessagingPage() {
       ? 'internal'  // Message type creates internal conversation
       : 'patient';  // Other types (SMS/Email/WhatsApp/Voice) are external, no conversation
 
+    // Get recipient email from filteredRecipients if available (for email type messages)
+    let recipientEmail = undefined;
+    if (newMessage.messageType === 'email' && newMessage.recipient) {
+      const recipient = filteredRecipients.find((r: any) => String(r.id) === String(newMessage.recipient));
+      if (recipient && recipient.email) {
+        recipientEmail = recipient.email;
+        console.log('📧 Frontend: Found recipient email:', recipientEmail, 'for recipientId:', newMessage.recipient);
+      }
+    }
+
     sendMessageMutation.mutate({
       recipientId: newMessage.recipient,
       subject: newMessage.subject,
@@ -3153,7 +3163,8 @@ export default function MessagingPage() {
       type: effectiveType,
       phoneNumber: newMessage.phoneNumber,
       messageType: isMessageType ? undefined : newMessage.messageType, // Only send messageType for non-message types
-      createConversation: isMessageType // Flag to indicate if conversation should be created
+      createConversation: isMessageType, // Flag to indicate if conversation should be created
+      recipientEmail: recipientEmail // Include email as fallback for backend lookup
     });
   };
 
@@ -4126,18 +4137,18 @@ export default function MessagingPage() {
               </Button>
             </DialogTrigger>
           )}
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader className="pb-3">
-              <DialogTitle className="text-xl font-semibold">Compose New Message</DialogTitle>
-              <DialogDescription className="text-sm text-gray-500 dark:text-gray-400">
+          <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+            <DialogHeader className="pb-2">
+              <DialogTitle className="text-sm font-semibold leading-none">Compose New Message</DialogTitle>
+              <DialogDescription className="text-xs text-gray-500 dark:text-gray-400 leading-none mt-1">
                 Send a message to start a conversation or communicate directly
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
+            <div className="space-y-2.5">
               {/* From/Sender Field - display logged-in user */}
-              <div className="space-y-1.5">
-                <Label htmlFor="message-sender" className="text-sm font-medium">From</Label>
-                <div className="h-9 px-3 py-2 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-sm text-gray-700 dark:text-gray-300">
+              <div className="space-y-1">
+                <Label htmlFor="message-sender" className="text-xs font-medium leading-none">From</Label>
+                <div className="h-8 px-2.5 py-1.5 border rounded-md bg-gray-50 dark:bg-gray-800 flex items-center text-xs text-gray-700 dark:text-gray-300 leading-none">
                   {(currentUser || user) ? (
                     isDoctor ? (
                       <>{formatRoleLabel((currentUser || user)?.role)} {(currentUser || user)?.firstName} {(currentUser || user)?.lastName}</>
@@ -4151,11 +4162,11 @@ export default function MessagingPage() {
               </div>
 
               {/* Role and Name Selection - Show for admin, patient, doctor, and nurse */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2">
                 {(user?.role === 'admin' || user?.role === 'patient' || user?.role === 'doctor' || user?.role === 'nurse') ? (
                   <>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="selectRole" className="text-sm font-medium">Select Role *</Label>
+                    <div className="space-y-1">
+                      <Label htmlFor="selectRole" className="text-xs font-medium leading-none">Select Role *</Label>
                       <Select
                         value={selectedRecipientRole}
                         onValueChange={(value) => {
@@ -4165,7 +4176,7 @@ export default function MessagingPage() {
                           setValidationErrors(prev => ({ ...prev, recipientRole: undefined }));
                         }}
                       >
-                        <SelectTrigger data-testid="select-recipient-role" className={`h-9 ${validationErrors.recipientRole ? "border-red-500" : ""}`}>
+                        <SelectTrigger data-testid="select-recipient-role" className={`h-8 text-xs leading-none ${validationErrors.recipientRole ? "border-red-500" : ""}`}>
                           <SelectValue placeholder="Select a role..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -4177,11 +4188,11 @@ export default function MessagingPage() {
                         </SelectContent>
                       </Select>
                       {validationErrors.recipientRole && (
-                        <p className="text-xs text-red-500 mt-1">{validationErrors.recipientRole}</p>
+                        <p className="text-xs text-red-500 mt-0.5 leading-none">{validationErrors.recipientRole}</p>
                       )}
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="selectName" className="text-sm font-medium">Select Name *</Label>
+                    <div className="space-y-1">
+                      <Label htmlFor="selectName" className="text-xs font-medium leading-none">Select Name *</Label>
                       <Select
                         value={selectedRecipientUser}
                         onValueChange={(value) => {
@@ -4211,7 +4222,7 @@ export default function MessagingPage() {
                         }}
                         disabled={!selectedRecipientRole}
                       >
-                        <SelectTrigger data-testid="select-recipient-name" className={`h-9 min-w-0 truncate ${validationErrors.recipientName ? "border-red-500" : ""}`}>
+                        <SelectTrigger data-testid="select-recipient-name" className={`h-8 text-xs min-w-0 truncate leading-none ${validationErrors.recipientName ? "border-red-500" : ""}`}>
                           <SelectValue placeholder={selectedRecipientRole ? "Select a name..." : "Select role first..."} />
                         </SelectTrigger>
                         <SelectContent>
@@ -4220,36 +4231,37 @@ export default function MessagingPage() {
                               key={recipient.id}
                               value={String(recipient.id)}
                               data-testid={`recipient-option-${recipient.id}`}
+                              className="text-xs leading-none"
                             >
-                              <span className="truncate block">{recipient.firstName} {recipient.lastName} ({recipient.email})</span>
+                              <span className="truncate block leading-none">{recipient.firstName} {recipient.lastName} ({recipient.email})</span>
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       {validationErrors.recipientName && (
-                        <p className="text-xs text-red-500 mt-1">{validationErrors.recipientName}</p>
+                        <p className="text-xs text-red-500 mt-0.5 leading-none">{validationErrors.recipientName}</p>
                       )}
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="selectRoleOther" className="text-sm font-medium">Select Role *</Label>
+                    <div className="space-y-1">
+                      <Label htmlFor="selectRoleOther" className="text-xs font-medium leading-none">Select Role *</Label>
                       <Select
                         value="patient"
                         onValueChange={() => { }}
                         disabled
                       >
-                        <SelectTrigger data-testid="select-recipient-role-other" className="h-9 bg-gray-50 dark:bg-gray-800">
+                        <SelectTrigger data-testid="select-recipient-role-other" className="h-8 text-xs bg-gray-50 dark:bg-gray-800 leading-none">
                           <SelectValue placeholder="Select a role..." />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="patient">Patient</SelectItem>
+                          <SelectItem value="patient" className="text-xs leading-none">Patient</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="selectNameOther" className="text-sm font-medium">Select Name *</Label>
+                    <div className="space-y-1">
+                      <Label htmlFor="selectNameOther" className="text-xs font-medium leading-none">Select Name *</Label>
                       <Select
                         value={selectedMessagePatient}
                         onValueChange={(value) => {
@@ -4265,7 +4277,7 @@ export default function MessagingPage() {
                           }
                         }}
                       >
-                        <SelectTrigger data-testid="select-patient-recipient" className={`h-9 min-w-0 truncate ${validationErrors.recipientName ? "border-red-500" : ""}`}>
+                        <SelectTrigger data-testid="select-patient-recipient" className={`h-8 text-xs min-w-0 truncate leading-none ${validationErrors.recipientName ? "border-red-500" : ""}`}>
                           <SelectValue placeholder="Select a name..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -4274,23 +4286,24 @@ export default function MessagingPage() {
                               key={patient.id}
                               value={String(patient.id)}
                               data-testid={`patient-option-${patient.id}`}
+                              className="text-xs leading-none"
                             >
-                              <span className="truncate block">{patient.firstName} {patient.lastName} ({patient.email}){patient.patientId ? ` • ${patient.patientId}` : ""}</span>
+                              <span className="truncate block leading-none">{patient.firstName} {patient.lastName} ({patient.email}){patient.patientId ? ` • ${patient.patientId}` : ""}</span>
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       {validationErrors.recipientName && (
-                        <p className="text-xs text-red-500 mt-1">{validationErrors.recipientName}</p>
+                        <p className="text-xs text-red-500 mt-0.5 leading-none">{validationErrors.recipientName}</p>
                       )}
                     </div>
                   </>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="messageSubject" className="text-sm font-medium">Subject *</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label htmlFor="messageSubject" className="text-xs font-medium leading-none">Subject *</Label>
                   <Input
                     id="messageSubject"
                     placeholder="Enter message subject"
@@ -4299,36 +4312,36 @@ export default function MessagingPage() {
                       setNewMessage(prev => ({ ...prev, subject: e.target.value }));
                       setValidationErrors(prev => ({ ...prev, subject: undefined }));
                     }}
-                    className={`h-9 ${validationErrors.subject ? "border-red-500" : ""}`}
+                    className={`h-8 text-xs leading-none ${validationErrors.subject ? "border-red-500" : ""}`}
                   />
                   {validationErrors.subject && (
-                    <p className="text-xs text-red-500 mt-1">{validationErrors.subject}</p>
+                    <p className="text-xs text-red-500 mt-0.5 leading-none">{validationErrors.subject}</p>
                   )}
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="messagePriority" className="text-sm font-medium">Priority</Label>
+                <div className="space-y-1">
+                  <Label htmlFor="messagePriority" className="text-xs font-medium leading-none">Priority</Label>
                   <Select
                     value={newMessage.priority}
                     onValueChange={(value: "low" | "normal" | "high" | "urgent") =>
                       setNewMessage(prev => ({ ...prev, priority: value }))
                     }
                   >
-                    <SelectTrigger className="h-9">
+                    <SelectTrigger className="h-8 text-xs leading-none">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="normal">Normal</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
-                      <SelectItem value="urgent">Urgent</SelectItem>
+                      <SelectItem value="low" className="text-xs leading-none">Low</SelectItem>
+                      <SelectItem value="normal" className="text-xs leading-none">Normal</SelectItem>
+                      <SelectItem value="high" className="text-xs leading-none">High</SelectItem>
+                      <SelectItem value="urgent" className="text-xs leading-none">Urgent</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="messageType" className="text-sm font-medium">Message Type *</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label htmlFor="messageType" className="text-xs font-medium leading-none">Message Type *</Label>
                   <Select
                     value={newMessage.messageType}
                     onValueChange={(value: "message" | "sms" | "email" | "whatsapp" | "voice") => {
@@ -4339,18 +4352,18 @@ export default function MessagingPage() {
                       }
                     }}
                   >
-                    <SelectTrigger className="h-9">
+                    <SelectTrigger className="h-8 text-xs leading-none">
                       <SelectValue placeholder="Select message type..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="message">Message (Start Conversation)</SelectItem>
-                      <SelectItem value="email">Email Only</SelectItem>
-                      <SelectItem value="sms">SMS Only</SelectItem>
-                      <SelectItem value="whatsapp">WhatsApp Only</SelectItem>
-                      <SelectItem value="voice">Phone Call Only</SelectItem>
+                      <SelectItem value="message" className="text-xs leading-none">Message (Start Conversation)</SelectItem>
+                      <SelectItem value="email" className="text-xs leading-none">Email Only</SelectItem>
+                      <SelectItem value="sms" className="text-xs leading-none">SMS Only</SelectItem>
+                      <SelectItem value="whatsapp" className="text-xs leading-none">WhatsApp Only</SelectItem>
+                      <SelectItem value="voice" className="text-xs leading-none">Phone Call Only</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-none">
                     {newMessage.messageType === 'message'
                       ? "Creates a conversation in the Conversations tab"
                       : newMessage.messageType === 'email'
@@ -4365,8 +4378,8 @@ export default function MessagingPage() {
                   </p>
                 </div>
                 {(newMessage.messageType === 'sms' || newMessage.messageType === 'whatsapp' || newMessage.messageType === 'voice') && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="phoneNumber" className="text-sm font-medium">Phone Number *</Label>
+                  <div className="space-y-1">
+                    <Label htmlFor="phoneNumber" className="text-xs font-medium leading-none">Phone Number *</Label>
                     <Input
                       id="phoneNumber"
                       placeholder="Enter phone number (e.g., +44 7123 456789)"
@@ -4375,48 +4388,48 @@ export default function MessagingPage() {
                         setNewMessage(prev => ({ ...prev, phoneNumber: e.target.value }));
                         setValidationErrors(prev => ({ ...prev, phoneNumber: undefined }));
                       }}
-                      className={`h-9 ${validationErrors.phoneNumber ? "border-red-500" : ""}`}
+                      className={`h-8 text-xs leading-none ${validationErrors.phoneNumber ? "border-red-500" : ""}`}
                     />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-none">
                       Sample: +44 7123 456789 (UK) or +1 555 123 4567 (US)
                     </p>
                     {validationErrors.phoneNumber && (
-                      <p className="text-xs text-red-500 mt-1">{validationErrors.phoneNumber}</p>
+                      <p className="text-xs text-red-500 mt-0.5 leading-none">{validationErrors.phoneNumber}</p>
                     )}
                   </div>
                 )}
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="messageContent" className="text-sm font-medium">Message Content *</Label>
+              <div className="space-y-1">
+                <Label htmlFor="messageContent" className="text-xs font-medium leading-none">Message Content *</Label>
                 <Textarea
                   id="messageContent"
                   placeholder="Enter your message content..."
-                  rows={6}
+                  rows={4}
                   value={newMessage.content}
                   onChange={(e) => {
                     setNewMessage(prev => ({ ...prev, content: e.target.value }));
                     setValidationErrors(prev => ({ ...prev, content: undefined }));
                   }}
-                  className={`resize-none ${validationErrors.content ? "border-red-500" : ""}`}
+                  className={`resize-none text-xs leading-none ${validationErrors.content ? "border-red-500" : ""}`}
                 />
                 {validationErrors.content && (
-                  <p className="text-xs text-red-500 mt-1">{validationErrors.content}</p>
+                  <p className="text-xs text-red-500 mt-0.5 leading-none">{validationErrors.content}</p>
                 )}
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex justify-end gap-2 pt-1.5 border-t border-gray-200 dark:border-gray-700">
                 <Button
                   variant="outline"
                   onClick={() => setShowNewMessage(false)}
-                  className="h-9"
+                  className="h-8 text-xs leading-none"
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleSendNewMessage}
                   disabled={sendMessageMutation.isPending}
-                  className="h-9 bg-blue-600 hover:bg-blue-700"
+                  className="h-8 text-xs bg-blue-600 hover:bg-blue-700 leading-none"
                 >
                   {sendMessageMutation.isPending ? "Sending..." : "Send Message"}
                 </Button>

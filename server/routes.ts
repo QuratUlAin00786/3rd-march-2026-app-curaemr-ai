@@ -17555,8 +17555,8 @@ This treatment plan should be reviewed and adjusted based on individual patient 
   app.post("/api/messaging/send", authMiddleware, async (req: TenantRequest, res) => {
     try {
       console.log("📨 POST /api/messaging/send - Received message data:", JSON.stringify(req.body, null, 2));
-      const { conversationId, recipientId, content, message: messageText, type, priority, phoneNumber, messageType } = req.body;
-      console.log(`📨 MESSAGE ROUTING - messageType: "${messageType}", type: "${type}", recipientId: "${recipientId}"`);
+      const { conversationId, recipientId, content, message: messageText, type, priority, phoneNumber, messageType, recipientEmail: frontendRecipientEmail } = req.body;
+      console.log(`📨 MESSAGE ROUTING - messageType: "${messageType}", type: "${type}", recipientId: "${recipientId}", frontendRecipientEmail: "${frontendRecipientEmail}"`);
       console.log(`📨 EMAIL CHECK - isEmail: ${messageType === 'email'}, notInternal: ${type !== 'internal'}, willSendEmail: ${messageType === 'email' && type !== 'internal'}`);
 
       // Add authenticated user information to message data
@@ -17713,28 +17713,78 @@ This treatment plan should be reviewed and adjusted based on individual patient 
         console.log(`📧 EMAIL SEND TRIGGERED - recipientId: "${recipientId}", type: "${type}"`);
         try {
           // Get recipient's email address
-          let recipientEmail = null;
+          // First, try to use email from frontend if provided (most reliable)
+          let recipientEmail = (frontendRecipientEmail && frontendRecipientEmail.trim() !== '') ? frontendRecipientEmail.trim() : null;
           let recipientName = 'Recipient';
-
-          // Check if recipientId is a number (ID) or string (name)
-          if (typeof recipientId === 'number') {
+          
+          console.log(`📧 EMAIL LOOKUP - frontendRecipientEmail: "${frontendRecipientEmail}", using it: ${!!recipientEmail}`);
+          
+          // If frontend provided email, use it and just get the name for personalization
+          // Otherwise, look up email from database
+          if (!recipientEmail) {
+            // Check if recipientId is a number (ID) or string that can be converted to number
+            const recipientIdNum = typeof recipientId === 'number' ? recipientId : (typeof recipientId === 'string' && !isNaN(Number(recipientId)) && recipientId.trim() !== '' ? Number(recipientId) : null);
+            
+            console.log(`📧 EMAIL LOOKUP - recipientId: "${recipientId}", type: ${typeof recipientId}, recipientIdNum: ${recipientIdNum}`);
+            
+            if (recipientIdNum !== null && !isNaN(recipientIdNum)) {
+            // recipientId is a number (or string that can be converted to number) - treat as ID
+            console.log(`📧 Looking up recipient by ID: ${recipientIdNum}`);
             // Try to get recipient from users table first
-            const recipientUser = await storage.getUser(recipientId, req.tenant!.id);
-            if (recipientUser && recipientUser.email) {
-              recipientEmail = recipientUser.email;
-              recipientName = recipientUser.firstName && recipientUser.lastName
-                ? `${recipientUser.firstName} ${recipientUser.lastName}`
-                : recipientUser.firstName || recipientUser.email;
-            } else {
-              // Try to get from patients table
-              const recipientPatient = await storage.getPatient(recipientId, req.tenant!.id);
-              if (recipientPatient && recipientPatient.email) {
-                recipientEmail = recipientPatient.email;
-                recipientName = `${recipientPatient.firstName} ${recipientPatient.lastName}`;
+            try {
+              const recipientUser = await storage.getUser(recipientIdNum, req.tenant!.id);
+              console.log(`📧 getUser result:`, recipientUser ? `Found user ${recipientUser.firstName} ${recipientUser.lastName}, email: ${recipientUser.email || 'NO EMAIL'}` : 'User not found');
+              if (recipientUser) {
+                if (recipientUser.email && recipientUser.email.trim() !== '') {
+                  recipientEmail = recipientUser.email.trim();
+                  recipientName = recipientUser.firstName && recipientUser.lastName
+                    ? `${recipientUser.firstName} ${recipientUser.lastName}`
+                    : recipientUser.firstName || recipientUser.email;
+                  console.log(`📧 Found user by ID: ${recipientName} (${recipientEmail})`);
+                } else {
+                  console.log(`📧 User found but no email address: ID ${recipientIdNum}`);
+                }
+              }
+            } catch (userError: any) {
+              console.log(`📧 Error looking up user by ID ${recipientIdNum}:`, userError?.message || userError);
+            }
+            
+            // If not found in users, try patients table
+            if (!recipientEmail) {
+              try {
+                const recipientPatient = await storage.getPatient(recipientIdNum, req.tenant!.id);
+                console.log(`📧 getPatient result:`, recipientPatient ? `Found patient ${recipientPatient.firstName} ${recipientPatient.lastName}, email: ${recipientPatient.email || 'NO EMAIL'}` : 'Patient not found');
+                if (recipientPatient) {
+                  if (recipientPatient.email && recipientPatient.email.trim() !== '') {
+                    recipientEmail = recipientPatient.email.trim();
+                    recipientName = `${recipientPatient.firstName} ${recipientPatient.lastName}`;
+                    console.log(`📧 Found patient by ID: ${recipientName} (${recipientEmail})`);
+                  } else {
+                    // Try to get email from linked user account if patient has userId
+                    if (recipientPatient.userId) {
+                      try {
+                        const linkedUser = await storage.getUser(recipientPatient.userId, req.tenant!.id);
+                        if (linkedUser && linkedUser.email && linkedUser.email.trim() !== '') {
+                          recipientEmail = linkedUser.email.trim();
+                          recipientName = `${recipientPatient.firstName} ${recipientPatient.lastName}`;
+                          console.log(`📧 Found patient email from linked user account: ${recipientName} (${recipientEmail})`);
+                        }
+                      } catch (linkError) {
+                        console.log(`📧 Error looking up linked user for patient:`, linkError);
+                      }
+                    }
+                    if (!recipientEmail) {
+                      console.log(`📧 Patient found but no email address: ID ${recipientIdNum}`);
+                    }
+                  }
+                }
+              } catch (patientError: any) {
+                console.log(`📧 Error looking up patient by ID ${recipientIdNum}:`, patientError?.message || patientError);
               }
             }
           } else if (typeof recipientId === 'string') {
-            // RecipientId is a name, need to look up by name
+            // RecipientId is a string that's not a number - treat as name and look up by name
+            console.log(`📧 Looking up recipient by name: "${recipientId}"`);
             // Try users first
             const allUsers = await storage.getUsersByOrganization(req.tenant!.id);
             const matchedUser = allUsers.find(user => {
@@ -17744,9 +17794,14 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                 user.email === recipientId;
             });
 
-            if (matchedUser && matchedUser.email) {
-              recipientEmail = matchedUser.email;
-              recipientName = `${matchedUser.firstName} ${matchedUser.lastName}`;
+            if (matchedUser) {
+              if (matchedUser.email && matchedUser.email.trim() !== '') {
+                recipientEmail = matchedUser.email.trim();
+                recipientName = `${matchedUser.firstName} ${matchedUser.lastName}`;
+                console.log(`📧 Found user by name: ${recipientName} (${recipientEmail})`);
+              } else {
+                console.log(`📧 User found by name but no email: ${matchedUser.firstName} ${matchedUser.lastName}, ID: ${matchedUser.id}`);
+              }
             } else {
               // Try patients table
               const allPatients = await storage.getPatientsByOrganization(req.tenant!.id);
@@ -17757,17 +17812,70 @@ This treatment plan should be reviewed and adjusted based on individual patient 
                   patient.email === recipientId;
               });
 
-              if (matchedPatient && matchedPatient.email) {
-                recipientEmail = matchedPatient.email;
-                recipientName = `${matchedPatient.firstName} ${matchedPatient.lastName}`;
+              if (matchedPatient) {
+                if (matchedPatient.email && matchedPatient.email.trim() !== '') {
+                  recipientEmail = matchedPatient.email.trim();
+                  recipientName = `${matchedPatient.firstName} ${matchedPatient.lastName}`;
+                  console.log(`📧 Found patient by name: ${recipientName} (${recipientEmail})`);
+                } else if (matchedPatient.userId) {
+                  // Try linked user account
+                  try {
+                    const linkedUser = await storage.getUser(matchedPatient.userId, req.tenant!.id);
+                    if (linkedUser && linkedUser.email && linkedUser.email.trim() !== '') {
+                      recipientEmail = linkedUser.email.trim();
+                      recipientName = `${matchedPatient.firstName} ${matchedPatient.lastName}`;
+                      console.log(`📧 Found patient email from linked user by name: ${recipientName} (${recipientEmail})`);
+                    }
+                  } catch (linkError) {
+                    console.log(`📧 Error looking up linked user for patient by name:`, linkError);
+                  }
+                } else {
+                  console.log(`📧 Patient found by name but no email: ${matchedPatient.firstName} ${matchedPatient.lastName}, ID: ${matchedPatient.id}`);
+                }
               }
+            }
+          }
+
+          // If still no email found, try searching all users and patients as fallback
+          if (!recipientEmail) {
+            const recipientIdNum = typeof recipientId === 'number' ? recipientId : (typeof recipientId === 'string' && !isNaN(Number(recipientId)) && recipientId.trim() !== '' ? Number(recipientId) : null);
+            if (recipientIdNum !== null) {
+            console.log(`📧 Fallback: Searching all users and patients for ID ${recipientIdNum}`);
+            try {
+              const allUsers = await storage.getUsersByOrganization(req.tenant!.id);
+              const matchedUser = allUsers.find(u => u.id === recipientIdNum);
+              if (matchedUser && matchedUser.email && matchedUser.email.trim() !== '') {
+                recipientEmail = matchedUser.email.trim();
+                recipientName = `${matchedUser.firstName} ${matchedUser.lastName}`;
+                console.log(`📧 Found user in fallback search: ${recipientName} (${recipientEmail})`);
+              } else {
+                const allPatients = await storage.getPatientsByOrganization(req.tenant!.id);
+                const matchedPatient = allPatients.find(p => p.id === recipientIdNum || p.userId === recipientIdNum);
+                if (matchedPatient) {
+                  if (matchedPatient.email && matchedPatient.email.trim() !== '') {
+                    recipientEmail = matchedPatient.email.trim();
+                    recipientName = `${matchedPatient.firstName} ${matchedPatient.lastName}`;
+                    console.log(`📧 Found patient in fallback search: ${recipientName} (${recipientEmail})`);
+                  } else if (matchedPatient.userId) {
+                    // Try linked user account
+                    const linkedUser = allUsers.find(u => u.id === matchedPatient.userId);
+                    if (linkedUser && linkedUser.email && linkedUser.email.trim() !== '') {
+                      recipientEmail = linkedUser.email.trim();
+                      recipientName = `${matchedPatient.firstName} ${matchedPatient.lastName}`;
+                      console.log(`📧 Found patient email from linked user in fallback: ${recipientName} (${recipientEmail})`);
+                    }
+                  }
+                }
+              }
+            } catch (fallbackError: any) {
+              console.error(`📧 Error in fallback search:`, fallbackError?.message || fallbackError);
             }
           }
 
           console.log(`📧 EMAIL LOOKUP RESULT - recipientEmail: "${recipientEmail}", recipientName: "${recipientName}"`);
 
-          if (!recipientEmail) {
-            console.error('No email address found for recipient:', recipientId);
+          if (!recipientEmail || recipientEmail.trim() === '') {
+            console.error('No email address found for recipient:', recipientId, 'recipientIdNum:', recipientIdNum);
             await storage.updateMessageDeliveryStatus(message.id, 'failed', undefined, 'No email address found for recipient');
             return res.status(400).json({
               error: 'Email sending failed: No email address found for recipient',

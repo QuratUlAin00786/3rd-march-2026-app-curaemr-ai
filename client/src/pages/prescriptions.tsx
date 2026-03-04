@@ -9991,12 +9991,12 @@ export default function PrescriptionsPage() {
             e.preventDefault();
           }}
         >
-          <DialogHeader className="px-6 pt-6 pb-4 border-b">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
             <DialogTitle>
               PDF Report: {selectedPdfPrescription?.prescriptionNumber || selectedPdfPrescription?.id || 'Prescription'}.pdf
             </DialogTitle>
           </DialogHeader>
-          <div className="flex-1 overflow-hidden px-6 pb-4" style={{ minHeight: '600px', height: 'calc(90vh - 120px)' }}>
+          <div className="flex-1 overflow-hidden px-6 pb-4" style={{ minHeight: '400px', maxHeight: 'calc(90vh - 180px)' }}>
             {pdfViewerUrl ? (
               pdfLoadError ? (
                 <div className="flex flex-col items-center justify-center h-full space-y-4">
@@ -10031,7 +10031,7 @@ export default function PrescriptionsPage() {
                   src={`${pdfViewerUrl}#toolbar=1&navpanes=1&scrollbar=1`}
                 className="w-full h-full border rounded"
                 title="Prescription PDF"
-                style={{ minHeight: '600px' }}
+                style={{ minHeight: '400px', height: '100%' }}
                   onError={() => {
                     console.error("[CLIENT] Iframe failed to load PDF");
                     setPdfLoadError(true);
@@ -10052,7 +10052,7 @@ export default function PrescriptionsPage() {
               </div>
             )}
           </div>
-          <div className="flex justify-between items-center px-6 pb-6 pt-4 border-t">
+          <div className="flex justify-between items-center px-6 pb-4 pt-4 border-t flex-shrink-0">
             <Button 
               onClick={() => {
                 setShowPdfViewerDialog(false);

@@ -5721,16 +5721,16 @@ export default function ImagingPage() {
       <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Share Imaging Study</DialogTitle>
+            <DialogTitle className="text-sm font-semibold">Share Imaging Study</DialogTitle>
           </DialogHeader>
           {selectedStudy && (
             <div className="space-y-4">
-              <div className="text-sm text-gray-600 dark:text-gray-300">
+              <div className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
                 Share study for <strong>{selectedStudy.patientName}</strong>
               </div>
 
-              <div>
-                <Label htmlFor="method" className="text-sm font-medium">
+              <div className="space-y-1.5">
+                <Label htmlFor="method" className="text-xs font-medium block">
                   Contact Method
                 </Label>
                 <Select
@@ -5739,7 +5739,7 @@ export default function ImagingPage() {
                     setShareFormData({ ...shareFormData, method: value })
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Select contact method" />
                   </SelectTrigger>
                   <SelectContent>
@@ -5750,8 +5750,8 @@ export default function ImagingPage() {
               </div>
 
               {shareFormData.method === "email" && (
-                <div>
-                  <Label htmlFor="email" className="text-sm font-medium">
+                <div className="space-y-1.5">
+                  <Label htmlFor="email" className="text-xs font-medium block">
                     Email Address
                   </Label>
                   <Input
@@ -5765,13 +5765,14 @@ export default function ImagingPage() {
                         email: e.target.value,
                       })
                     }
+                    className="h-8 text-xs bg-white dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600"
                   />
                 </div>
               )}
 
               {shareFormData.method === "whatsapp" && (
-                <div>
-                  <Label htmlFor="whatsapp" className="text-sm font-medium">
+                <div className="space-y-1.5">
+                  <Label htmlFor="whatsapp" className="text-xs font-medium block">
                     WhatsApp Number
                   </Label>
                   <Input
@@ -5785,12 +5786,13 @@ export default function ImagingPage() {
                         whatsapp: e.target.value,
                       })
                     }
+                    className="h-8 text-xs bg-white dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600"
                   />
                 </div>
               )}
 
-              <div>
-                <Label htmlFor="message" className="text-sm font-medium">
+              <div className="space-y-1.5">
+                <Label htmlFor="message" className="text-xs font-medium block">
                   Message
                 </Label>
                 <Textarea
@@ -5804,14 +5806,17 @@ export default function ImagingPage() {
                     })
                   }
                   rows={3}
+                  className="text-xs bg-white dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 leading-relaxed"
                 />
               </div>
 
-              <div className="flex justify-between items-center pt-4 border-t">
+              <div className="flex justify-between items-center pt-3 border-t">
                 <Button
                   variant="outline"
                   onClick={() => setShowShareDialog(false)}
                   disabled={isSendingShare}
+                  size="sm"
+                  className="text-xs"
                 >
                   Cancel
                 </Button>
@@ -5889,7 +5894,8 @@ export default function ImagingPage() {
                     (shareFormData.method === "whatsapp" &&
                       !shareFormData.whatsapp)
                   }
-                  className="bg-medical-blue hover:bg-blue-700"
+                  size="sm"
+                  className="text-xs bg-medical-blue hover:bg-blue-700"
                 >
                   <Share className="h-4 w-4 mr-2" />
                   {isSendingShare ? "Sending..." : "Share Study"}
