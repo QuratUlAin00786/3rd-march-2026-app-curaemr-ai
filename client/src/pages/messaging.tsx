@@ -4179,9 +4179,9 @@ export default function MessagingPage() {
                         <SelectTrigger data-testid="select-recipient-role" className={`h-8 text-xs leading-none ${validationErrors.recipientRole ? "border-red-500" : ""}`}>
                           <SelectValue placeholder="Select a role..." />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-h-[150px] overflow-y-auto">
                           {rolesData.map((role: any) => (
-                            <SelectItem key={role.id} value={role.name}>
+                            <SelectItem key={role.id} value={role.name} className="text-xs leading-none">
                               {role.displayName || role.name}
                             </SelectItem>
                           ))}
