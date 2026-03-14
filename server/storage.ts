@@ -4782,17 +4782,31 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPrescriptionsByOrganization(organizationId: number, limit: number = 50): Promise<Prescription[]> {
-    const allPrescriptions = await db
-      .select({
-        prescription: prescriptions,
-        patient: patients,
-        provider: users,
-      })
-      .from(prescriptions)
-      .leftJoin(patients, eq(prescriptions.patientId, patients.id))
-      .leftJoin(users, eq(prescriptions.prescriptionCreatedBy, users.id))
-      .where(eq(prescriptions.organizationId, organizationId))
-      .orderBy(desc(prescriptions.createdAt));
+    // Use raw SQL to get timestamps as formatted strings directly from PostgreSQL
+    // This avoids timezone conversion when JavaScript Date objects are created
+    // Format: YYYY-MM-DD HH24:MI:SS.MS (milliseconds from microseconds)
+    const limitClause = limit ? sql`LIMIT ${limit}` : sql``;
+    const result = await db.execute(sql`
+      SELECT 
+        p.*,
+        TO_CHAR(p.created_at, 'YYYY-MM-DD HH24:MI:SS') || '.' || LPAD(FLOOR(EXTRACT(MICROSECONDS FROM p.created_at) / 1000)::text, 3, '0') as created_at_string,
+        TO_CHAR(p.updated_at, 'YYYY-MM-DD HH24:MI:SS') || '.' || LPAD(FLOOR(EXTRACT(MICROSECONDS FROM p.updated_at) / 1000)::text, 3, '0') as updated_at_string,
+        pt.id as patient_id,
+        pt.first_name as patient_first_name,
+        pt.last_name as patient_last_name,
+        pt.date_of_birth as patient_date_of_birth,
+        pt.address as patient_address,
+        pt.medical_history as patient_medical_history,
+        u.id as provider_id,
+        u.first_name as provider_first_name,
+        u.last_name as provider_last_name
+      FROM prescriptions p
+      LEFT JOIN patients pt ON p.patient_id = pt.id
+      LEFT JOIN users u ON p.prescription_created_by = u.id
+      WHERE p.organization_id = ${organizationId}
+      ORDER BY p.created_at DESC
+      ${limitClause}
+    `);
 
     // Return ALL prescriptions without deduplication for admin users
     const formatDateWithSuffix = (dateString: string) => {
@@ -4804,46 +4818,77 @@ export class DatabaseStorage implements IStorage {
       return `${day}${suffix} ${month} ${year}`;
     };
 
-    // Helper to format date as local time string (YYYY-MM-DD HH:MM:SS.mmm)
-    const formatDateAsLocalString = (date: Date | null | undefined): string | null => {
-      if (!date) return null;
-      const d = new Date(date);
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      const hours = String(d.getHours()).padStart(2, '0');
-      const minutes = String(d.getMinutes()).padStart(2, '0');
-      const seconds = String(d.getSeconds()).padStart(2, '0');
-      const milliseconds = String(d.getMilliseconds()).padStart(3, '0');
-      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
-    };
-
-    const formattedPrescriptions = allPrescriptions.map(item => {
-      const prescription = item.prescription;
-      const patient = item.patient;
-      const provider = item.provider;
+    // Map raw SQL results to prescription objects
+    const formattedPrescriptions = result.rows.map((row: any) => {
+      // Parse patient address if it's JSON
+      let patientAddress = '-';
+      let patientAllergies = '-';
+      if (row.patient_address) {
+        try {
+          const address = typeof row.patient_address === 'string' ? JSON.parse(row.patient_address) : row.patient_address;
+          patientAddress = `${address.street || ''}, ${address.city || ''}, ${address.postcode || ''}, ${address.country || ''}`.replace(/, ,/g, ',').replace(/^,\s*|,\s*$/g, '');
+        } catch {
+          patientAddress = '-';
+        }
+      }
       
-      const patientAddress = patient?.address 
-        ? `${patient.address.street || ''}, ${patient.address.city || ''}, ${patient.address.postcode || ''}, ${patient.address.country || ''}`.replace(/, ,/g, ',').replace(/^,\s*|,\s*$/g, '')
-        : '-';
+      // Parse patient medical history if it's JSON
+      if (row.patient_medical_history) {
+        try {
+          const medicalHistory = typeof row.patient_medical_history === 'string' ? JSON.parse(row.patient_medical_history) : row.patient_medical_history;
+          if (medicalHistory?.allergies && Array.isArray(medicalHistory.allergies) && medicalHistory.allergies.length > 0) {
+            patientAllergies = medicalHistory.allergies.join(', ');
+          }
+        } catch {
+          patientAllergies = '-';
+        }
+      }
       
-      const patientAllergies = patient?.medicalHistory?.allergies && patient.medicalHistory.allergies.length > 0 
-        ? patient.medicalHistory.allergies.join(', ') 
-        : '-';
+      // Use the timestamp strings directly from PostgreSQL (no timezone conversion)
+      const clientCreatedAt = row.created_at_string || null;
+      const clientUpdatedAt = row.updated_at_string || null;
       
       return {
-        ...prescription,
-        // Format dates as local time strings to avoid timezone conversion
-        // Add as additional fields to preserve type compatibility
-        clientCreatedAt: formatDateAsLocalString(prescription.createdAt),
-        clientUpdatedAt: formatDateAsLocalString(prescription.updatedAt),
-        patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown Patient',
-        patientDob: patient?.dateOfBirth ? formatDateWithSuffix(patient.dateOfBirth) : null,
-        patientAge: patient?.dateOfBirth ? Math.floor((new Date().getTime() - new Date(patient.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : null,
+        id: row.id,
+        organizationId: row.organization_id,
+        patientId: row.patient_id,
+        doctorId: row.doctor_id,
+        prescriptionCreatedBy: row.prescription_created_by,
+        consultationId: row.consultation_id,
+        prescriptionNumber: row.prescription_number,
+        status: row.status,
+        diagnosis: row.diagnosis,
+        medicationName: row.medication_name,
+        dosage: row.dosage,
+        frequency: row.frequency,
+        duration: row.duration,
+        instructions: row.instructions,
+        issuedDate: row.issued_date ? new Date(row.issued_date) : null,
+        medications: row.medications,
+        pharmacy: row.pharmacy,
+        prescribedAt: row.prescribed_at ? new Date(row.prescribed_at) : new Date(),
+        validUntil: row.valid_until ? new Date(row.valid_until) : null,
+        notes: row.notes,
+        isElectronic: row.is_electronic,
+        interactions: row.interactions,
+        signature: row.signature,
+        savedPdfPath: row.saved_pdf_path,
+        createdAt: row.created_at ? new Date(row.created_at) : new Date(),
+        updatedAt: row.updated_at ? new Date(row.updated_at) : new Date(),
+        // Use timestamp strings directly from PostgreSQL to avoid timezone conversion
+        clientCreatedAt: clientCreatedAt,
+        clientUpdatedAt: clientUpdatedAt,
+        patientName: row.patient_first_name && row.patient_last_name 
+          ? `${row.patient_first_name} ${row.patient_last_name}` 
+          : 'Unknown Patient',
+        patientDob: row.patient_date_of_birth ? formatDateWithSuffix(row.patient_date_of_birth) : null,
+        patientAge: row.patient_date_of_birth ? Math.floor((new Date().getTime() - new Date(row.patient_date_of_birth).getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : null,
         patientAddress,
         patientAllergies,
         patientWeight: null,
-        providerName: provider ? `Dr. ${provider.firstName} ${provider.lastName}` : 'Unknown Provider',
+        providerName: row.provider_first_name && row.provider_last_name 
+          ? `Dr. ${row.provider_first_name} ${row.provider_last_name}` 
+          : 'Unknown Provider',
       } as any;
     });
     

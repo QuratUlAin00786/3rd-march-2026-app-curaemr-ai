@@ -274,7 +274,7 @@ const formatDateTooltip = (timestamp?: string | null) => {
   }
 };
 
-// Format date and time in UK format (DD/MM/YYYY HH:MM:SS) in UTC
+// Format date in UK format (DD/MM/YYYY) in UTC - time is hidden
 const formatDateUKUTC = (timestamp?: string | null) => {
   if (!timestamp) return "N/A";
 
@@ -282,15 +282,12 @@ const formatDateUKUTC = (timestamp?: string | null) => {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return "N/A";
 
-    // Get UTC date components
+    // Get UTC date components only (no time)
     const day = String(date.getUTCDate()).padStart(2, '0');
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const year = date.getUTCFullYear();
-    const hours = String(date.getUTCHours()).padStart(2, '0');
-    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-    const seconds = String(date.getUTCSeconds()).padStart(2, '0');
 
-    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+    return `${day}/${month}/${year}`;
   } catch {
     return "N/A";
   }
@@ -6723,17 +6720,11 @@ export default function PrescriptionsPage() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="truncate cursor-help">
-                              {(() => {
-                                const timestamp = prescription.clientCreatedAt || prescription.createdAt;
-                                if (!timestamp) return "N/A";
-                                const { date, time } = formatDateAndTimeUTC(timestamp);
-                                return (
-                                  <span>
-                                    {date}
-                                    {time && <span className="text-xs ml-1">{time}</span>}
-                                  </span>
-                                );
-                              })()}
+                              {prescription.clientCreatedAt
+                                ? formatDateUKUTC(prescription.clientCreatedAt)
+                                : prescription.createdAt
+                                ? formatDateUKUTC(prescription.createdAt)
+                                : "N/A"}
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
@@ -6753,17 +6744,11 @@ export default function PrescriptionsPage() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="truncate cursor-help">
-                              {(() => {
-                                const timestamp = prescription.clientUpdatedAt || prescription.updatedAt;
-                                if (!timestamp) return "N/A";
-                                const { date, time } = formatDateAndTimeUTC(timestamp);
-                                return (
-                                  <span>
-                                    {date}
-                                    {time && <span className="text-xs ml-1">{time}</span>}
-                                  </span>
-                                );
-                              })()}
+                              {prescription.clientUpdatedAt
+                                ? formatDateUKUTC(prescription.clientUpdatedAt)
+                                : prescription.updatedAt
+                                ? formatDateUKUTC(prescription.updatedAt)
+                                : "N/A"}
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
