@@ -4865,10 +4865,18 @@ export default function PrescriptionsPage() {
   );
 
   const displayPrescriptions = useMemo(() => {
+    let result;
     if (isFilterActive) {
-      return filteredPrescriptions;
+      result = filteredPrescriptions;
+    } else {
+      result = Array.isArray(prescriptions) ? prescriptions : [];
     }
-    return Array.isArray(prescriptions) ? prescriptions : [];
+    // Sort by ID descending (newest first)
+    return result.sort((a: any, b: any) => {
+      const idA = a.id || 0;
+      const idB = b.id || 0;
+      return idB - idA; // Descending order
+    });
   }, [isFilterActive, filteredPrescriptions, prescriptions]);
 
   return (
